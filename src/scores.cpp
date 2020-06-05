@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -54,6 +54,8 @@
 #include "lib/sound/audio.h"
 #include "lib/sound/audio_id.h"
 #include "intimage.h"
+
+#include <algorithm>
 
 #define	BAR_CRAWL_TIME	(GAME_TICKS_PER_SEC*3)
 
@@ -173,7 +175,7 @@ STAT_BAR	infoBars[] =
 };
 
 // --------------------------------------------------------------------
-static void fillUpStats();
+static void fillUpStats(const END_GAME_STATS_DATA& stats);
 // --------------------------------------------------------------------
 
 /* The present mission data */
@@ -271,7 +273,24 @@ void getAsciiTime(char *psText, unsigned time)
 	}
 }
 
-void scoreDataToScreen(WIDGET *psWidget)
+END_GAME_STATS_DATA	collectEndGameStatsData()
+{
+	END_GAME_STATS_DATA fullStats;
+	fullStats.missionData = missionData;
+
+	for (size_t i = 0; i < DROID_LEVELS; i++)
+	{
+		fullStats.numDroidsPerLevel.push_back(getNumDroidsForLevel(i));
+	}
+
+	fullStats.numUnits = 0;
+	for (DROID *psDroid = apsDroidLists[selectedPlayer]; psDroid; psDroid = psDroid->psNext, fullStats.numUnits++) {}
+	for (DROID *psDroid = mission.apsDroidLists[selectedPlayer]; psDroid; psDroid = psDroid->psNext, fullStats.numUnits++) {}
+
+	return fullStats;
+}
+
+void scoreDataToScreen(WIDGET *psWidget, ScoreDataToScreenCache& cache)
 {
 	int index, x, y, width, height;
 	bool bMoreBars;
@@ -283,14 +302,17 @@ void scoreDataToScreen(WIDGET *psWidget)
 		audio_PlayTrack(ID_SOUND_BUTTON_CLICK_5);
 	}
 
-	fillUpStats();
+	fillUpStats(collectEndGameStatsData());
 
 	pie_UniTransBoxFill(16 + D_W, MT_Y_POS - 16, pie_GetVideoBufferWidth() - D_W - 16, MT_Y_POS + 256 + 16, WZCOL_SCORE_BOX);
 	iV_Box(16 + D_W, MT_Y_POS - 16, pie_GetVideoBufferWidth() - D_W - 16, MT_Y_POS + 256 + 16, WZCOL_SCORE_BOX_BORDER);
 
-	iV_DrawText(_("Unit Losses"), LC_X + D_W, 80 + 16 + D_H, font_regular);
-	iV_DrawText(_("Structure Losses"), LC_X + D_W, 140 + 16 + D_H, font_regular);
-	iV_DrawText(_("Force Information"), LC_X + D_W, 200 + 16 + D_H, font_regular);
+	cache.wzLabelText_UnitLosses.setText(_("Unit Losses"), font_regular);
+	cache.wzLabelText_UnitLosses.render(LC_X + D_W, 80 + 16 + D_H, WZCOL_FORM_TEXT);
+	cache.wzLabelText_StructureLosses.setText(_("Structure Losses"), font_regular);
+	cache.wzLabelText_StructureLosses.render(LC_X + D_W, 140 + 16 + D_H, WZCOL_FORM_TEXT);
+	cache.wzLabelText_ForceInformation.setText(_("Force Information"), font_regular);
+	cache.wzLabelText_ForceInformation.render(LC_X + D_W, 200 + 16 + D_H, WZCOL_FORM_TEXT);
 
 	index = 0;
 	bMoreBars = true;
@@ -342,7 +364,12 @@ void scoreDataToScreen(WIDGET *psWidget)
 			}
 			/* Now render the text by the bar */
 			sprintf(text, getDescription((MR_STRING)infoBars[index].stringID), infoBars[index].number);
-			iV_DrawText(text, x + width + 16, y + 12, font_regular);
+			if (index >= cache.wzInfoBarText.size())
+			{
+				cache.wzInfoBarText.resize(index + 1);
+			}
+			cache.wzInfoBarText[index].setText(text, font_regular);
+			cache.wzInfoBarText[index].render(x + width + 16, y + 12, WZCOL_FORM_TEXT);
 
 			/* If we're beyond STAT_ROOKIE, then we're on rankings */
 			if (index >= STAT_GREEN && index <= STAT_ACE)
@@ -362,45 +389,42 @@ void scoreDataToScreen(WIDGET *psWidget)
 
 	/* Firstly, top of the screen, number of artefacts found */
 	sprintf(text, _("ARTIFACTS RECOVERED: %d"), missionData.artefactsFound);
-	iV_DrawText(text, (pie_GetVideoBufferWidth() - iV_GetTextWidth(text, font_regular)) / 2, 300 + D_H, font_regular);
+	cache.wzInfoText_ArtifactsFound.setText(text, font_regular);
+	cache.wzInfoText_ArtifactsFound.render((pie_GetVideoBufferWidth() - cache.wzInfoText_ArtifactsFound.width()) / 2, 300 + D_H, WZCOL_FORM_TEXT);
 
 	/* Get the mission result time in a string - and write it out */
 	getAsciiTime((char *)&text2, gameTime - missionData.missionStarted);
 	sprintf(text, _("Mission Time - %s"), text2);
-	iV_DrawText(text, (pie_GetVideoBufferWidth() - iV_GetTextWidth(text, font_regular)) / 2, 320 + D_H, font_regular);
+	cache.wzInfoText_MissionTime.setText(text, font_regular);
+	cache.wzInfoText_MissionTime.render((pie_GetVideoBufferWidth() - cache.wzInfoText_MissionTime.width()) / 2, 320 + D_H, WZCOL_FORM_TEXT);
 
 	/* Write out total game time so far */
 	getAsciiTime((char *)&text2, gameTime);
 	sprintf(text, _("Total Game Time - %s"), text2);
-	iV_DrawText(text, (pie_GetVideoBufferWidth() - iV_GetTextWidth(text, font_regular)) / 2, 340 + D_H, font_regular);
+	cache.wzInfoText_TotalGameTime.setText(text, font_regular);
+	cache.wzInfoText_TotalGameTime.render((pie_GetVideoBufferWidth() - cache.wzInfoText_TotalGameTime.width()) / 2, 340 + D_H, WZCOL_FORM_TEXT);
 	if (Cheated)
 	{
 		// A quick way to flash the text
-		((realTime / 250) % 2) ? iV_SetTextColour(WZCOL_RED) : iV_SetTextColour(WZCOL_YELLOW);
-		sprintf(text, _("You cheated!"));
-		iV_DrawText(text, (pie_GetVideoBufferWidth() - iV_GetTextWidth(text, font_regular)) / 2, 360 + D_H, font_regular);
-		iV_SetTextColour(WZCOL_TEXT_BRIGHT);
+		PIELIGHT cheatedTextColor = ((realTime / 250) % 2) ? WZCOL_RED : WZCOL_YELLOW;
+		sprintf(text, "%s", _("You cheated!"));
+		cache.wzInfoText_Cheated.setText(text, font_regular);
+		cache.wzInfoText_Cheated.render((pie_GetVideoBufferWidth() - cache.wzInfoText_Cheated.width()) / 2, 360 + D_H, cheatedTextColor);
 	}
 }
 
 // -----------------------------------------------------------------------------------
-void	fillUpStats()
+void	fillUpStats(const END_GAME_STATS_DATA& stats)
 {
 	UDWORD	i;
-	UDWORD	maxi, num;
+	UDWORD	maxi;
 	float	scaleFactor;
 	UDWORD	length;
-	UDWORD	numUnits;
-	DROID	*psDroid;
 
 	/* Do rankings first cos they're easier */
 	for (i = 0, maxi = 0; i < DROID_LEVELS; i++)
 	{
-		num = getNumDroidsForLevel(i);
-		if (num > maxi)
-		{
-			maxi = num;
-		}
+		maxi = std::max(maxi, stats.numDroidsPerLevel[i]);
 	}
 
 	/* Make sure we got something */
@@ -416,14 +440,14 @@ void	fillUpStats()
 	/* Scale for percent */
 	for (i = 0; i < DROID_LEVELS; i++)
 	{
-		length = scaleFactor * getNumDroidsForLevel(i);
+		length = scaleFactor * stats.numDroidsPerLevel[i];
 		infoBars[STAT_ROOKIE + i].percent = PERCENT(length, RANK_BAR_WIDTH);
-		infoBars[STAT_ROOKIE + i].number = getNumDroidsForLevel(i);
+		infoBars[STAT_ROOKIE + i].number = stats.numDroidsPerLevel[i];
 	}
 
 	/* Now do the other stuff... */
 	/* Units killed and lost... */
-	maxi = MAX(missionData.unitsLost, missionData.unitsKilled);
+	maxi = MAX(stats.missionData.unitsLost, stats.missionData.unitsKilled);
 	if (maxi == 0)
 	{
 		scaleFactor = 0.f;
@@ -433,13 +457,13 @@ void	fillUpStats()
 		scaleFactor = (float)STAT_BAR_WIDTH / maxi;
 	}
 
-	length = scaleFactor * missionData.unitsLost;
+	length = scaleFactor * stats.missionData.unitsLost;
 	infoBars[STAT_UNIT_LOST].percent = PERCENT(length, STAT_BAR_WIDTH);
-	length = scaleFactor * missionData.unitsKilled;
+	length = scaleFactor * stats.missionData.unitsKilled;
 	infoBars[STAT_UNIT_KILLED].percent = PERCENT(length, STAT_BAR_WIDTH);
 
 	/* Now do the structure losses */
-	maxi = MAX(missionData.strLost, missionData.strKilled);
+	maxi = MAX(stats.missionData.strLost, stats.missionData.strKilled);
 	if (maxi == 0)
 	{
 		scaleFactor = 0.f;
@@ -449,18 +473,15 @@ void	fillUpStats()
 		scaleFactor = (float)STAT_BAR_WIDTH / maxi;
 	}
 
-	length = scaleFactor * missionData.strLost;
+	length = scaleFactor * stats.missionData.strLost;
 	infoBars[STAT_STR_LOST].percent = PERCENT(length, STAT_BAR_WIDTH);
-	length = scaleFactor * missionData.strKilled;
+	length = scaleFactor * stats.missionData.strKilled;
 	infoBars[STAT_STR_BLOWN_UP].percent = PERCENT(length, STAT_BAR_WIDTH);
 
 	/* Finally the force information - need amount of droids as well*/
-	for (psDroid = apsDroidLists[selectedPlayer], numUnits = 0; psDroid; psDroid = psDroid->psNext, numUnits++) {}
 
-	for (psDroid = mission.apsDroidLists[selectedPlayer]; psDroid; psDroid = psDroid->psNext, numUnits++) {}
-
-	maxi = MAX(missionData.unitsBuilt, missionData.strBuilt);
-	maxi = MAX(maxi, numUnits);
+	maxi = MAX(stats.missionData.unitsBuilt, stats.missionData.strBuilt);
+	maxi = MAX(maxi, stats.numUnits);
 
 	if (maxi == 0)
 	{
@@ -471,21 +492,21 @@ void	fillUpStats()
 		scaleFactor = (float)STAT_BAR_WIDTH / maxi;
 	}
 
-	length = scaleFactor * missionData.unitsBuilt;
+	length = scaleFactor * stats.missionData.unitsBuilt;
 	infoBars[STAT_UNITS_BUILT].percent = PERCENT(length, STAT_BAR_WIDTH);
-	length = scaleFactor * numUnits;
+	length = scaleFactor * stats.numUnits;
 	infoBars[STAT_UNITS_NOW].percent = PERCENT(length, STAT_BAR_WIDTH);
-	length = scaleFactor * missionData.strBuilt;
+	length = scaleFactor * stats.missionData.strBuilt;
 	infoBars[STAT_STR_BUILT].percent = PERCENT(length, STAT_BAR_WIDTH);
 
 	/* Finally the numbers themselves */
-	infoBars[STAT_UNIT_LOST].number = missionData.unitsLost;
-	infoBars[STAT_UNIT_KILLED].number = missionData.unitsKilled;
-	infoBars[STAT_STR_LOST].number = missionData.strLost;
-	infoBars[STAT_STR_BLOWN_UP].number = missionData.strKilled;
-	infoBars[STAT_UNITS_BUILT].number =	missionData.unitsBuilt;
-	infoBars[STAT_UNITS_NOW].number = numUnits;
-	infoBars[STAT_STR_BUILT].number = missionData.strBuilt;
+	infoBars[STAT_UNIT_LOST].number = stats.missionData.unitsLost;
+	infoBars[STAT_UNIT_KILLED].number = stats.missionData.unitsKilled;
+	infoBars[STAT_STR_LOST].number = stats.missionData.strLost;
+	infoBars[STAT_STR_BLOWN_UP].number = stats.missionData.strKilled;
+	infoBars[STAT_UNITS_BUILT].number =	stats.missionData.unitsBuilt;
+	infoBars[STAT_UNITS_NOW].number = stats.numUnits;
+	infoBars[STAT_STR_BUILT].number = stats.missionData.strBuilt;
 }
 
 // -----------------------------------------------------------------------------------

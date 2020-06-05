@@ -9,7 +9,7 @@
 	},
 	"position_2": {
 		"label": "vtolAppearPos",
-		"pos": [8896, 8512]
+		"pos": [1000, 1000]
 	},
 	"position_3": {
 		"label": "COHeavyFacL-b1Assembly",
@@ -93,7 +93,7 @@
 	},
 	"position_23": {
 		"label": "vtolRemove",
-		"pos": [8576, 9500]
+		"pos": [128, 128]
 	},
 
 	"area_0": {
@@ -113,7 +113,7 @@
 	},
 	"area_3": {
 		"label": "base4Cleanup",
-		"pos1": [11328, 5824],
+		"pos1": [10368, 5824],
 		"pos2": [13632, 7616]
 	},
 	"area_4": {
@@ -141,6 +141,11 @@
 		"subscriber": 0,
 		"pos1": [8128, 4672],
 		"pos2": [16064, 5824]
+	},
+	"area_9": {
+		"label": "COLandingZone",
+		"pos1": [14464, 14464],
+		"pos2": [15360, 15360]
 	},
 
 	"object_0": {
@@ -195,7 +200,7 @@
 	"radius_0": {
 		"label": "vtolRemoveZone",
 		"subscriber": 2,
-		"pos": [8576, 9500],
+		"pos": [128, 128],
 		"radius": 300
 	}
 }

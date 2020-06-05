@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -50,6 +50,20 @@ static float font_colour[4] = {1.f, 1.f, 1.f, 1.f};
 #include <unordered_map>
 #include <memory>
 
+#if defined(HB_VERSION_ATLEAST) && HB_VERSION_ATLEAST(1,0,5)
+//	#define WZ_FT_LOAD_FLAGS (FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD) // Needs further testing on low-DPI displays
+	#define WZ_FT_LOAD_FLAGS (FT_LOAD_NO_HINTING | FT_LOAD_TARGET_LCD)
+#else
+	// Without `hb_ft_font_set_load_flags` (which requires Harfbuzz 1.0.5+),
+	// must default FreeType to the same flags that Harfbuzz internally uses
+	// (by default hb loads fonts without hinting)
+	#define WZ_FT_LOAD_FLAGS FT_LOAD_NO_HINTING
+#endif
+#define WZ_FT_RENDER_MODE FT_RENDER_MODE_LCD
+
+float _horizScaleFactor = 1.0f;
+float _vertScaleFactor = 1.0f;
+
 /***************************************************************************
  *
  *	Internal classes
@@ -90,7 +104,6 @@ struct FTFace
 	FTFace(FT_Library &lib, const std::string &fileName, int32_t charSize, int32_t horizDPI, int32_t vertDPI)
 	{
 		UDWORD pFileSize = 0;
-		char *pFileData = nullptr;
 		if (!loadFile(fileName.c_str(), &pFileData, &pFileSize))
 		{
 			debug(LOG_FATAL, "Unknown font file format for %s", fileName.c_str());
@@ -110,19 +123,26 @@ struct FTFace
 			debug(LOG_FATAL, "Could not set character size");
 		}
 		m_font = hb_ft_font_create(m_face, nullptr);
+#if defined(HB_VERSION_ATLEAST) && HB_VERSION_ATLEAST(1,0,5)
+		hb_ft_font_set_load_flags(m_font, WZ_FT_LOAD_FLAGS);
+#endif
 	}
 
 	~FTFace()
 	{
 		hb_font_destroy(m_font);
 		FT_Done_Face(m_face);
+		if (pFileData != nullptr)
+		{
+			free(pFileData);
+		}
 	}
 
 	uint32_t getGlyphWidth(uint32_t codePoint)
 	{
 		FT_Error error = FT_Load_Glyph(m_face,
 			codePoint, // the glyph_index in the font file
-			FT_LOAD_NO_HINTING // by default hb load fonts without hinting
+			WZ_FT_LOAD_FLAGS
 		);
 		ASSERT(error == FT_Err_Ok, "Unable to load glyph for %u", codePoint);
 		return m_face->glyph->metrics.width;
@@ -130,14 +150,18 @@ struct FTFace
 
 	RasterizedGlyph get(uint32_t codePoint, Vector2i subpixeloffset64)
 	{
+		FT_Vector delta;
+		delta.x = subpixeloffset64.x;
+		delta.y = subpixeloffset64.y;
+		FT_Set_Transform(m_face, nullptr, &delta);
 		FT_Error error = FT_Load_Glyph(m_face,
 			codePoint, // the glyph_index in the font file
-			FT_LOAD_NO_HINTING // by default hb load fonts without hinting
+			WZ_FT_LOAD_FLAGS
 		);
 		ASSERT(error == FT_Err_Ok, "Unable to load glyph %u", codePoint);
 
 		FT_GlyphSlot slot = m_face->glyph;
-		FT_Render_Glyph(m_face->glyph, FT_RENDER_MODE_LCD);
+		FT_Render_Glyph(m_face->glyph, WZ_FT_RENDER_MODE);
 		FT_Bitmap ftBitmap = slot->bitmap;
 
 		RasterizedGlyph g;
@@ -166,7 +190,7 @@ struct FTFace
 		FT_Set_Transform(m_face, nullptr, &delta);
 		FT_Error error = FT_Load_Glyph(m_face,
 		                               codePoint, // the glyph_index in the font file
-		                               FT_LOAD_NO_HINTING // by default hb load fonts without hinting
+		                               WZ_FT_LOAD_FLAGS
 		);
 		if (error != FT_Err_Ok)
 		{
@@ -189,6 +213,7 @@ struct FTFace
 	FT_Face &face() { return m_face; }
 
 	hb_font_t *m_font;
+	char *pFileData = nullptr;
 
 private:
 	FT_Face m_face;
@@ -220,11 +245,40 @@ struct TextRun
 		text(t), language(l), script(s), direction(d) {}
 };
 
-struct ShapedText
+struct TextLayoutMetrics
 {
-	std::unique_ptr<unsigned char[]> texture;
+	TextLayoutMetrics(uint32_t _width, uint32_t _height) : width(_width), height(_height) { }
+	TextLayoutMetrics() : width(0), height(0) { }
 	uint32_t width;
 	uint32_t height;
+};
+
+struct RenderedText
+{
+	RenderedText(std::unique_ptr<unsigned char[]> &&_data, uint32_t _width, uint32_t _height, int32_t _offset_x, int32_t _offset_y)
+	: data(std::move(_data)), width(_width), height(_height), offset_x(_offset_x), offset_y(_offset_y)
+	{ }
+
+	RenderedText() : data(nullptr) , width(0) , height(0) , offset_x(0) , offset_y(0)
+	{ }
+
+	std::unique_ptr<unsigned char[]> data;
+	uint32_t width;
+	uint32_t height;
+	int32_t offset_x;
+	int32_t offset_y;
+};
+
+struct DrawTextResult
+{
+	DrawTextResult(RenderedText &&_text, TextLayoutMetrics _layoutMetrics) : text(std::move(_text)), layoutMetrics(_layoutMetrics)
+	{ }
+
+	DrawTextResult()
+	{ }
+
+	RenderedText text;
+	TextLayoutMetrics layoutMetrics;
 };
 
 // Note:
@@ -244,18 +298,21 @@ struct TextShaper
 		hb_buffer_destroy(m_buffer);
 	}
 
-	std::tuple<uint32_t, uint32_t> getTextMetrics(const TextRun& text, FTFace &face)
+	// Returns the text width and height *IN PIXELS*
+	TextLayoutMetrics getTextMetrics(const TextRun& text, FTFace &face)
 	{
-		const std::vector<HarfbuzzPosition> &shapingResult = shapeText(text, face);
-		if (shapingResult.empty())
-			return std::make_tuple(0, 0);
+		const ShapingResult &shapingResult = shapeText(text, face);
+		if (shapingResult.glyphes.empty())
+		{
+			return TextLayoutMetrics(shapingResult.x_advance / 64, shapingResult.y_advance / 64);
+		}
 
 		int32_t min_x;
 		int32_t max_x;
 		int32_t min_y;
 		int32_t max_y;
 
-		std::tie(min_x, max_x, min_y, max_y) = std::accumulate(shapingResult.begin(), shapingResult.end(), std::make_tuple(1000, -1000, 1000, -1000),
+		std::tie(min_x, max_x, min_y, max_y) = std::accumulate(shapingResult.glyphes.begin(), shapingResult.glyphes.end(), std::make_tuple(1000, -1000, 1000, -1000),
 			[&face] (const std::tuple<int32_t, int32_t, int32_t, int32_t> &bounds, const HarfbuzzPosition &g) {
 			RasterizedGlyph glyph = face.get(g.codepoint, g.penPosition % 64);
 			int32_t x0 = g.penPosition.x / 64 + glyph.bearing_x;
@@ -268,16 +325,22 @@ struct TextShaper
 				);
 			});
 
-		return std::make_tuple(max_x - min_x + 1, max_y - min_y + 1);
+		const uint32_t texture_width = max_x - min_x + 1;
+		const uint32_t texture_height = max_y - min_y + 1;
+		const uint32_t x_advance = (shapingResult.x_advance / 64);
+		const uint32_t y_advance = (shapingResult.y_advance / 64);
+
+		// return the maximum of the x_advance / y_advance (converted from harfbuzz units) and the texture dimensions
+		return TextLayoutMetrics(std::max(texture_width, x_advance), std::max(texture_height, y_advance));
 	}
 
-	std::tuple<std::unique_ptr<unsigned char[]>, uint32_t, uint32_t, int32_t, int32_t> drawText(const TextRun& text, FTFace &face)
+	// Draws the text and returns the text buffer, width and height, etc *IN PIXELS*
+	DrawTextResult drawText(const TextRun& text, FTFace &face)
 	{
-		const std::vector<HarfbuzzPosition> &shapingResult = shapeText(text, face);
-
-		if (shapingResult.empty())
+		const ShapingResult &shapingResult = shapeText(text, face);
+		if (shapingResult.glyphes.empty())
 		{
-			return std::make_tuple(nullptr, 0, 0, 0, 0);
+			return DrawTextResult(RenderedText(), TextLayoutMetrics(shapingResult.x_advance / 64, shapingResult.y_advance / 64));
 		}
 
 		int32_t min_x = 1000;
@@ -298,7 +361,7 @@ struct TextShaper
 		};
 
 		std::vector<glyphRaster> glyphs;
-		std::transform(shapingResult.begin(), shapingResult.end(), std::back_inserter(glyphs),
+		std::transform(shapingResult.glyphes.begin(), shapingResult.glyphes.end(), std::back_inserter(glyphs),
 			[&] (const HarfbuzzPosition &g) {
 			RasterizedGlyph glyph = face.get(g.codepoint, g.penPosition % 64);
 			int32_t x0 = g.penPosition.x / 64 + glyph.bearing_x;
@@ -310,11 +373,13 @@ struct TextShaper
 			return glyphRaster(std::move(glyph.buffer), Vector2i(x0, y0), Vector2i(glyph.width, glyph.height), glyph.pitch);
 			});
 
-		uint32_t width = max_x - min_x + 1;
-		uint32_t height = max_y - min_y + 1;
+		const uint32_t texture_width = max_x - min_x + 1;
+		const uint32_t texture_height = max_y - min_y + 1;
+		const uint32_t x_advance = (shapingResult.x_advance / 64);
+		const uint32_t y_advance = (shapingResult.y_advance / 64);
 
-		std::unique_ptr<unsigned char[]> stringTexture(new unsigned char[4 * width * height]);
-		memset(stringTexture.get(), 0, 4 * width * height);
+		std::unique_ptr<unsigned char[]> stringTexture(new unsigned char[4 * texture_width * texture_height]);
+		memset(stringTexture.get(), 0, 4 * texture_width * texture_height);
 
 		std::for_each(glyphs.begin(), glyphs.end(),
 			[&](const glyphRaster &g)
@@ -326,7 +391,7 @@ struct TextShaper
 					{
 						uint32_t j0 = g.pixelPosition.x - min_x;
 						uint8_t const *src = &g.buffer[i * g.pitch + 3 * j];
-						uint8_t *dst = &stringTexture[4 * ((i0 + i) * width + j + j0)];
+						uint8_t *dst = &stringTexture[4 * ((i0 + i) * texture_width + j + j0)];
 						dst[0] = std::min(dst[0] + src[0], 255);
 						dst[1] = std::min(dst[1] + src[1], 255);
 						dst[2] = std::min(dst[2] + src[2], 255);
@@ -334,7 +399,10 @@ struct TextShaper
 					}
 				}
 			});
-		return std::make_tuple(std::move(stringTexture), width, height, min_x, min_y);
+		return DrawTextResult(
+				RenderedText(std::move(stringTexture), texture_width, texture_height, min_x, min_y),
+				TextLayoutMetrics(std::max(texture_width, x_advance), std::max(texture_height, y_advance))
+		);
 	}
 
 public:
@@ -348,16 +416,24 @@ public:
 		HarfbuzzPosition(hb_codepoint_t c, Vector2i &&p) : codepoint(c), penPosition(p) {}
 	};
 
-	std::vector<HarfbuzzPosition> shapeText(const TextRun& text, FTFace &face)
+	struct ShapingResult
+	{
+		std::vector<HarfbuzzPosition> glyphes;
+		int32_t x_advance = 0;
+		int32_t y_advance = 0;
+	};
+
+	ShapingResult shapeText(const TextRun& text, FTFace &face)
 	{
 		hb_buffer_reset(m_buffer);
 		size_t length = text.text.size();
 
 		hb_buffer_add_utf8(m_buffer, text.text.c_str(), length, 0, length);
 		hb_buffer_guess_segment_properties(m_buffer);
+		hb_buffer_set_flags(m_buffer, (hb_buffer_flags_t)(HB_BUFFER_FLAG_BOT | HB_BUFFER_FLAG_EOT));
 
 		// harfbuzz shaping
-		std::array<hb_feature_t, 3> features = { HBFeature::KerningOn, HBFeature::LigatureOn, HBFeature::CligOn };
+		std::array<hb_feature_t, 3> features = { {HBFeature::KerningOn, HBFeature::LigatureOn, HBFeature::CligOn} };
 		hb_shape(face.m_font, m_buffer, features.data(), features.size());
 
 		unsigned int glyphCount;
@@ -370,15 +446,18 @@ public:
 
 		int32_t x = 0;
 		int32_t y = 0;
-		std::vector<HarfbuzzPosition> glyphes;
-		for (int glyphIndex = 0; glyphIndex < glyphCount; ++glyphIndex)
+		ShapingResult result;
+		for (unsigned int glyphIndex = 0; glyphIndex < glyphCount; ++glyphIndex)
 		{
-			glyphes.emplace_back(glyphInfo[glyphIndex].codepoint, Vector2i(x + glyphPos[glyphIndex].x_offset, y + glyphPos[glyphIndex].y_offset));
+			hb_glyph_position_t &current_glyphPos = glyphPos[glyphIndex];
+			result.glyphes.emplace_back(glyphInfo[glyphIndex].codepoint, Vector2i(x + current_glyphPos.x_offset, y + current_glyphPos.y_offset));
 
 			x += glyphPos[glyphIndex].x_advance;
 			y += glyphPos[glyphIndex].y_advance;
 		};
-		return glyphes;
+		result.x_advance = x;
+		result.y_advance = y;
+		return result;
 	}
 };
 
@@ -404,9 +483,22 @@ TextShaper &getShaper()
 	return shaper;
 }
 
-#define DPI 72
+inline float iV_GetHorizScaleFactor()
+{
+	return _horizScaleFactor;
+}
+
+inline float iV_GetVertScaleFactor()
+{
+	return _vertScaleFactor;
+}
+
+// The base DPI used internally.
+// Do not change this, or various layout in the game interface & menus will break.
+#define DEFAULT_DPI 72.0f
 
 static FTFace *regular = nullptr;
+static FTFace *regularBold = nullptr;
 static FTFace *bold = nullptr;
 static FTFace *medium = nullptr;
 static FTFace *small = nullptr;
@@ -419,6 +511,8 @@ static FTFace &getFTFace(iV_fonts FontID)
 	default:
 	case font_regular:
 		return *regular;
+	case font_regular_bold:
+		return *regularBold;
 	case font_large:
 		return *bold;
 	case font_medium:
@@ -432,13 +526,26 @@ static FTFace &getFTFace(iV_fonts FontID)
 
 static gfx_api::texture* textureID = nullptr;
 
-void iV_TextInit()
+const GLint text_filtering = GL_LINEAR;
+
+void iV_TextInit(float horizScaleFactor, float vertScaleFactor)
 {
-	regular = new FTFace(getGlobalFTlib().lib, "fonts/DejaVuSans.ttf", 12 * 64, DPI, DPI);
-	bold = new FTFace(getGlobalFTlib().lib, "fonts/DejaVuSans-Bold.ttf", 21 * 64, DPI, DPI);
-	medium = new FTFace(getGlobalFTlib().lib, "fonts/DejaVuSans.ttf", 16 * 64, DPI, DPI);
-	small = new FTFace(getGlobalFTlib().lib, "fonts/DejaVuSans.ttf", 9 * 64, DPI, DPI);
-	smallBold = new FTFace(getGlobalFTlib().lib, "fonts/DejaVuSans-Bold.ttf", 9 * 64, DPI, DPI);
+	assert(horizScaleFactor >= 1.0f);
+	assert(vertScaleFactor >= 1.0f);
+
+	// Use the scaling factors to multiply the default DPI (72) to determine the desired internal font rendering DPI.
+	_horizScaleFactor = horizScaleFactor;
+	_vertScaleFactor = vertScaleFactor;
+	float horizDPI = DEFAULT_DPI * horizScaleFactor;
+	float vertDPI = DEFAULT_DPI * vertScaleFactor;
+	debug(LOG_WZ, "Text-Rendering Scaling Factor: %f x %f; Internal Font DPI: %f x %f", _horizScaleFactor, _vertScaleFactor, horizDPI, vertDPI);
+
+	regular = new FTFace(getGlobalFTlib().lib, "fonts/DejaVuSans.ttf", 12 * 64, horizDPI, vertDPI);
+	regularBold = new FTFace(getGlobalFTlib().lib, "fonts/DejaVuSans-Bold.ttf", 12 * 64, horizDPI, vertDPI);
+	bold = new FTFace(getGlobalFTlib().lib, "fonts/DejaVuSans-Bold.ttf", 21 * 64, horizDPI, vertDPI);
+	medium = new FTFace(getGlobalFTlib().lib, "fonts/DejaVuSans.ttf", 16 * 64, horizDPI, vertDPI);
+	small = new FTFace(getGlobalFTlib().lib, "fonts/DejaVuSans.ttf", 9 * 64, horizDPI, vertDPI);
+	smallBold = new FTFace(getGlobalFTlib().lib, "fonts/DejaVuSans-Bold.ttf", 9 * 64, horizDPI, vertDPI);
 }
 
 void iV_TextShutdown()
@@ -458,48 +565,71 @@ void iV_TextShutdown()
 	textureID = nullptr;
 }
 
-unsigned int iV_GetTextWidth(const char *string, iV_fonts fontID)
+void iV_TextUpdateScaleFactor(float horizScaleFactor, float vertScaleFactor)
 {
-	uint32_t width;
-	TextRun tr(string, "en", HB_SCRIPT_COMMON, HB_DIRECTION_LTR);
-	std::tie(width, std::ignore) = getShaper().getTextMetrics(tr, getFTFace(fontID));
-	return width;
+	iV_TextShutdown();
+	iV_TextInit(horizScaleFactor, vertScaleFactor);
 }
 
+unsigned int width_pixelsToPoints(unsigned int widthInPixels)
+{
+	return ceil((float)widthInPixels / _horizScaleFactor);
+}
+unsigned int height_pixelsToPoints(unsigned int heightInPixels)
+{
+	return ceil((float)heightInPixels / _vertScaleFactor);
+}
+
+// Returns the text width *in points*
+unsigned int iV_GetTextWidth(const char *string, iV_fonts fontID)
+{
+	TextRun tr(string, "en", HB_SCRIPT_COMMON, HB_DIRECTION_LTR);
+	TextLayoutMetrics metrics = getShaper().getTextMetrics(tr, getFTFace(fontID));
+	return width_pixelsToPoints(metrics.width);
+}
+
+// Returns the counted text width *in points*
 unsigned int iV_GetCountedTextWidth(const char *string, size_t string_length, iV_fonts fontID)
 {
 	return iV_GetTextWidth(string, fontID);
 }
 
+// Returns the text height *in points*
 unsigned int iV_GetTextHeight(const char *string, iV_fonts fontID)
 {
-	uint32_t height;
 	TextRun tr(string, "en", HB_SCRIPT_COMMON, HB_DIRECTION_LTR);
-	std::tie(std::ignore, height) = getShaper().getTextMetrics(tr, getFTFace(fontID));
-	return height;
+	TextLayoutMetrics metrics = getShaper().getTextMetrics(tr, getFTFace(fontID));
+	return height_pixelsToPoints(metrics.height);
 }
 
+// Returns the character width *in points*
 unsigned int iV_GetCharWidth(uint32_t charCode, iV_fonts fontID)
 {
-	return getFTFace(fontID).getGlyphWidth(charCode) >> 6;
+	return width_pixelsToPoints(getFTFace(fontID).getGlyphWidth(charCode) >> 6);
+}
+
+int metricsHeight_PixelsToPoints(int heightMetric)
+{
+	float ptMetric = (float)heightMetric / _vertScaleFactor;
+	return (ptMetric < 0) ? floor(ptMetric) : ceil(ptMetric);
 }
 
 int iV_GetTextLineSize(iV_fonts fontID)
 {
 	FT_Face face = getFTFace(fontID);
-	return (face->size->metrics.ascender - face->size->metrics.descender) >> 6;
+	return metricsHeight_PixelsToPoints((face->size->metrics.ascender - face->size->metrics.descender) >> 6);
 }
 
 int iV_GetTextAboveBase(iV_fonts fontID)
 {
 	FT_Face face = getFTFace(fontID);
-	return -(face->size->metrics.ascender >> 6);
+	return metricsHeight_PixelsToPoints(-(face->size->metrics.ascender >> 6));
 }
 
 int iV_GetTextBelowBase(iV_fonts fontID)
 {
 	FT_Face face = getFTFace(fontID);
-	return face->size->metrics.descender >> 6;
+	return metricsHeight_PixelsToPoints(face->size->metrics.descender >> 6);
 }
 
 void iV_SetTextColour(PIELIGHT colour)
@@ -510,22 +640,14 @@ void iV_SetTextColour(PIELIGHT colour)
 	font_colour[3] = colour.byte.a / 255.0f;
 }
 
-/** Draws formatted text with word wrap, long word splitting, embedded newlines
- *  (uses '@' rather than '\n') and colour toggle mode ('#') which enables or
- *  disables font colouring.
- *
- *  @param String   the string to display.
- *  @param x,y      X and Y coordinates of top left of formatted text.
- *  @param width    the maximum width of the formatted text (beyond which line
- *                  wrapping is used).
- *  @param justify  The alignment style to use, which is one of the following:
- *                  FTEXT_LEFTJUSTIFY, FTEXT_CENTRE or FTEXT_RIGHTJUSTIFY.
- *  @return the Y coordinate for the next text line.
- */
-int iV_DrawFormattedText(const char *String, UDWORD x, UDWORD y, UDWORD Width, UDWORD Justify, iV_fonts fontID)
+std::vector<TextLine> iV_FormatText(const char *String, UDWORD MaxWidth, UDWORD Justify, iV_fonts fontID, bool ignoreNewlines /*= false*/)
 {
+	std::vector<TextLine> lineDrawResults;
+
 	std::string FString;
 	std::string FWord;
+	const int x = 0;
+	const int y = 0;
 	int i;
 	int jx = x;		// Default to left justify.
 	int jy = y;
@@ -544,7 +666,7 @@ int iV_DrawFormattedText(const char *String, UDWORD x, UDWORD y, UDWORD Width, U
 		WWidth = 0;
 
 		// Parse through the string, adding words until width is achieved.
-		while (*curChar != 0 && WWidth < Width && !NewLine)
+		while (*curChar != 0 && WWidth < MaxWidth && !NewLine)
 		{
 			const char *startOfWord = curChar;
 			const unsigned int FStringWidth = iV_GetTextWidth(FString.c_str(), fontID);
@@ -571,7 +693,7 @@ int iV_DrawFormattedText(const char *String, UDWORD x, UDWORD y, UDWORD Width, U
 				WWidth = FStringWidth + iV_GetTextWidth(FWord.c_str(), fontID);
 
 				// If this word doesn't fit on the current line then break out
-				if (WWidth > Width)
+				if (WWidth > MaxWidth)
 				{
 					break;
 				}
@@ -584,7 +706,7 @@ int iV_DrawFormattedText(const char *String, UDWORD x, UDWORD y, UDWORD Width, U
 			if (*curChar == ASCII_SPACE)
 			{
 				WWidth += iV_GetCharWidth(' ', fontID);
-				if (WWidth <= Width)
+				if (WWidth <= MaxWidth)
 				{
 					FWord.push_back(' ');
 					++i;
@@ -596,7 +718,7 @@ int iV_DrawFormattedText(const char *String, UDWORD x, UDWORD y, UDWORD Width, U
 			else if (*curChar == ASCII_NEWLINE
 			         || *curChar == '\n')
 			{
-				if (!bMultiPlayer)
+				if (!ignoreNewlines)
 				{
 					NewLine = true;
 				}
@@ -608,7 +730,7 @@ int iV_DrawFormattedText(const char *String, UDWORD x, UDWORD y, UDWORD Width, U
 			// rewind to the start of this word and finish this line.
 			if (GotSpace
 			    && i != 0
-			    && WWidth > Width
+			    && WWidth > MaxWidth
 			    && FWord[i - 1] != ' ')
 			{
 				// Skip back to the beginning of this
@@ -634,11 +756,11 @@ int iV_DrawFormattedText(const char *String, UDWORD x, UDWORD y, UDWORD Width, U
 		switch (Justify)
 		{
 		case FTEXT_CENTRE:
-			jx = x + (Width - TWidth) / 2;
+			jx = x + (MaxWidth - TWidth) / 2;
 			break;
 
 		case FTEXT_RIGHTJUSTIFY:
-			jx = x + Width - TWidth;
+			jx = x + MaxWidth - TWidth;
 			break;
 
 		case FTEXT_LEFTJUSTIFY:
@@ -646,11 +768,45 @@ int iV_DrawFormattedText(const char *String, UDWORD x, UDWORD y, UDWORD Width, U
 			break;
 		}
 
-		// draw the text.
-		iV_DrawText(FString.c_str(), jx, jy, fontID);
+		// Store the line of text and its position in the bounding rect
+		lineDrawResults.push_back({FString, Vector2i(TWidth, iV_GetTextLineSize(fontID)), Vector2i(jx, jy)});
 
 		// and move down a line.
 		jy += iV_GetTextLineSize(fontID);
+	}
+
+	return lineDrawResults;
+}
+
+/** Draws formatted text with word wrap, long word splitting, embedded newlines
+ *  (uses '@' rather than '\n') and colour toggle mode ('#') which enables or
+ *  disables font colouring.
+ *
+ *  @param String   the string to display.
+ *  @param x,y      X and Y coordinates of top left of formatted text.
+ *  @param width    the maximum width of the formatted text (beyond which line
+ *                  wrapping is used).
+ *  @param justify  The alignment style to use, which is one of the following:
+ *                  FTEXT_LEFTJUSTIFY, FTEXT_CENTRE or FTEXT_RIGHTJUSTIFY.
+ *  @return the Y coordinate for the next text line.
+ */
+int iV_DrawFormattedText(const char *String, UDWORD x, UDWORD y, UDWORD Width, UDWORD Justify, iV_fonts fontID)
+{
+	auto formattedTextLines = iV_FormatText(String, Width, Justify, fontID, bMultiPlayer);
+
+	int jy = y;
+	for (const auto& lineDetails : formattedTextLines)
+	{
+		const auto& lineString = lineDetails.text;
+		const auto& lineDrawOffset = lineDetails.offset;
+
+		// draw the text.
+		iV_DrawText(lineString.c_str(), x + lineDrawOffset.x, y + lineDrawOffset.y, fontID);
+	}
+
+	if (!formattedTextLines.empty())
+	{
+		jy = y + formattedTextLines.back().offset.y + iV_GetTextLineSize(fontID);
 	}
 
 	return jy;
@@ -673,23 +829,21 @@ void iV_DrawTextRotated(const char *string, float XPos, float YPos, float rotati
 	color.vector[3] = font_colour[3] * 255.f;
 
 	TextRun tr(string, "en", HB_SCRIPT_COMMON, HB_DIRECTION_LTR);
-	uint32_t width, height;
-	std::unique_ptr<unsigned char[]> texture;
-	int32_t xoffset, yoffset;
-	std::tie(texture, width, height, xoffset, yoffset) = getShaper().drawText(tr, getFTFace(fontID));
-	if (width > 0 && height > 0)
+	DrawTextResult drawResult = getShaper().drawText(tr, getFTFace(fontID));
+
+	if (drawResult.text.width > 0 && drawResult.text.height > 0)
 	{
 		pie_SetTexturePage(TEXPAGE_EXTERN);
 		if (textureID)
 			delete textureID;
-		textureID = gfx_api::context::get().create_texture(width, height, gfx_api::pixel_format::rgba);
-		textureID->upload(0u, 0u, 0u, width, height, gfx_api::pixel_format::rgba, texture.get());
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		textureID = gfx_api::context::get().create_texture(drawResult.text.width, drawResult.text.height, gfx_api::pixel_format::rgba);
+		textureID->upload(0u, 0u, 0u, drawResult.text.width, drawResult.text.height, gfx_api::pixel_format::rgba, drawResult.text.data.get());
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, text_filtering);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, text_filtering);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		glDisable(GL_CULL_FACE);
-		iV_DrawImageText(*textureID, Vector2i(XPos, YPos), Vector2i(xoffset, yoffset), Vector2i(width, height), rotation, REND_TEXT, color);
+		iV_DrawImageText(*textureID, Vector2i(XPos, YPos), Vector2f((float)drawResult.text.offset_x / _horizScaleFactor, (float)drawResult.text.offset_y / _vertScaleFactor), Vector2f((float)drawResult.text.width / _horizScaleFactor, (float)drawResult.text.height / _vertScaleFactor), rotation, REND_TEXT, color);
 		glEnable(GL_CULL_FACE);
 	}
 }
@@ -729,36 +883,83 @@ void iV_DrawTextF(float x, float y, const char *format, ...)
 }
 #endif
 
-void WzText::setText(const std::string &string, iV_fonts fontID)
+int WzText::width()
+{
+	updateCacheIfNecessary();
+	return width_pixelsToPoints(layoutMetrics.x);
+}
+int WzText::height()
+{
+	updateCacheIfNecessary();
+	return height_pixelsToPoints(layoutMetrics.y);
+}
+int WzText::aboveBase()
+{
+	updateCacheIfNecessary();
+	return mPtsAboveBase;
+}
+int WzText::belowBase()
+{
+	updateCacheIfNecessary();
+	return mPtsBelowBase;
+}
+int WzText::lineSize()
+{
+	updateCacheIfNecessary();
+	return mPtsLineSize;
+}
+
+void WzText::setText(const std::string &string, iV_fonts fontID/*, bool delayRender*/)
 {
 	if (mText == string && fontID == mFontID)
 	{
 		return; // cached
 	}
+	drawAndCacheText(string, fontID);
+}
+
+void WzText::drawAndCacheText(const std::string &string, iV_fonts fontID)
+{
 	mFontID = fontID;
 	mText = string;
+	mRenderingHorizScaleFactor = iV_GetHorizScaleFactor();
+	mRenderingVertScaleFactor = iV_GetVertScaleFactor();
+
 	TextRun tr(string, "en", HB_SCRIPT_COMMON, HB_DIRECTION_LTR);
-	std::unique_ptr<unsigned char[]> data;
 	FTFace &face = getFTFace(fontID);
 	FT_Face &type = face.face();
-	std::tie(data, dimensions.x, dimensions.y, offsets.x, offsets.y) = getShaper().drawText(tr, face);
+
+	mPtsAboveBase = metricsHeight_PixelsToPoints(-(type->size->metrics.ascender >> 6));
+	mPtsLineSize = metricsHeight_PixelsToPoints((type->size->metrics.ascender - type->size->metrics.descender) >> 6);
+	mPtsBelowBase = metricsHeight_PixelsToPoints(type->size->metrics.descender >> 6);
+
+	DrawTextResult drawResult = getShaper().drawText(tr, face);
+	dimensions = Vector2i(drawResult.text.width, drawResult.text.height);
+	offsets = Vector2i(drawResult.text.offset_x, drawResult.text.offset_y);
+	layoutMetrics = Vector2i(drawResult.layoutMetrics.width, drawResult.layoutMetrics.height);
+
+	if (texture)
+	{
+		delete texture;
+		texture = nullptr;
+	}
+
 	if (dimensions.x > 0 && dimensions.y > 0)
 	{
 		pie_SetTexturePage(TEXPAGE_EXTERN);
-		if (texture)
-			delete texture;
 		texture = gfx_api::context::get().create_texture(dimensions.x, dimensions.y, gfx_api::pixel_format::rgba);
-		texture->upload(0u, 0u, 0u, dimensions.x , dimensions.y, gfx_api::pixel_format::rgba, data.get());
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		texture->upload(0u, 0u, 0u, dimensions.x , dimensions.y, gfx_api::pixel_format::rgba, drawResult.text.data.get());
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, text_filtering);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, text_filtering);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-		mAboveBase = -(type->size->metrics.ascender >> 6);
-		mLineSize = (type->size->metrics.ascender - type->size->metrics.descender) >> 6;
-		mBelowBase = type->size->metrics.descender >> 6;
 	}
 	glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void WzText::redrawAndCacheText()
+{
+	drawAndCacheText(mText, mFontID);
 }
 
 WzText::WzText(const std::string &string, iV_fonts fontID)
@@ -772,14 +973,92 @@ WzText::~WzText()
 		delete texture;
 }
 
+WzText& WzText::operator=(WzText&& other)
+{
+	if (this != &other)
+	{
+		// Free the existing texture, if any.
+		if (texture)
+		{
+			delete texture;
+		}
+
+		// Get the other data
+		texture = other.texture;
+		mFontID = other.mFontID;
+		mText = std::move(other.mText);
+		mPtsAboveBase = other.mPtsAboveBase;
+		mPtsBelowBase = other.mPtsBelowBase;
+		mPtsLineSize = other.mPtsLineSize;
+		offsets = other.offsets;
+		dimensions = other.dimensions;
+		mRenderingHorizScaleFactor = other.mRenderingHorizScaleFactor;
+		mRenderingVertScaleFactor = other.mRenderingVertScaleFactor;
+		layoutMetrics = other.layoutMetrics;
+
+		// Reset other's texture
+		other.texture = nullptr;
+	}
+	return *this;
+}
+
+WzText::WzText(WzText&& other)
+{
+	*this = std::move(other);
+}
+
+inline void WzText::updateCacheIfNecessary()
+{
+	if (mText.empty())
+	{
+		return; // string is empty (or hasn't yet been set), thus changes have no effect
+	}
+	if (mRenderingHorizScaleFactor != iV_GetHorizScaleFactor() || mRenderingVertScaleFactor != iV_GetVertScaleFactor())
+	{
+		// The text rendering subsystem's scale factor has changed, so the rendered (cached) text must be re-rendered.
+		redrawAndCacheText();
+		// debug(LOG_WZ, "Redrawing / re-calculating WzText text - scale factor has changed.");
+	}
+}
+
 void WzText::render(Vector2i position, PIELIGHT colour, float rotation)
 {
-	ASSERT(texture != 0 || dimensions.x == 0 || dimensions.y == 0, "Text not initialized before rendering");
+	updateCacheIfNecessary();
+
+	if (texture == nullptr)
+	{
+		// A texture will not always be created. (For example, if the rendered text is empty.)
+		// No need to render if there's nothing to render.
+		return;
+	}
+
 	if (rotation != 0.f)
 	{
 		rotation = 180. - rotation;
 	}
 	glDisable(GL_CULL_FACE);
-	iV_DrawImageText(*texture, position, offsets, dimensions, rotation, REND_TEXT, colour);
+	iV_DrawImageText(*texture, position, Vector2f(offsets.x / mRenderingHorizScaleFactor, offsets.y / mRenderingVertScaleFactor), Vector2f(dimensions.x / mRenderingHorizScaleFactor, dimensions.y / mRenderingVertScaleFactor), rotation, REND_TEXT, colour);
 	glEnable(GL_CULL_FACE);
+}
+
+// Sets the text, truncating to a desired width limit (in *points*) if needed
+// returns: the length of the string that will be drawn (may be less than the input text.length() if truncated)
+size_t WidthLimitedWzText::setTruncatableText(const std::string &text, iV_fonts fontID, size_t limitWidthInPoints)
+{
+	if ((mFullText == text) && (mLimitWidthPts == limitWidthInPoints) && (getFontID() == fontID))
+	{
+		return getText().length(); // skip; no change
+	}
+
+	mFullText = text;
+	mLimitWidthPts = limitWidthInPoints;
+
+	std::string truncatedText = text;
+	while ((truncatedText.length() > 0) && (iV_GetTextWidth(truncatedText.c_str(), fontID) > limitWidthInPoints))
+	{
+		truncatedText.pop_back();
+	}
+
+	WzText::setText(truncatedText, fontID);
+	return truncatedText.length();
 }

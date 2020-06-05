@@ -29,7 +29,7 @@ function setupNexusPatrols()
 			"SWPatrolPos2",
 			"SWPatrolPos3"
 		],
-		interval: 20000,
+		interval: camSecondsToMilliseconds(20),
 		regroup: false,
 		repair: 45,
 		count: -1
@@ -40,7 +40,7 @@ function setupNexusPatrols()
 			"NEPatrolPos1",
 			"NEPatrolPos2"
 		],
-		interval: 30000,
+		interval: camSecondsToMilliseconds(30),
 		regroup: false,
 		repair: 45,
 		count: -1
@@ -51,7 +51,7 @@ function setupNexusPatrols()
 			"SEPatrolPos1",
 			"SEPatrolPos2"
 		],
-		interval: 20000,
+		interval: camSecondsToMilliseconds(20),
 		regroup: false,
 		repair: 45,
 		count: -1
@@ -63,7 +63,7 @@ function setupNexusPatrols()
 			"NWPatrolPos2",
 			"NWPatrolPos3"
 		],
-		interval: 35000,
+		interval: camSecondsToMilliseconds(35),
 		regroup: false,
 		repair: 45,
 		count: -1
@@ -89,15 +89,6 @@ function enableAllFactories()
 	});
 }
 
-function enableReinforcements()
-{
-	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "GAMMA_OUT", {
-		area: "RTLZ",
-		reinforcements: 60, // 1 min
-		annihilate: true
-	});
-}
-
 function truckDefense()
 {
 	var truckNum = countDroid(NEXUS, DROID_CONSTRUCT);
@@ -114,7 +105,7 @@ function truckDefense()
 		}
 	}
 
-	queue("truckDefense", 300000); // 5 min
+	queue("truckDefense", camChangeOnDiff(camMinutesToMilliseconds(5)));
 }
 
 function eventStartLevel()
@@ -125,7 +116,7 @@ function eventStartLevel()
 
 	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "GAMMA_OUT", {
 		area: "RTLZ",
-		reinforcements: -1,
+		reinforcements: camMinutesToSeconds(1),
 		annihilate: true
 	});
 
@@ -135,7 +126,9 @@ function eventStartLevel()
 	setTransporterExit(tpos.x, tpos.y, CAM_HUMAN_PLAYER);
 	setMissionTime(-1); //Infinite time
 
-	setPower(AI_POWER, NEXUS);
+	var enemyLz = getObject("NXlandingZone");
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, NEXUS);
+
 	camCompleteRequiredResearch(NEXUS_RES, NEXUS);
 	setupNexusPatrols();
 	camManageTrucks(NEXUS);
@@ -186,55 +179,60 @@ function eventStartLevel()
 		},
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"NX-NWFactory1": {
+			assembly: "NX-NWFactory1Assembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 6,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxhgauss, nxmpulseh, nxmscouh, nxmsamh, nxmstrike]
+			templates: [cTempl.nxhgauss, cTempl.nxmpulseh, cTempl.nxmscouh, cTempl.nxmsamh, cTempl.nxmstrike]
 		},
 		"NX-NWFactory2": {
+			assembly: "NX-NWFactory2Assembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 6,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxhgauss, nxmpulseh, nxmscouh, nxmsamh, nxmstrike]
+			templates: [cTempl.nxhgauss, cTempl.nxmpulseh, cTempl.nxmscouh, cTempl.nxmsamh, cTempl.nxmstrike]
 		},
 		"NX-NWCyborgFactory": {
+			assembly: "NX-NWCyborgFactoryAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(30000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(30)),
 			data: {
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxcyrail, nxcyscou, nxcylas]
+			templates: [cTempl.nxcyrail, cTempl.nxcyscou, cTempl.nxcylas]
 		},
 		"NX-NEFactory": {
+			assembly: "NX-NEFactoryAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(10000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(30)),
 			data: {
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxhgauss, nxmpulseh, nxmscouh, nxmsamh, nxmstrike]
+			templates: [cTempl.nxhgauss, cTempl.nxmpulseh, cTempl.nxmscouh, cTempl.nxmsamh, cTempl.nxmstrike]
 		},
 		"NX-SWFactory": {
+			assembly: "NX-SWFactoryAssembly",
 			order: CAM_ORDER_PATROL,
 			groupSize: 4,
-			throttle: camChangeOnDiff(60000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(60)),
 			data: {
 				pos: [
 					camMakePos("SWPatrolPos1"),
@@ -243,72 +241,77 @@ function eventStartLevel()
 					camMakePos("NEPatrolPos1"),
 					camMakePos("NEPatrolPos2")
 				],
-				interval: 45000,
+				interval: camSecondsToMilliseconds(45),
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxmlinkh, nxllinkh] //Nexus link factory
+			templates: [cTempl.nxmlinkh, cTempl.nxllinkh] //Nexus link factory
 		},
 		"NX-SWCyborgFactory1": {
+			assembly: "NX-SWCyborgFactory1Assembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(35000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(35)),
 			data: {
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxcyrail, nxcyscou, nxcylas]
+			templates: [cTempl.nxcyrail, cTempl.nxcyscou, cTempl.nxcylas]
 		},
 		"NX-SWCyborgFactory2": {
+			assembly: "NX-SWCyborgFactory2Assembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(35000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(35)),
 			data: {
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxcyrail, nxcyscou, nxcylas]
+			templates: [cTempl.nxcyrail, cTempl.nxcyscou, cTempl.nxcylas]
 		},
 		"NX-SEFactory": {
+			assembly: "NX-SEFactoryAssembly",
 			order: CAM_ORDER_PATROL,
 			groupSize: 5,
-			throttle: camChangeOnDiff(30000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(30)),
 			data: {
 				pos: [
 					camMakePos("SEPatrolPos1"),
 					camMakePos("NEPatrolPos1")
 				],
-				interval: 30000,
+				interval: camSecondsToMilliseconds(30),
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxhgauss, nxmpulseh, nxmscouh, nxmsamh, nxmstrike]
+			templates: [cTempl.nxhgauss, cTempl.nxmpulseh, cTempl.nxmscouh, cTempl.nxmsamh, cTempl.nxmstrike]
 		},
 		"NX-VtolFactory1": {
+			assembly: "NX-VtolFactory1Assembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(60000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(60)),
 			data: {
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxmheapv, nxlscouv]
+			templates: [cTempl.nxmheapv, cTempl.nxlscouv]
 		},
 		"NX-VtolFactory2": {
+			assembly: "NX-VtolFactory2Assembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(50000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(50)),
 			data: {
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxmpulsev]
+			templates: [cTempl.nxmpulsev]
 		},
 	});
 
@@ -325,6 +328,5 @@ function eventStartLevel()
 	hackAddMessage("MB3_4_MSG3", MISS_MSG, CAM_HUMAN_PLAYER, true);
 	hackAddMessage("CM34_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER);
 
-	queue("enableReinforcements", 16000);
-	queue("enableAllFactories", camChangeOnDiff(600000)); // 10 min.
+	queue("enableAllFactories", camChangeOnDiff(camMinutesToMilliseconds(10)));
 }

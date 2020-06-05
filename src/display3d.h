@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -28,6 +28,8 @@
 #include "objectdef.h"
 #include "message.h"
 
+#define HEIGHT_TRACK_INCREMENTS (50)
+
 /*!
  * Special tile types
  */
@@ -49,18 +51,20 @@ enum ENERGY_BAR
 
 struct iView
 {
-	Vector3i p, r;
+	Vector3i p = Vector3i(0, 0, 0);
+	Vector3i r = Vector3i(0, 0, 0);
 };
 
 extern bool showFPS;
 extern bool showSAMPLES;
 extern bool showORDERS;
-extern bool showLevelName;
 
 float getViewDistance();
 void setViewDistance(float dist);
 extern bool	radarOnScreen;
 extern bool	radarPermitted;
+bool radarVisible();
+
 extern bool rangeOnScreen; // Added to get sensor/gun range on screen.  -Q 5-10-05
 void setViewPos(UDWORD x, UDWORD y, bool Pan);
 Vector2i    getPlayerPos();
@@ -84,6 +88,9 @@ bool doWeDrawProximitys();
 void setProximityDraw(bool val);
 
 bool	clipXY(SDWORD x, SDWORD y);
+inline bool clipShapeOnScreen(const iIMDShape *pIMD, const glm::mat4& viewModelMatrix, int overdrawScreenPoints = 10);
+bool clipDroidOnScreen(DROID *psDroid, const glm::mat4& viewModelMatrix, int overdrawScreenPoints = 25);
+bool clipStructureOnScreen(STRUCTURE *psStructure, const glm::mat4 &viewModelMatrix, int overdrawScreenPoints = 0);
 
 bool init3DView();
 extern iView player;
@@ -101,6 +108,8 @@ STRUCTURE *getTileBlueprintStructure(int mapX, int mapY);  ///< Gets the bluepri
 STRUCTURE_STATS const *getTileBlueprintStats(int mapX, int mapY);  ///< Gets the structure stats of the blueprint at those coordinates, if any.
 bool anyBlueprintTooClose(STRUCTURE_STATS const *stats, Vector2i pos, uint16_t dir);  ///< Checks if any blueprint is too close to the given structure.
 void clearBlueprints();
+
+void display3dScreenSizeDidChange(unsigned int oldWidth, unsigned int oldHeight, unsigned int newWidth, unsigned int newHeight);
 
 extern SDWORD mouseTileX, mouseTileY;
 extern Vector2i mousePos;
@@ -128,6 +137,6 @@ extern bool CauseCrash;
 extern bool tuiTargetOrigin;
 
 /// Draws using the animation systems. Usually want to use in a while loop to get all model levels.
-void drawShape(BASE_OBJECT *psObj, iIMDShape *strImd, int colour, PIELIGHT buildingBrightness, int pieFlag, int pieFlagData, const glm::mat4& viewMatrix);
+bool drawShape(BASE_OBJECT *psObj, iIMDShape *strImd, int colour, PIELIGHT buildingBrightness, int pieFlag, int pieFlagData, const glm::mat4& viewMatrix);
 
 #endif // __INCLUDED_SRC_DISPLAY3D_H__

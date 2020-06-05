@@ -1,13 +1,12 @@
-AM_CPPFLAGS = -DYY_NO_INPUT $(SDL_CFLAGS) $(WZ_CPPFLAGS) $(QT5_CFLAGS)
-AM_CFLAGS = $(WZ_CFLAGS)
-AM_CXXFLAGS = $(WZ_CXXFLAGS) $(QT5_CFLAGS)
+AM_CPPFLAGS = -DYY_NO_INPUT $(SDL_CFLAGS) $(WZ_CPPFLAGS) $(QT5_CFLAGS) $(LIBSODIUM_CFLAGS) -DUTF8PROC_STATIC
+AM_CFLAGS = $(WZ_CFLAGS) -DUTF8PROC_STATIC
+AM_CXXFLAGS = $(WZ_CXXFLAGS) $(QT5_CFLAGS) $(LIBSODIUM_CFLAGS) -DUTF8PROC_STATIC
 
 EXTRA_DIST = \
 	cocoa_wrapper.h cocoa_wrapper.mm
 
 noinst_LIBRARIES = libframework.a
 noinst_HEADERS = \
-	config-macosx.h \
 	crc.h \
 	cursors.h \
 	debug.h \
@@ -40,7 +39,9 @@ noinst_HEADERS = \
 	vector.h \
 	wzapp.h \
 	wzconfig.h \
-	wzglobal.h
+	wzglobal.h \
+	wzpaths.h \
+	wzstring.h
 
 libframework_a_SOURCES = \
 	crc.cpp \
@@ -59,4 +60,6 @@ libframework_a_SOURCES = \
 	treap.cpp \
 	trig.cpp \
 	utf.cpp \
-	wzconfig.cpp
+	wzconfig.cpp \
+	wzpaths.cpp \
+	wzstring.cpp

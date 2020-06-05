@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -31,10 +31,10 @@
 #include "group.h"
 #include "droid.h"
 #include "order.h"
-#include <QtCore/QMap>
+#include <map>
 
 // Group system variables: grpGlobalManager enables to remove all the groups to Shutdown the system
-static QMap<int, DROID_GROUP *> grpGlobalManager;
+static std::map<int, DROID_GROUP *> grpGlobalManager;
 static bool grpInitialized = false;
 
 // initialise the group system
@@ -50,11 +50,11 @@ void grpShutDown()
 {
 	/* Since we are not very diligent removing groups after we have
 	 * created them; we need this hack to remove them on level end. */
-	QMap<int, DROID_GROUP *>::iterator iter;
+	std::map<int, DROID_GROUP *>::iterator iter;
 
 	for (iter = grpGlobalManager.begin(); iter != grpGlobalManager.end(); iter++)
 	{
-		delete(*iter);
+		delete(iter->second);
 	}
 	grpGlobalManager.clear();
 	grpInitialized = false;
@@ -67,7 +67,6 @@ DROID_GROUP::DROID_GROUP()
 	refCount = 0;
 	psList = nullptr;
 	psCommander = nullptr;
-	memset(&sRunData, 0, sizeof(sRunData));
 }
 
 // create a new group
@@ -78,21 +77,26 @@ DROID_GROUP *grpCreate(int id)
 	if (id == -1)
 	{
 		int i;
-		for (i = 0; grpGlobalManager.contains(i); i++) {}	// surly hack
+		for (i = 0; grpGlobalManager.find(i) != grpGlobalManager.end(); i++) {}	// surly hack
 		psGroup->id = i;
 	}
 	else
 	{
-		ASSERT(!grpGlobalManager.contains(id), "Group %d is already created!", id);
+		ASSERT(grpGlobalManager.find(id) == grpGlobalManager.end(), "Group %d is already created!", id);
 		psGroup->id = id;
 	}
-	grpGlobalManager.insert(psGroup->id, psGroup);
+	grpGlobalManager.emplace(psGroup->id, psGroup);
 	return psGroup;
 }
 
 DROID_GROUP *grpFind(int id)
 {
-	DROID_GROUP *psGroup = grpGlobalManager.value(id, nullptr);
+	DROID_GROUP *psGroup = nullptr;
+	std::map<int, DROID_GROUP *>::iterator it = grpGlobalManager.find(id);
+	if (it != grpGlobalManager.end())
+	{
+		psGroup = it->second;
+	}
 	if (!psGroup)
 	{
 		psGroup = grpCreate(id);
@@ -215,7 +219,7 @@ void DROID_GROUP::remove(DROID *psDroid)
 	// free the group if necessary
 	if (refCount <= 0)
 	{
-		grpGlobalManager.remove(id);
+		grpGlobalManager.erase(id);
 		delete this;
 	}
 }

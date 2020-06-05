@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 
 #include <time.h>
 #include <physfs.h>
+#include "lib/framework/physfs_ext.h"
 
 #include "netlog.h"
 #include "netplay.h"
@@ -61,11 +62,11 @@ bool NETstartLogging(void)
 	if (!pFileHandle)
 	{
 		debug(LOG_ERROR, "Could not create net log %s: %s", filename,
-		      PHYSFS_getLastError());
+		      WZ_PHYSFS_getLastError());
 		return false;
 	}
 	snprintf(buf, sizeof(buf), "NETPLAY log: %s\n", asctime(newtime));
-	PHYSFS_write(pFileHandle, buf, strlen(buf), 1);
+	WZ_PHYSFS_writeBytes(pFileHandle, buf, strlen(buf));
 	return true;
 }
 
@@ -93,43 +94,43 @@ bool NETstopLogging(void)
 			snprintf(buf, sizeof(buf), "%-24s:\t received %u times, %u bytes; sent %u times, %u bytes\n", messageTypeToString(i),
 			         packetcount[1][i], packetsize[1][i], packetcount[0][i], packetsize[0][i]);
 		}
-		PHYSFS_write(pFileHandle, buf, strlen(buf), 1);
+		WZ_PHYSFS_writeBytes(pFileHandle, buf, strlen(buf));
 		totalBytessent += packetsize[0][i];
 		totalBytesrecv += packetsize[1][i];
 		totalPacketsent += packetcount[0][i];
 		totalPacketrecv += packetcount[1][i];
 	}
 	snprintf(buf, sizeof(buf), "== Total bytes sent %u, Total bytes received %u ==\n", totalBytessent, totalBytesrecv);
-	PHYSFS_write(pFileHandle, buf, strlen(buf), 1);
+	WZ_PHYSFS_writeBytes(pFileHandle, buf, strlen(buf));
 	snprintf(buf, sizeof(buf), "== Total packets sent %u, recv %u ==\n", totalPacketsent, totalPacketrecv);
-	PHYSFS_write(pFileHandle, buf, strlen(buf), 1);
+	WZ_PHYSFS_writeBytes(pFileHandle, buf, strlen(buf));
 	snprintf(buf, sizeof(buf), "\n-Sync statistics -\n");
-	PHYSFS_write(pFileHandle, buf, strlen(buf), 1);
-	PHYSFS_write(pFileHandle, dash_line, strlen(dash_line), 1);
+	WZ_PHYSFS_writeBytes(pFileHandle, buf, strlen(buf));
+	WZ_PHYSFS_writeBytes(pFileHandle, dash_line, strlen(dash_line));
 	snprintf(buf, sizeof(buf), "joins: %u, kicks: %u, drops: %u, left %u\n", sync_counter.joins, sync_counter.kicks, sync_counter.drops, sync_counter.left);
-	PHYSFS_write(pFileHandle, buf, strlen(buf), 1);
+	WZ_PHYSFS_writeBytes(pFileHandle, buf, strlen(buf));
 	snprintf(buf, sizeof(buf), "banned: %u, cantjoin: %u, rejected: %u\n", sync_counter.banned, sync_counter.cantjoin, sync_counter.rejected);
-	PHYSFS_write(pFileHandle, buf, strlen(buf), 1);
+	WZ_PHYSFS_writeBytes(pFileHandle, buf, strlen(buf));
 	if (sync_counter.banned && IPlist)
 	{
 		snprintf(buf, sizeof(buf), "Banned list:\n");
-		PHYSFS_write(pFileHandle, buf, strlen(buf), 1);
+		WZ_PHYSFS_writeBytes(pFileHandle, buf, strlen(buf));
 		for (i = 0; i < MAX_BANS; i++)
 		{
 			if (IPlist[i].IPAddress[0] != '\0')
 			{
 				snprintf(buf, sizeof(buf), "player %s, IP: %s\n", IPlist[i].pname, IPlist[i].IPAddress);
-				PHYSFS_write(pFileHandle, buf, strlen(buf), 1);
+				WZ_PHYSFS_writeBytes(pFileHandle, buf, strlen(buf));
 			}
 		}
 
 	}
-	PHYSFS_write(pFileHandle, dash_line, strlen(dash_line), 1);
-	PHYSFS_write(pFileHandle, dash_line, strlen(dash_line), 1);
+	WZ_PHYSFS_writeBytes(pFileHandle, dash_line, strlen(dash_line));
+	WZ_PHYSFS_writeBytes(pFileHandle, dash_line, strlen(dash_line));
 
 	if (!PHYSFS_close(pFileHandle))
 	{
-		debug(LOG_ERROR, "Could not close net log: %s", PHYSFS_getLastError());
+		debug(LOG_ERROR, "Could not close net log: %s", WZ_PHYSFS_getLastError());
 		return false;
 	}
 	pFileHandle = nullptr;
@@ -178,7 +179,7 @@ bool NETlogEntry(const char *str, UDWORD a, UDWORD b)
 		static const char dash_line[] = "-----------------------------------------------------------\n";
 
 		lastframe = frame;
-		PHYSFS_write(pFileHandle, dash_line, strlen(dash_line), 1);
+		WZ_PHYSFS_writeBytes(pFileHandle, dash_line, strlen(dash_line));
 	}
 
 	if (a < NUM_GAME_PACKETS)
@@ -198,13 +199,13 @@ bool NETlogEntry(const char *str, UDWORD a, UDWORD b)
 	if (a == NET_PLAYER_LEAVING || a == NET_PLAYER_DROPPED)
 	{
 		// Write a starry line above NET_LEAVING messages
-		PHYSFS_write(pFileHandle, star_line, strlen(star_line), 1);
-		PHYSFS_write(pFileHandle, buf, strlen(buf), 1);
-		PHYSFS_write(pFileHandle, star_line, strlen(star_line), 1);
+		WZ_PHYSFS_writeBytes(pFileHandle, star_line, strlen(star_line));
+		WZ_PHYSFS_writeBytes(pFileHandle, buf, strlen(buf));
+		WZ_PHYSFS_writeBytes(pFileHandle, star_line, strlen(star_line));
 	}
 	else
 	{
-		PHYSFS_write(pFileHandle, buf, strlen(buf), 1);
+		WZ_PHYSFS_writeBytes(pFileHandle, buf, strlen(buf));
 	}
 
 	PHYSFS_flush(pFileHandle);

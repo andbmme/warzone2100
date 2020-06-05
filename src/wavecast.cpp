@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -78,13 +78,24 @@ static std::vector<WavecastTile> generateWavecastTable(unsigned radius)
 			for (unsigned s = 0; s < diamond; ++s)
 			{
 				WavecastTile tile;
+#if defined( _MSC_VER )
+	#pragma warning( push )
+	#pragma warning( disable : 4146 ) // warning C4146: unary minus operator applied to unsigned type, result still unsigned
+#endif
 				switch (quadrant)
 				{
 				case 0: tile.dx =  diamond - s;     tile.dy =            s + 1; break;
 				case 1: tile.dx =          - s;     tile.dy =  diamond - s;     break;
 				case 2: tile.dx = -diamond + s + 1; tile.dy =          - s;     break;
 				case 3: tile.dx =            s + 1; tile.dy = -diamond + s + 1; break;
+				default:
+					debug(LOG_FATAL, "quadrant is unexpected value: %u", quadrant); // Silence later MSVC warning C4701: potentially uninitialized local variable 'tile' used
 				}
+
+#if defined( _MSC_VER )
+	#pragma warning( pop )
+#endif
+
 				const int sdx = tile.dx * 2 - 1, sdy = tile.dy * 2 - 1; // 2*distance from sensor located at (0.5, 0.5)
 				const unsigned tileRadiusSq = sdx * sdx + sdy * sdy;
 
@@ -153,7 +164,7 @@ static std::vector<WavecastTile> generateWavecastTable(unsigned radius)
 // Not thread safe if someone calls with a new radius. Thread safe, otherwise.
 const WavecastTile *getWavecastTable(unsigned radius, size_t *size)
 {
-	static std::map<unsigned, std::vector<WavecastTile> > tables;
+	static std::map<unsigned, std::vector<WavecastTile>> tables;
 
 	std::vector<WavecastTile> &table = tables[radius];
 	if (table.empty())

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -29,6 +29,7 @@
 #include <physfs.h>
 
 #include "lib/framework/frame.h"
+#include "lib/framework/frameresource.h"
 #include "lib/ivis_opengl/bitimage.h"
 #include "lib/ivis_opengl/pieblitfunc.h"
 #include "lib/sound/audio.h"
@@ -40,18 +41,16 @@
 #include "hci.h"
 #include "init.h"
 #include "intdisplay.h"
+#include "keybind.h"
 #include "keyedit.h"
 #include "keymap.h"
 #include "loadsave.h"
 #include "main.h"
 #include "multiint.h"
+#include "multiplay.h"
 
 // ////////////////////////////////////////////////////////////////////////////
 // defines
-
-#define KM_FORM				10200
-#define KM_RETURN			10202
-#define KM_DEFAULT			10203
 
 #define	KM_START			10204
 #define	KM_END				10399
@@ -67,6 +66,20 @@
 #define KM_ENTRYH			(16)
 
 
+struct DisplayKeyMapCache {
+	WzText wzNameText;
+	WzText wzBindingText;
+};
+
+struct DisplayKeyMapData {
+	DisplayKeyMapData(KEY_MAPPING *psMapping)
+	: psMapping(psMapping)
+	{ }
+
+	KEY_MAPPING *psMapping;
+	DisplayKeyMapCache cache;
+};
+
 // ////////////////////////////////////////////////////////////////////////////
 // variables
 
@@ -77,7 +90,7 @@ static KEY_MAPPING	*selectedKeyMap;
 
 static bool pushedKeyMap(UDWORD key)
 {
-	selectedKeyMap = (KEY_MAPPING *)widgGetFromID(psWScreen, key)->pUserData;
+	selectedKeyMap = static_cast<DisplayKeyMapData *>(widgGetFromID(psWScreen, key)->pUserData)->psMapping;
 	if (selectedKeyMap && selectedKeyMap->status != KEYMAP_ASSIGNABLE)
 	{
 		selectedKeyMap = nullptr;
@@ -178,6 +191,39 @@ static KEY_CODE scanKeyBoardForBinding()
 	return (KEY_CODE)0;
 }
 
+bool runInGameKeyMapEditor(unsigned id)
+{
+	if (id == KM_RETURN)			// return
+	{
+		saveKeyMap();
+		widgDelete(psWScreen, KM_FORM);
+		inputLoseFocus();
+		bAllowOtherKeyPresses = true;
+		return true;
+	}
+	if (id == KM_DEFAULT)
+	{
+		// reinitialise key mappings
+		keyInitMappings(true);
+		widgDelete(psWScreen, KM_FORM); // readd the widgets
+		startInGameKeyMapEditor(false);
+	}
+	else if (id >= KM_START && id <= KM_END)
+	{
+		pushedKeyMap(id);
+	}
+
+	if (selectedKeyMap)
+	{
+		KEY_CODE kc = scanKeyBoardForBinding();
+		if (kc)
+		{
+			pushedKeyCombo(kc);
+		}
+	}
+	return false;
+}
+
 // ////////////////////////////////////////////////////////////////////////////
 bool runKeyMapEditor()
 {
@@ -249,11 +295,15 @@ static bool keyMapToString(char *pStr, KEY_MAPPING *psMapping)
 // display a keymap on the interface.
 static void displayKeyMap(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 {
+	// Any widget using displayKeyMap must have its pUserData initialized to a (DisplayKeyMapData*)
+	assert(psWidget->pUserData != nullptr);
+	DisplayKeyMapData& data = *static_cast<DisplayKeyMapData *>(psWidget->pUserData);
+
 	int x = xOffset + psWidget->x();
 	int y = yOffset + psWidget->y();
 	int w = psWidget->width();
 	int h = psWidget->height();
-	KEY_MAPPING *psMapping = (KEY_MAPPING *)psWidget->pUserData;
+	KEY_MAPPING *psMapping = data.psMapping;
 	char sKey[MAX_STR_LENGTH];
 
 	if (psMapping == selectedKeyMap)
@@ -271,48 +321,89 @@ static void displayKeyMap(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 	}
 
 	// draw name
-	iV_SetTextColour(WZCOL_FORM_TEXT);
-	iV_DrawText(_(psMapping->name.c_str()), x + 2, y + (psWidget->height() / 2) + 3, font_regular);
+	data.cache.wzNameText.setText(_(psMapping->name.c_str()), font_regular);
+	data.cache.wzNameText.render(x + 2, y + (psWidget->height() / 2) + 3, WZCOL_FORM_TEXT);
 
 	// draw binding
 	keyMapToString(sKey, psMapping);
 	// Check to see if key is on the numpad, if so tell user and change color
+	PIELIGHT bindingTextColor = WZCOL_FORM_TEXT;
 	if (psMapping->subKeyCode >= KEY_KP_0 && psMapping->subKeyCode <= KEY_KPENTER)
 	{
-		iV_SetTextColour(WZCOL_YELLOW);
+		bindingTextColor = WZCOL_YELLOW;
 		sstrcat(sKey, " (numpad)");
 	}
-	iV_DrawText(sKey, x + 364, y + (psWidget->height() / 2) + 3, font_regular);
+	data.cache.wzBindingText.setText(sKey, font_regular);
+	data.cache.wzBindingText.render(x + 364, y + (psWidget->height() / 2) + 3, bindingTextColor);
 }
 
 // ////////////////////////////////////////////////////////////////////////////
-bool startKeyMapEditor(bool first)
+static bool keyMapEditor(bool first, WIDGET *parent, bool ingame)
 {
-	addBackdrop();
-	addSideText(FRONTEND_SIDETEXT, KM_SX, KM_Y, _("KEY MAPPING"));
-
 	if (first)
 	{
 		loadKeyMap();									// get the current mappings.
 	}
 
-	WIDGET *parent = widgGetFromID(psWScreen, FRONTEND_BACKDROP);
-
 	IntFormAnimated *kmForm = new IntFormAnimated(parent, false);
 	kmForm->id = KM_FORM;
-	kmForm->setGeometry(KM_X, KM_Y, KM_W, KM_H);
+	if (!ingame)
+	{
+		kmForm->setCalcLayout(LAMBDA_CALCLAYOUT_SIMPLE({
+			psWidget->setGeometry(KM_X, KM_Y, KM_W, KM_H);
+				}));
 
-	addMultiBut(psWScreen, KM_FORM, KM_RETURN,			// return button.
-	            8, 5,
-	            iV_GetImageWidth(FrontImages, IMAGE_RETURN),
-	            iV_GetImageHeight(FrontImages, IMAGE_RETURN),
-	            _("Return To Previous Screen"), IMAGE_RETURN, IMAGE_RETURN_HI, IMAGE_RETURN_HI);
+		addMultiBut(psWScreen, KM_FORM, KM_RETURN,			// return button.
+			    8, 5,
+			    iV_GetImageWidth(FrontImages, IMAGE_RETURN),
+			    iV_GetImageHeight(FrontImages, IMAGE_RETURN),
+			    _("Return To Previous Screen"), IMAGE_RETURN, IMAGE_RETURN_HI, IMAGE_RETURN_HI);
 
-	addMultiBut(psWScreen, KM_FORM, KM_DEFAULT,
-	            11, 45,
-	            iV_GetImageWidth(FrontImages, IMAGE_KEYMAP_DEFAULT), iV_GetImageWidth(FrontImages, IMAGE_KEYMAP_DEFAULT),
-	            _("Select Default"),
-	            IMAGE_KEYMAP_DEFAULT, IMAGE_KEYMAP_DEFAULT_HI, IMAGE_KEYMAP_DEFAULT_HI);	// default.
+		addMultiBut(psWScreen, KM_FORM, KM_DEFAULT,
+			    11, 45,
+			    iV_GetImageWidth(FrontImages, IMAGE_KEYMAP_DEFAULT),
+			    iV_GetImageHeight(FrontImages, IMAGE_KEYMAP_DEFAULT),
+			    _("Select Default"),
+			    IMAGE_KEYMAP_DEFAULT, IMAGE_KEYMAP_DEFAULT_HI, IMAGE_KEYMAP_DEFAULT_HI);	// default.
+	}
+	else
+	{
+		// Text versions for in-game where image resources are not available
+		kmForm->setCalcLayout(LAMBDA_CALCLAYOUT_SIMPLE({
+			psWidget->setGeometry(((300-(KM_W/2))+D_W), ((240-(KM_H/2))+D_H), KM_W, KM_H + 10);
+				}));
+
+		W_BUTINIT sButInit;
+
+		sButInit.formID		= KM_FORM;
+		sButInit.style		= WBUT_PLAIN | WBUT_TXTCENTRE;
+		sButInit.width		= 600;
+		sButInit.FontID		= font_regular;
+		sButInit.x		= 0;
+		sButInit.height		= 10;
+		sButInit.pDisplay	= displayTextOption;
+		sButInit.initPUserDataFunc = []() -> void * { return new DisplayTextOptionCache(); };
+		sButInit.onDelete = [](WIDGET *psWidget) {
+					    assert(psWidget->pUserData != nullptr);
+					    delete static_cast<DisplayTextOptionCache *>(psWidget->pUserData);
+					    psWidget->pUserData = nullptr;
+				    };
+
+		sButInit.id			= KM_RETURN;
+		sButInit.y			= KM_H - 32;
+		sButInit.pText		= _("Resume Game");
+
+		widgAddButton(psWScreen, &sButInit);
+
+		if (!(bMultiPlayer && NetPlay.bComms != 0)) // no editing in true multiplayer
+		{
+			sButInit.id			= KM_DEFAULT;
+			sButInit.y			= KM_H - 8;
+			sButInit.pText		= _("Select Default");
+
+			widgAddButton(psWScreen, &sButInit);
+		}
+	}
 
 	// add tab form..
 	IntListTabWidget *kmList = new IntListTabWidget(kmForm);
@@ -338,8 +429,13 @@ bool startKeyMapEditor(bool first)
 	{
 		W_BUTTON *button = new W_BUTTON(kmList);
 		button->id = KM_START + (i - mappings.begin());
-		button->pUserData = *i;
 		button->displayFunction = displayKeyMap;
+		button->pUserData = new DisplayKeyMapData(*i);
+		button->setOnDelete([](WIDGET *psWidget) {
+			assert(psWidget->pUserData != nullptr);
+			delete static_cast<DisplayKeyMapData *>(psWidget->pUserData);
+			psWidget->pUserData = nullptr;
+		});
 		kmList->addWidgetToLayout(button);
 	}
 
@@ -348,7 +444,20 @@ bool startKeyMapEditor(bool first)
 	return true;
 }
 
+bool startInGameKeyMapEditor(bool first)
+{
+	WIDGET *parent = psWScreen->psForm;
+	bAllowOtherKeyPresses = false;
+	return keyMapEditor(first, parent, true);
+}
 
+bool startKeyMapEditor(bool first)
+{
+	addBackdrop();
+	addSideText(FRONTEND_SIDETEXT, KM_SX, KM_Y, _("KEY MAPPING"));
+	WIDGET *parent = widgGetFromID(psWScreen, FRONTEND_BACKDROP);
+	return keyMapEditor(first, parent, false);
+}
 
 // ////////////////////////////////////////////////////////////////////////////
 // save current keymaps to registry
@@ -358,7 +467,7 @@ bool saveKeyMap()
 	if (!ini.status() || !ini.isWritable())
 	{
 		// NOTE: Changed to LOG_FATAL, since we want to inform user via pop-up (windows only)
-		debug(LOG_FATAL, "Could not open %s", ini.fileName().toUtf8().constData());
+		debug(LOG_FATAL, "Could not open %s", ini.fileName().toUtf8().c_str());
 		return false;
 	}
 
@@ -401,21 +510,21 @@ bool loadKeyMap()
 
 	for (ini.beginArray("mappings"); ini.remainingArrayItems(); ini.nextArrayItem())
 	{
-		auto name = ini.value("name", "").toString();
+		auto name = ini.value("name", "").toWzString();
 		auto status = (KEY_STATUS)ini.value("status", 0).toInt();
 		auto meta = (KEY_CODE)ini.value("meta", 0).toInt();
 		auto sub = (KEY_CODE)ini.value("sub", 0).toInt();
 		auto action = (KEY_ACTION)ini.value("action", 0).toInt();
-		auto functionName = ini.value("function", "").toString().toUtf8();
-		auto function = keymapEntryByName(functionName.constData());
+		auto functionName = ini.value("function", "").toWzString();
+		auto function = keymapEntryByName(functionName.toUtf8().c_str());
 		if (function == nullptr)
 		{
-			debug(LOG_WARNING, "Skipping unknown keymap function \"%s\".", functionName.constData());
+			debug(LOG_WARNING, "Skipping unknown keymap function \"%s\".", functionName.toUtf8().c_str());
 			continue;
 		}
 
 		// add mapping
-		keyAddMapping(status, meta, sub, action, function->function, name.toUtf8().constData());
+		keyAddMapping(status, meta, sub, action, function->function, name.toUtf8().c_str());
 	}
 	ini.endArray();
 	return true;

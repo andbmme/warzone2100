@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -29,7 +29,10 @@
 #include "widgint.h"
 #include "tip.h"
 #include "lib/ivis_opengl/pieblitfunc.h"
-#include <QtCore/QStringList>
+#include <sstream>
+#include <iostream>
+#include <vector>
+#include <string>
 
 /* Time delay before showing the tool tip */
 #define TIP_PAUSE	200
@@ -50,6 +53,9 @@ static enum _tip_state
 	TIP_ACTIVE,			// A tip is being displayed
 } tipState;
 
+struct TipDisplayCache {
+	std::vector<WzText> wzTip;
+};
 
 static SDWORD		startTime;			// When the tip was created
 static SDWORD		mx, my;				// Last mouse coords
@@ -57,10 +63,11 @@ static SDWORD		wx, wy, ww, wh;		// Position and size of button to place tip by
 static SDWORD		tx, ty, tw, th;		// Position and size of the tip box
 static SDWORD		fx, fy;				// Position of the text
 static int              lineHeight;
-static QStringList      pTip;                   // Tip text
+static std::vector<std::string>  pTip;	// Tip text
 static WIDGET		*psWidget;			// The button the tip is for
 static enum iV_fonts FontID = font_regular;	// ID for the Ivis Font.
 static PIELIGHT TipColour;
+static TipDisplayCache displayCache;
 
 /* Initialise the tool tip module */
 void tipInitialise(void)
@@ -75,6 +82,17 @@ void widgSetTipColour(PIELIGHT colour)
 	TipColour = colour;
 }
 
+static std::vector<std::string> splitString(const std::string& str, char delimiter)
+{
+	std::vector<std::string> strings;
+	std::istringstream str_stream(str);
+	std::string s;
+	while (getline(str_stream, s, delimiter)) {
+		strings.push_back(s);
+	}
+	return strings;
+}
+
 /*
  * Setup a tool tip.
  * The tip module will then wait until the correct points to
@@ -86,7 +104,7 @@ void widgSetTipColour(PIELIGHT colour)
  * x,y,width,height - specify the position of the button to place the
  * tip by.
  */
-void tipStart(WIDGET *psSource, const QString& pNewTip, iV_fonts NewFontID, int x, int y, int width, int height)
+void tipStart(WIDGET *psSource, const std::string& pNewTip, iV_fonts NewFontID, int x, int y, int width, int height)
 {
 	ASSERT(psSource != nullptr, "Invalid widget pointer");
 
@@ -96,9 +114,10 @@ void tipStart(WIDGET *psSource, const QString& pNewTip, iV_fonts NewFontID, int 
 	my = mouseY();
 	wx = x; wy = y;
 	ww = width; wh = height;
-	pTip = pNewTip.split('\n');
+	pTip = splitString(pNewTip, '\n');
 	psWidget = psSource;
 	FontID = NewFontID;
+	displayCache.wzTip.clear();
 }
 
 
@@ -143,9 +162,11 @@ void tipDisplay()
 			lineHeight = iV_GetTextLineSize(FontID);
 
 			fw = 0;
-			for (int n = 0; n < pTip.size(); ++n)
+			displayCache.wzTip.resize(pTip.size());
+			for (size_t n = 0; n < pTip.size(); ++n)
 			{
-				fw = std::max<int>(fw, iV_GetTextWidth(pTip[n].toUtf8().constData(), FontID));
+				displayCache.wzTip[n].setText(pTip[n], FontID);
+				fw = std::max<int>(fw, displayCache.wzTip[n].width());
 			}
 			tw = fw + TIP_HGAP * 2;
 			th = topGap * 2 + lineHeight * pTip.size() + iV_GetTextBelowBase(FontID);
@@ -176,12 +197,15 @@ void tipDisplay()
 		}
 		break;
 	case TIP_ACTIVE:
-		/* Draw the tool tip */
-		iV_ShadowBox(tx - 2, ty - 2, tx + tw + 2, ty + th + 2, 1, WZCOL_FORM_LIGHT, WZCOL_FORM_DARK, WZCOL_FORM_TIP_BACKGROUND);
-		iV_SetTextColour(TipColour);
-		for (int n = 0; n < pTip.size(); ++n)
 		{
-			iV_DrawText(pTip[n].toUtf8().constData(), fx, fy + lineHeight * n, FontID);
+			/* Draw the tool tip */
+			iV_ShadowBox(tx - 2, ty - 2, tx + tw + 2, ty + th + 2, 1, WZCOL_FORM_LIGHT, WZCOL_FORM_DARK, WZCOL_FORM_TIP_BACKGROUND);
+			size_t n = 0;
+			for (auto it = displayCache.wzTip.begin(); it != displayCache.wzTip.end(); ++it)
+			{
+				it->render(fx, fy + lineHeight * n, TipColour);
+				++n;
+			}
 		}
 
 		break;

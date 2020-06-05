@@ -1,7 +1,7 @@
 /*
  This file is part of Warzone 2100.
  Copyright (C) 1999-2004  Eidos Interactive
- Copyright (C) 2005-2017  Warzone 2100 Project
+ Copyright (C) 2005-2020  Warzone 2100 Project
 
  Warzone 2100 is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -21,34 +21,12 @@
 #import "cocoa_wrapper.h"
 
 #ifdef WZ_OS_MAC
+
+#if ! __has_feature(objc_arc)
+#error "Objective-C ARC (Automatic Reference Counting) is off"
+#endif
+
 #import <AppKit/AppKit.h>
-#import <stdarg.h>
-#import "WZSDLAppDelegate.h"
-
-void cocoaInit()
-{
-	NSApplicationLoad();
-}
-
-void cocoaRunApplication(void (*mainEventLoop)()) {
-	assert([NSThread isMainThread]); // Must be called from the main thread.
-	
-    @autoreleasepool {
-        NSApplication * application = [NSApplication sharedApplication];
-        
-        // Configure the WZ SDL Application Delegate
-        WZSDLAppDelegate * delegate = [[WZSDLAppDelegate alloc] init];
-        [delegate setMainEventLoop: mainEventLoop];
-        
-        [application setDelegate:delegate];
-
-        // Run the NSApplication
-        [application run];
-        
-        // NSApp.run has returned, app is exiting
-        [application setDelegate:nil];
-    }
-}
 
 static inline NSString * _Nonnull nsstringify(const char *str)
 {

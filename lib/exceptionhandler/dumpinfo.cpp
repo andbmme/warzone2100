@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 2008  Giel van Schijndel
-	Copyright (C) 2008-2017  Warzone 2100 Project
+	Copyright (C) 2008-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -19,6 +19,7 @@
 */
 
 #include "dumpinfo.h"
+#include <LaunchInfo.h>
 #include <cerrno>
 #include <climits>
 #include <ctime>
@@ -31,6 +32,7 @@
 #include "lib/framework/stdio_ext.h"
 #include "lib/framework/wzglobal.h" // required for config.h
 #include "lib/framework/wzapp.h"
+#include "lib/framework/i18n.h" // required to print build date in ISO 8601
 
 #if defined(WZ_OS_UNIX)
 # include <sys/utsname.h>
@@ -53,7 +55,7 @@ static const std::size_t max_debug_messages = 20;
 
 static char *dbgHeader = nullptr;
 static WZ_MUTEX *dbgMessagesMutex = wzMutexCreate();  // Protects dbgMessages.
-static std::deque<std::vector<char> > dbgMessages;
+static std::deque<std::vector<char>> dbgMessages;
 
 // used to add custom info to the crash log
 static std::vector<char> miscData;
@@ -174,20 +176,41 @@ static std::string getProgramPath(const char *programCommand)
 	std::vector<char> buf(PATH_MAX);
 
 #if defined(WZ_OS_WIN)
-	while (GetModuleFileNameA(nullptr, &buf[0], buf.size()) == buf.size())
+	std::vector<wchar_t> wbuff(PATH_MAX + 1, 0);
+	DWORD moduleFileNameLen = 0;
+	while ((moduleFileNameLen = GetModuleFileNameW(nullptr, &wbuff[0], wbuff.size() - 1)) == (wbuff.size() - 1))
 	{
-		buf.resize(buf.size() * 2);
+		wbuff.resize(wbuff.size() * 2);
 	}
+	// Because Windows XP's GetModuleFileName does not guarantee null-termination,
+	// always append a null-terminator
+	wbuff[moduleFileNameLen] = 0;
+	wbuff.resize(moduleFileNameLen + 1);
+
+	// Convert the UTF-16 to UTF-8
+	int outputLength = WideCharToMultiByte(CP_UTF8, 0, wbuff.data(), -1, NULL, 0, NULL, NULL);
+	if (outputLength <= 0)
+	{
+		debug(LOG_ERROR, "Encoding conversion error.");
+		return std::string();
+	}
+	buf.resize(outputLength, 0);
+	if (WideCharToMultiByte(CP_UTF8, 0, wbuff.data(), -1, &buf[0], outputLength, NULL, NULL) == 0)
+	{
+		debug(LOG_ERROR, "Encoding conversion error.");
+		return std::string();
+	}
+
 #elif defined(WZ_OS_UNIX) && !defined(WZ_OS_MAC)
 	{
 		FILE *whichProgramStream;
-		char *whichProgramCommand;
+		std::string whichProgramCommand;
 
-		sasprintf(&whichProgramCommand, "which %s", programCommand);
-		whichProgramStream = popen(whichProgramCommand, "r");
+		whichProgramCommand = std::string("which ") + programCommand;
+		whichProgramStream = popen(whichProgramCommand.c_str(), "r");
 		if (whichProgramStream == nullptr)
 		{
-			debug(LOG_WARNING, "Failed to run \"%s\", will not create extended backtrace", whichProgramCommand);
+			debug(LOG_WARNING, "Failed to run \"%s\", will not create extended backtrace", whichProgramCommand.c_str());
 			return std::string();
 		}
 
@@ -231,10 +254,165 @@ static std::string getProgramPath(const char *programCommand)
 	return programPath;
 }
 
+#if defined(WZ_OS_WIN)
+
+#include <ntverp.h>				// Windows SDK - include for access to VER_PRODUCTBUILD
+#if VER_PRODUCTBUILD >= 9200
+	// 9200 is the Windows SDK 8.0 (which introduced family support)
+	#include <winapifamily.h>	// Windows SDK
+#else
+	// Earlier SDKs don't have the concept of families - provide simple implementation
+	// that treats everything as "desktop"
+	#define WINAPI_PARTITION_DESKTOP			0x00000001
+	#define WINAPI_FAMILY_PARTITION(Partition)	((WINAPI_PARTITION_DESKTOP & Partition) == Partition)
+#endif
+
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+static std::string getWindowsVersionString()
+{
+	const DWORD WIN_MAX_EXTENDED_PATH = 32767;
+
+	// Get the Windows version using a method unaffected by compatibility modes
+	// See: https://docs.microsoft.com/en-us/windows/desktop/sysinfo/getting-the-system-version
+
+	// Get a handle to the loaded kernel32.dll
+	HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
+	if (hKernel32 == NULL)
+	{
+		// Failed to get a handle to kernel32.dll??
+		return "Failed to access kernel32";
+	}
+
+	// Allocate a buffer for the path to kernel32.dll
+	std::vector<wchar_t> kernel32_path(WIN_MAX_EXTENDED_PATH, 0);
+	DWORD moduleFileNameLen = GetModuleFileNameW(hKernel32, &kernel32_path[0], WIN_MAX_EXTENDED_PATH);
+	DWORD lastError = GetLastError();
+	if (moduleFileNameLen == 0)
+	{
+		// GetModuleFileNameW failed
+		return std::string("GetModuleFileNameW failed with error code: ") + std::to_string(lastError);
+	}
+	if (moduleFileNameLen >= WIN_MAX_EXTENDED_PATH)
+	{
+		// GetModuleFileNameW failed - insufficient buffer length
+		return "GetModuleFileNameW failed - buffer";
+	}
+
+	// Always append a null-terminator
+	// (Windows XP's GetModuleFileName does not guarantee null-termination)
+	kernel32_path[moduleFileNameLen] = 0;
+
+	// Get the ProductVersion of kernel32.dll
+	DWORD dwDummy = 0;
+	DWORD dwFileVersionInfoSize = GetFileVersionInfoSizeW(&kernel32_path[0], &dwDummy);
+	if (dwFileVersionInfoSize == 0)
+	{
+		// GetFileVersionInfoSizeW failed
+		lastError = GetLastError();
+		return std::string("GetFileVersionInfoSizeW failed with error code: ") + std::to_string(lastError);
+	}
+
+	void *lpData = malloc(dwFileVersionInfoSize);
+	if (lpData == nullptr)
+	{
+		// Unable to allocate buffer
+		return std::string("malloc failed to allocate ") + std::to_string(dwFileVersionInfoSize) + " bytes";
+	}
+
+	if (GetFileVersionInfoW(&kernel32_path[0], 0, dwFileVersionInfoSize, lpData) == 0)
+	{
+		// GetFileVersionInfoW failed
+		lastError = GetLastError();
+		free(lpData);
+		return std::string("GetFileVersionInfoW failed with error code: ") + std::to_string(lastError);
+	}
+
+	VS_FIXEDFILEINFO *version = nullptr;
+	UINT version_len = 0;
+	if (!VerQueryValueW(lpData, L"\\", (LPVOID*)&version, &version_len))
+	{
+		// VerQueryValueW failed
+		free(lpData);
+		return "VerQueryValueW failed";
+	}
+
+	std::string productVersionString;
+	productVersionString = std::to_string(HIWORD(version->dwProductVersionMS)) + ".";
+	productVersionString += std::to_string(LOWORD(version->dwProductVersionMS)) + ".";
+	productVersionString += std::to_string(HIWORD(version->dwProductVersionLS)) + ".";
+	productVersionString += std::to_string(LOWORD(version->dwProductVersionLS));
+
+	free(lpData);
+
+	return productVersionString;
+}
+#else // !WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+static std::string getWindowsVersionString()
+{
+	// FIXME: Implement Windows version detection for non-desktop builds?
+	return std::string("n/a");
+}
+#endif // WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+
+#ifndef PROCESSOR_ARCHITECTURE_AMD64
+#define PROCESSOR_ARCHITECTURE_AMD64 9
+#endif
+
+#ifndef PROCESSOR_ARCHITECTURE_ARM
+#define PROCESSOR_ARCHITECTURE_ARM 5
+#endif
+
+#ifndef PROCESSOR_ARCHITECTURE_ARM64
+#define PROCESSOR_ARCHITECTURE_ARM64 12
+#endif
+
+static std::string getWindowsProcessorArchitecture()
+{
+	SYSTEM_INFO siSysInfo = {0};
+	GetNativeSystemInfo(&siSysInfo);
+
+	std::string machine;
+	switch (siSysInfo.wProcessorArchitecture)
+	{
+		case PROCESSOR_ARCHITECTURE_INTEL:
+			machine = "x86";
+			break;
+		case PROCESSOR_ARCHITECTURE_IA64:
+			machine = "Intel Itanium-based";
+			break;
+		case PROCESSOR_ARCHITECTURE_AMD64:
+			machine = "x86_64";
+			break;
+		case PROCESSOR_ARCHITECTURE_ARM:
+			machine = "ARM";
+			break;
+		case PROCESSOR_ARCHITECTURE_ARM64:
+			machine = "ARM64";
+			break;
+		case PROCESSOR_ARCHITECTURE_UNKNOWN:
+			machine = "Unknown";
+			break;
+		default:
+			machine = "wProcessorArchitecture (";
+			machine += std::to_string(siSysInfo.wProcessorArchitecture) + ")";
+			break;
+	}
+
+	return machine;
+}
+#endif // defined(WZ_OS_WIN)
+
+
 static std::string getSysinfo()
 {
 #if defined(WZ_OS_WIN)
-	return std::string();
+	std::ostringstream os;
+
+	os << "Operating system: " << "Windows" << endl
+	<< "Version: "          << getWindowsVersionString() << endl
+	<< "Machine: "          << getWindowsProcessorArchitecture() << endl;
+
+	return os.str();
 #elif defined(WZ_OS_UNIX)
 	struct utsname sysInfo;
 	std::ostringstream os;
@@ -250,6 +428,9 @@ static std::string getSysinfo()
 	   << "Machine: "          << sysInfo.machine  << endl;
 
 	return os.str();
+#else
+	// Not yet implemented for other platforms
+	return std::string();
 #endif
 }
 
@@ -291,11 +472,11 @@ std::basic_ostream<CharT, Traits> &operator<<(std::basic_ostream<CharT, Traits> 
 	       << "." << static_cast<unsigned int>(ver.patch);
 }
 
-static void createHeader(int const argc, const char **argv, const char *packageVersion)
+static void createHeader(int const argc, const char * const *argv, const char *packageVersion)
 {
 	std::ostringstream os;
 
-	os << "Program: "     << getProgramPath(argv[0]) << "(" PACKAGE ")" << endl
+	os << "Program: "     << getProgramPath(argv[0]) << " (" PACKAGE ")" << endl
 	   << "Command line: ";
 
 	/* Dump all command line arguments surrounded by double quotes and
@@ -307,16 +488,30 @@ static void createHeader(int const argc, const char **argv, const char *packageV
 	}
 
 	os << endl;
-
+	const auto& parentProcesses = LaunchInfo::getAncestorProcesses();
+	os << "Ancestors: " << endl;
+	for (const auto& parent : parentProcesses)
+	{
+		os << "- (" << parent.pid << ") " << parent.imageFileName << endl;
+	}
 	os << "Version: "     << packageVersion << endl
 	   << "Distributor: " PACKAGE_DISTRIBUTOR << endl
-	   << "Compiled on: " __DATE__ " " __TIME__ << endl
+	   << "Compiled on: " << getCompileDate() << " " << __TIME__ << endl
 	   << "Compiled by: "
-#if defined(WZ_CC_GNU) && !defined(WZ_CC_INTEL)
+#if defined(WZ_CC_GNU) && !defined(WZ_CC_INTEL) && !defined(WZ_CC_CLANG)
 	   << "GCC " __VERSION__ << endl
+#elif defined(WZ_CC_CLANG)
+	   << "Clang " __clang_version__ << endl
 #elif defined(WZ_CC_INTEL)
 	   // Intel includes the compiler name within the version string
 	   << __VERSION__ << endl
+#elif defined(WZ_CC_MSVC)
+	   << "MSVC " << _MSC_FULL_VER
+#  if defined(_MSVC_LANG)
+	   << " (c++ std: " << _MSVC_LANG << ")" << endl
+#  else
+	   << endl
+#  endif
 #else
 	   << "UNKNOWN" << endl
 #endif
@@ -369,7 +564,7 @@ void addDumpInfo(const char *inbuffer)
 	miscData.insert(miscData.end(), msg.begin(), msg.end());
 }
 
-void dbgDumpInit(int argc, const char **argv, const char *packageVersion)
+void dbgDumpInit(int argc, const char * const *argv, const char *packageVersion)
 {
 	debug_register_callback(&debug_exceptionhandler_data, nullptr, nullptr, nullptr);
 	createHeader(argc, argv, packageVersion);

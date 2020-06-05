@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -29,11 +29,12 @@
 #include "widget.h"
 #include "widgbase.h"
 #include <map>
+#include <functional>
+#include <string>
 
 
 class W_BUTTON : public WIDGET
 {
-	Q_OBJECT
 
 public:
 	struct Images
@@ -51,18 +52,19 @@ public:
 	W_BUTTON(W_BUTINIT const *init);
 	W_BUTTON(WIDGET *parent);
 
-	void clicked(W_CONTEXT *psContext, WIDGET_KEY key);
-	void released(W_CONTEXT *psContext, WIDGET_KEY key);
-	void highlight(W_CONTEXT *psContext);
-	void highlightLost();
-	void display(int xOffset, int yOffset);
+	void clicked(W_CONTEXT *psContext, WIDGET_KEY key) override;
+	void released(W_CONTEXT *psContext, WIDGET_KEY key) override;
+	void highlight(W_CONTEXT *psContext) override;
+	void highlightLost() override;
+	void display(int xOffset, int yOffset) override;
 
-	unsigned getState();
-	void setState(unsigned state);
-	void setFlash(bool enable);
-	QString getString() const;
-	void setString(QString string);
-	void setTip(QString string);
+	unsigned getState() override;
+	void setState(unsigned state) override;
+	void setFlash(bool enable) override;
+	WzString getString() const override;
+	void setString(WzString string) override;
+	void setTip(std::string string) override;
+	void unlock();
 
 	void setImages(Images const &images);
 	void setImages(Image image, Image imageDown, Image imageHighlight, Image imageDisabled = Image());
@@ -70,36 +72,44 @@ public:
 	using WIDGET::setString;
 	using WIDGET::setTip;
 
-signals:
-	void clicked();
+	/* The optional "onClick" callback function */
+	typedef std::function<void (W_BUTTON& button)> W_BUTTON_ONCLICK_FUNC;
+
+	void addOnClickHandler(const W_BUTTON_ONCLICK_FUNC& onClickFunc);
 
 public:
-	UDWORD		state;				// The current button state
-	QString         pText;                          // The text for the button
+	bool isHighlighted() const;
+
+public:
+	unsigned        state;                          // The current button state
+	WzString        pText;                          // The text for the button
 	Images          images;                         ///< The images for the button.
-	QString         pTip;                           // The tool tip for the button
+	std::string     pTip;                           // The tool tip for the button
 	SWORD HilightAudioID;				// Audio ID for form clicked sound
 	SWORD ClickedAudioID;				// Audio ID for form hilighted sound
 	WIDGET_AUDIOCALLBACK AudioCallback;	// Pointer to audio callback function
 	iV_fonts        FontID;
+	UDWORD minClickInterval = 0;
+private:
+	UDWORD lastClickTime = 0;
+	std::vector<W_BUTTON_ONCLICK_FUNC> onClickHandlers;
 };
 
-class StateButton : public W_BUTTON
+class MultipleChoiceButton : public W_BUTTON
 {
-	Q_OBJECT
 
 public:
-	StateButton(WIDGET *parent) : W_BUTTON(parent) {}
-	void setState(unsigned state);
-	void setTip(int state, const QString& string);
-	void setTip(int state, char const *stringUtf8);
-	void setImages(int state, Images const &images);
+	MultipleChoiceButton(WIDGET *parent) : W_BUTTON(parent), choice(0) {}
+	void setChoice(unsigned newChoice);
+	void setTip(unsigned stateValue, std::string const &string);
+	void setTip(unsigned stateValue, char const *stringUtf8);
+	void setImages(unsigned stateValue, Images const &stateImages);
 
 	using WIDGET::setTip;
 
 private:
-	int currentState;
-	std::map<int, QString> tips;
+	unsigned choice;
+	std::map<int, std::string> tips;
 	std::map<int, Images> imageSets;
 };
 

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -108,7 +108,7 @@ void widgSetMinorBarSize(W_SCREEN *psScreen, UDWORD id, UDWORD iValue)
 /* Respond to a mouse moving over a barGraph */
 void W_BARGRAPH::highlight(W_CONTEXT *psContext)
 {
-	if (!pTip.isEmpty())
+	if (!pTip.empty())
 	{
 		tipStart(this, pTip, screenPointer->TipFontID, x() + psContext->xOffset, y() + psContext->yOffset, width(), height());
 	}
@@ -124,24 +124,23 @@ void W_BARGRAPH::highlightLost()
 
 static void barGraphDisplayText(W_BARGRAPH *barGraph, int x0, int x1, int y1)
 {
-	if (!barGraph->text.isEmpty())
+	if (!barGraph->text.empty())
 	{
-		QByteArray utf = barGraph->text.toUtf8();
-		int textWidth = iV_GetTextWidth(utf.constData(), font_bar);
+		barGraph->wzCachedText.setText(barGraph->text, font_bar);
+		int textWidth = barGraph->wzCachedText.width();
 		Vector2i pos((x0 + x1 - textWidth) / 2, y1);
-		iV_SetTextColour(WZCOL_BLACK);  // Add a shadow, to make it visible against any background.
+		// Add a shadow, to make it visible against any background.
 		for (int dx = -2; dx <= 2; ++dx)
 		{
 			for (int dy = -2; dy <= 2; ++dy)
 			{
 				if (dx*dx + dy*dy <= 4)
 				{
-					iV_DrawText(utf.constData(), pos.x + dx, pos.y + dy, font_bar);
+					barGraph->wzCachedText.render(pos.x + dx, pos.y + dy, WZCOL_BLACK);
 				}
 			}
 		}
-		iV_SetTextColour(barGraph->textCol);
-		iV_DrawText(utf.constData(), pos.x, pos.y, font_bar);
+		barGraph->wzCachedText.render(pos.x, pos.y, barGraph->textCol);
 	}
 }
 
@@ -379,7 +378,7 @@ void W_BARGRAPH::display(int xOffset, int yOffset)
 	}
 }
 
-void W_BARGRAPH::setTip(QString string)
+void W_BARGRAPH::setTip(std::string string)
 {
 	pTip = string;
 }

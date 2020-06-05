@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -28,8 +28,9 @@
 #include "lib/netplay/netplay.h"
 #include "lib/widget/widgbase.h"
 #include "lib/widget/form.h"
-#include <QtCore/QSignalMapper>
-
+#include <functional>
+#include <vector>
+#include "lib/framework/wzstring.h"
 
 #define MAX_LEN_AI_NAME   40
 #define AI_CUSTOM        127
@@ -40,7 +41,6 @@
 
 class MultibuttonWidget : public W_FORM
 {
-	Q_OBJECT
 
 public:
 	MultibuttonWidget(WIDGET *parent, int value = -1);
@@ -50,6 +50,7 @@ public:
 
 	void setLabel(char const *text);
 	void addButton(int value, Image image, Image imageHighlight, char const *tip);
+	void setButtonMinClickInterval(UDWORD interval);
 	void enable(bool enabled = true);
 	void disable()
 	{
@@ -61,10 +62,12 @@ public:
 		return currentValue_;
 	}
 
-signals:
-	void chosen(int);
+	/* The optional "onChoose" callback function */
+	typedef std::function<void (MultibuttonWidget& widget, int newValue)> W_ON_CHOOSE_FUNC;
 
-public slots:
+	void addOnChooseHandler(const W_ON_CHOOSE_FUNC& onChooseFunc);
+
+public:
 	void choose(int value);
 
 private:
@@ -72,57 +75,58 @@ private:
 
 protected:
 	W_LABEL *label;
-	std::vector<std::pair<W_BUTTON *, int> > buttons;
-	QSignalMapper *mapper;
+	std::vector<std::pair<W_BUTTON *, int>> buttons;
 	int currentValue_;
 	bool disabled;
 	int gap_;
 	bool lockCurrent;
+	std::vector<W_ON_CHOOSE_FUNC> onChooseHandlers;
 };
 
 class MultichoiceWidget : public MultibuttonWidget
 {
-	Q_OBJECT
 
 public:
 	MultichoiceWidget(WIDGET *parent, int value = -1);
 };
 
+// WzMultiOptionTitleUI is in titleui.h to prevent dependency explosions
 
 void readAIs();	///< step 1, load AI definition files
 void setupChallengeAIs();	///< dirty hack to allow correct display of names from challenges
 void loadMultiScripts();	///< step 2, load the actual AI scripts
 const char *getAIName(int player);	///< only run this -after- readAIs() is called
-const QStringList getAINames();
+const std::vector<WzString> getAINames();
 int matchAIbyName(const char *name);	///< only run this -after- readAIs() is called
 int getNextAIAssignment(const char *name);
 
 LOBBY_ERROR_TYPES getLobbyError();
 void setLobbyError(LOBBY_ERROR_TYPES error_type);
 
-void runConnectionScreen();
-bool startConnectionScreen();
 void intProcessConnection(UDWORD id);
-
-void runGameFind();
-void startGameFind();
 
 void updateLimitFlags();
 
 void runMultiOptions();
 bool startMultiOptions(bool bReenter);
-void frontendMultiMessages();
+
+void intDisplayFeBox(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset);
 
 bool addMultiBut(W_SCREEN *screen, UDWORD formid, UDWORD id, UDWORD x, UDWORD y, UDWORD width, UDWORD height, const char *tipres, UDWORD norm, UDWORD down, UDWORD hi, unsigned tc = MAX_PLAYERS);
+Image mpwidgetGetFrontHighlightImage(Image image);
 bool changeColour(unsigned player, int col, bool isHost);
 
 extern char sPlayer[128];
 extern bool bHosted;
+extern bool multiintDisableLobbyRefresh; // gamefind
 
 void kickPlayer(uint32_t player_id, const char *reason, LOBBY_ERROR_TYPES type);
 void addPlayerBox(bool);			// players (mid) box
 void loadMapPreview(bool hideInterface);
 
+bool changeReadyStatus(UBYTE player, bool bReady);
+WzString formatGameName(WzString name);
+void resetVoteData();
 
 // ////////////////////////////////////////////////////////////////
 // CONNECTION SCREEN
@@ -181,7 +185,7 @@ void loadMapPreview(bool hideInterface);
 #define MULTIOP_PLAYER_START		10232		//list of players
 #define MULTIOP_PLAYER_END		10249
 #define MULTIOP_PLAYERSW		263
-#define MULTIOP_PLAYERSH		364
+#define MULTIOP_PLAYERSH		380
 
 #define MULTIOP_ROW_WIDTH		246
 
@@ -210,7 +214,7 @@ void loadMapPreview(bool hideInterface);
 #define MULTIOP_OPTIONSX		40
 #define MULTIOP_OPTIONSY		1
 #define MULTIOP_OPTIONSW		284
-#define MULTIOP_OPTIONSH		364
+#define MULTIOP_OPTIONSH		380
 
 #define MULTIOP_EDITBOXW		196
 #define	MULTIOP_EDITBOXH		30
@@ -252,9 +256,9 @@ void loadMapPreview(bool hideInterface);
 
 #define MULTIOP_CHATBOX			10278
 #define MULTIOP_CHATBOXX		MULTIOP_OPTIONSX
-#define MULTIOP_CHATBOXY		364
+#define MULTIOP_CHATBOXY		380
 #define MULTIOP_CHATBOXW		((MULTIOP_PLAYERSX+MULTIOP_PLAYERSW) - MULTIOP_OPTIONSX)
-#define MULTIOP_CHATBOXH		115
+#define MULTIOP_CHATBOXH		100
 
 #define MULTIOP_CONSOLEBOX		0x1A001		// TODO: these should be enums!
 #define MULTIOP_CONSOLEBOXX		MULTIOP_OPTIONSX
@@ -276,6 +280,7 @@ void loadMapPreview(bool hideInterface);
 #define MULTIOP_GAMETYPE		10294
 #define MULTIOP_POWER			10296
 #define MULTIOP_ALLIANCES		10298
+#define MULTIOP_RANDOM			10299
 #define MULTIOP_BASETYPE		10300
 
 #define MULTIOP_SKSLIDE			102842 //10313
@@ -290,6 +295,8 @@ void loadMapPreview(bool hideInterface);
 #define MULTIOP_NO_SOMETHING            10331
 #define MULTIOP_NO_SOMETHINGX           3
 #define MULTIOP_NO_SOMETHINGY           MROW5
+#define MULTIOP_ICON_LIMITS_X2		41
+#define MULTIOP_ICON_LIMITS_Y2		182
 
 #define MULTIOP_COLOUR_START		10332
 #define MULTIOP_COLOUR_END		(MULTIOP_COLOUR_START + MAX_PLAYERS)

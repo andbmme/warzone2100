@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -23,6 +23,8 @@
 
 #ifndef __INCLUDED_SRC_RESEARCH_H__
 #define __INCLUDED_SRC_RESEARCH_H__
+
+#include "lib/framework/wzconfig.h"
 
 #include "objectdef.h"
 
@@ -81,7 +83,7 @@ extern UDWORD	aDefaultSensor[MAX_PLAYERS];
 extern UDWORD	aDefaultECM[MAX_PLAYERS];
 extern UDWORD	aDefaultRepair[MAX_PLAYERS];
 
-bool loadResearch(const QString& filename);
+bool loadResearch(WzConfig &ini);
 
 /*function to check what can be researched for a particular player at any one
   instant. Returns the number to research*/

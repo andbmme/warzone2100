@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -45,8 +45,6 @@
 #include "game.h"
 #include "lib/ivis_opengl/piestate.h"
 #include "data.h"
-#include "lib/script/script.h"
-#include "scripttabs.h"
 #include "research.h"
 #include "lib/framework/lexer_input.h"
 #include "effects.h"
@@ -54,6 +52,7 @@
 #include "multiint.h"
 #include "qtscript.h"
 #include "wrappers.h"
+#include "activity.h"
 
 extern int lev_get_lineno();
 extern char *lev_get_text();
@@ -605,12 +604,10 @@ static bool levLoadSingleWRF(const char *name)
 	return true;
 }
 
-
-char *getLevelName()
+const char *getLevelName()
 {
-	return (currentLevelName);
+	return currentLevelName;
 }
-
 
 // load up the data for a level
 bool levLoadData(char const *name, Sha256 const *hash, char *pSaveName, GAME_TYPE saveType)
@@ -627,6 +624,9 @@ bool levLoadData(char const *name, Sha256 const *hash, char *pSaveName, GAME_TYP
 			return false;
 		}
 	}
+
+	// Ensure that the LC_NUMERIC locale setting is "C"
+	ASSERT(strcmp(setlocale(LC_NUMERIC, NULL), "C") == 0, "The LC_NUMERIC locale is not \"C\" - this may break level-data parsing depending on the user's system locale settings");
 
 	levelLoadType = saveType;
 
@@ -678,7 +678,7 @@ bool levLoadData(char const *name, Sha256 const *hash, char *pSaveName, GAME_TYP
 			{
 				// there is a dataset loaded but it isn't the correct one
 				debug(LOG_WZ, "Incorrect base dataset loaded (%p != %p, %d - %d)",
-				      psCurrLevel->psBaseData, psNewLevel->psBaseData, (int)psCurrLevel->type, (int)psNewLevel->type);
+				      static_cast<void *>(psCurrLevel->psBaseData), static_cast<void *>(psNewLevel->psBaseData), (int)psCurrLevel->type, (int)psNewLevel->type);
 				if (!levReleaseAll())	// this sets psCurrLevel to NULL
 				{
 					debug(LOG_ERROR, "Failed to release old data");
@@ -1020,13 +1020,6 @@ bool levLoadData(char const *name, Sha256 const *hash, char *pSaveName, GAME_TYP
 
 	dataClearSaveFlag();
 
-	//this enables us to to start cam2/cam3 without going via a save game and get the extra droids
-	//in from the script-controlled Transporters
-	if (!pSaveName && psNewLevel->type == LDS_CAMSTART)
-	{
-		eventFireCallbackTrigger((TRIGGER_TYPE)CALL_NO_REINFORCEMENTS_LEFT);
-	}
-
 	//restore the level name for comparisons on next mission load up
 	if (psChangeLevel == nullptr)
 	{
@@ -1043,8 +1036,6 @@ bool levLoadData(char const *name, Sha256 const *hash, char *pSaveName, GAME_TYP
 	ssprintf(buf, "Current Level/map is %s", psCurrLevel->pName);
 	addDumpInfo(buf);
 
-	triggerEvent(TRIGGER_GAME_LOADED);
-
 	if (autogame_enabled())
 	{
 		gameTimeSetMod(Rational(500));
@@ -1054,7 +1045,21 @@ bool levLoadData(char const *name, Sha256 const *hash, char *pSaveName, GAME_TYP
 		}
 	}
 
+	ActivityManager::instance().loadedLevel(psCurrLevel->type, mapNameWithoutTechlevel(getLevelName()));
+
 	return true;
+}
+
+std::string mapNameWithoutTechlevel(const char *mapName)
+{
+	ASSERT_OR_RETURN("", mapName != nullptr, "null mapName provided");
+	std::string result(mapName);
+	size_t len = result.length();
+	if (len > 2 && result[len - 3] == '-' && result[len - 2] == 'T' && isdigit(result[len - 1]))
+	{
+		result.resize(len - 3);
+	}
+	return result;
 }
 
 /// returns maps of the right 'type'
@@ -1062,9 +1067,10 @@ LEVEL_LIST enumerateMultiMaps(int camToUse, int numPlayers)
 {
 	LEVEL_LIST list;
 
-	for (auto lev : psLevels)
+	if (game.type == SKIRMISH)
 	{
-		if (game.type == SKIRMISH)
+		// Add maps with exact match to type
+		for (auto lev : psLevels)
 		{
 			int cam = 1;
 			if (lev->type == MULTI_SKIRMISH2)
@@ -1075,12 +1081,44 @@ LEVEL_LIST enumerateMultiMaps(int camToUse, int numPlayers)
 			{
 				cam = 3;
 			}
+			else if (lev->type == MULTI_SKIRMISH4)
+			{
+				cam = 4;
+			}
 
-			if ((lev->type == SKIRMISH || lev->type == MULTI_SKIRMISH2 || lev->type == MULTI_SKIRMISH3)
+			if ((lev->type == SKIRMISH || lev->type == MULTI_SKIRMISH2 || lev->type == MULTI_SKIRMISH3 || lev->type == MULTI_SKIRMISH4)
 			    && (numPlayers == 0 || numPlayers == lev->players)
 			    && cam == camToUse)
 			{
 				list.push_back(lev);
+			}
+		}
+		// Also add maps where only the tech level is different, if a more specific map has not been added
+		for (auto lev : psLevels)
+		{
+			if ((lev->type == SKIRMISH || lev->type == MULTI_SKIRMISH2 || lev->type == MULTI_SKIRMISH3 || lev->type == MULTI_SKIRMISH4)
+			    && (numPlayers == 0 || numPlayers == lev->players)
+			    && lev->pName)
+			{
+				bool already_added = false;
+				for (auto map : list)
+				{
+					if (!map->pName)
+					{
+						continue;
+					}
+					std::string levelBaseName = mapNameWithoutTechlevel(lev->pName);
+					std::string mapBaseName = mapNameWithoutTechlevel(map->pName);
+					if (strcmp(levelBaseName.c_str(), mapBaseName.c_str()) == 0)
+					{
+						already_added = true;
+						break;
+					}
+				}
+				if (!already_added)
+				{
+					list.push_back(lev);
+				}
 			}
 		}
 	}

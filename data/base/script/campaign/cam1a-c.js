@@ -29,7 +29,9 @@ function extraVictoryCondition()
 {
 	var enemies = enumArea(0, 0, mapWidth, mapHeight, ENEMIES, false);
 	if(index === 5 && enemies.length === 0)
+	{
 		return true;
+	}
 }
 
 //Makes a large group of ground units appear on map
@@ -43,17 +45,22 @@ function checkForGroundForces()
 
 		var droidGroup1 = []; //Heavy cannon mantis track units
 		var droidGroup2 = []; //Sensor and heavy mortar units
-		var templates;
-		with (camTemplates) templates = [ nphct, npmsens, npmorb ];
+		var templates = [ cTempl.nphct, cTempl.npmsens, cTempl.npmorb ];
 
 		for (var i = 0; i <= maxTanks; ++i)
 		{
-			if(i <= firstAmount)
+			if (i <= firstAmount)
+			{
 				droidGroup1[i] = templates[0];
-			if(i === firstAmount + 1)
+			}
+			if (i === firstAmount + 1)
+			{
 				droidGroup2[i - 1 - firstAmount] = templates[1];
+			}
 			else
+			{
 				droidGroup2[i - 1 - firstAmount] = templates[2];
+			}
 		}
 
 		//What part of map to appear at
@@ -76,8 +83,7 @@ function sendTransport()
 	// This emulates wzcam's droid count distribution.
 	var count = [ 2, 3, 4, 4, 4, 4, 4, 4, 4 ][camRand(9)];
 
-	var templates;
-	with (camTemplates) templates = [ npcybc, npcybf, npcybm ];
+	var templates = [ cTempl.npcybc, cTempl.npcybf, cTempl.npcybm ];
 
 	var droids = [];
 	for (var i = 0; i < count; ++i)
@@ -101,7 +107,7 @@ function sendTransport()
 				camMakePos( cyborgPatrolList[(3 * index) + 2] ),
 			],
 			radius: 8,
-			interval: 60000, //60 sec
+			interval: camMinutesToMilliseconds(1),
 			regroup: true,
 			count: -1,
 		}
@@ -117,9 +123,13 @@ function sendTransport()
 	}
 
 	if (index === 5)
+	{
 		return;
+	}
 	else
-		queue("sendTransport", camChangeOnDiff(60000)); //1 min
+	{
+		queue("sendTransport", camChangeOnDiff(camMinutesToMilliseconds(1)));
+	}
 }
 
 function eventStartLevel()
@@ -133,8 +143,7 @@ function eventStartLevel()
 	centreView(startpos.x, startpos.y);
 	setNoGoArea(lz.x, lz.y, lz.x2, lz.y2, CAM_HUMAN_PLAYER);
 
-	setMissionTime(camChangeOnDiff(3600)); //1 hour
-	setPower(AI_POWER, NEW_PARADIGM);
+	setMissionTime(camChangeOnDiff(camHoursToSeconds(1)));
 
 	// make sure player doesn't build on enemy LZs
 	for (var i = 6; i <= 10; ++i)
@@ -149,5 +158,5 @@ function eventStartLevel()
 	index = 0;
 	switchLZ = 0;
 
-	queue("sendTransport", 10000);
+	queue("sendTransport", camSecondsToMilliseconds(10));
 }

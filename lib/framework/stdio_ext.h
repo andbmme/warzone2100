@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 2007  Giel van Schijndel
-	Copyright (C) 2007-2017  Warzone 2100 Project
+	Copyright (C) 2007-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 // These functions are GNU extensions; so make sure they are available on Windows also
 
-#if defined(WZ_CC_MSVC) || defined(DOXYGEN)
+#if defined(WZ_CC_MSVC)
 /**
  * This function is analogue to vsprintf, except that it allocates a string
  * large enough to hold the output including the terminating NUL character.
@@ -65,32 +65,19 @@ WZ_DECL_NONNULL(1, 2) int asprintf(char **strp, const char *format, ...) WZ_DECL
  int wz_vsnprintf(char *str, size_t size, const char *format, va_list ap);
 WZ_DECL_NONNULL(3) int wz_snprintf(char *str, size_t size, const char *format, ...);
 
-// Necessary to prevent conflicting symbols with MSVC's own (incorrect!) implementations of these functions
-# define vsnprintf wz_vsnprintf
-# define snprintf  wz_snprintf
+#if defined(_MSC_VER) && _MSC_VER < 1900
+	// Necessary to prevent conflicting symbols with MSVC's own (incorrect!) implementations of these functions
+	// on MSVC < 2015
+	# define vsnprintf wz_vsnprintf
+	# define snprintf  wz_snprintf
+#endif // defined(_MSC_VER) && _MSC_VER < 1900
+
 #elif defined(__cplusplus) && defined(WZ_CC_GNU)
 // Do nothing here, and assume that G++ has a proper implementation of snprintf and vsnprintf
 #elif !defined(WZ_CC_GNU) && !defined(WZ_C99)
 # error "This code depends on a C99-compliant implementation of snprintf and vsnprintf; please compile as C99 or provide a compliant implementation!"
 #endif
 
-
-// A stack-allocating variant of sprintf
-#define sasprintf(strp, format, ...) \
-	do { \
-		/* Make sure to evaluate "format" just once */ \
-		const char* fmt = format; \
-		/* Determine the size of the string we're going to produce */ \
-		size_t size = snprintf(NULL, 0, fmt, __VA_ARGS__); \
-		\
-		/* Let the compiler perform some static type-checking */ \
-		char** var = strp; \
-		\
-		/* Allocate a buffer large enough to hold our string on the stack*/ \
-		*var = (char*)alloca(size + 1); \
-		/* Print into our newly created string-buffer */ \
-		sprintf(*var, fmt,  __VA_ARGS__); \
-	} while(0)
 
 /// Equivalent to vasprintf, except that strp is NULL instead of undefined, if the function returns -1. Does not give compiler warnings/-Werrors if not checking the return value.
 WZ_DECL_NONNULL(1, 2) int vasprintfNull(char **strp, const char *format, va_list ap);

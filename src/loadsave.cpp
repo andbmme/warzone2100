@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -27,7 +27,8 @@
 
 #include <ctype.h>
 #include <physfs.h>
-#include <time.h>
+#include "lib/framework/physfs_ext.h"
+#include <ctime>
 
 #include "lib/framework/frame.h"
 #include "lib/framework/input.h"
@@ -53,6 +54,10 @@
 #include "intdisplay.h"
 #include "mission.h"
 #include "lib/gamelib/gtime.h"
+#include "console.h"
+#include "keybind.h"
+#include "keymap.h"
+#include "qtscript.h"
 
 #define totalslots 36			// saves slots
 #define slotsInColumn 12		// # of slots in a column
@@ -61,7 +66,7 @@
 #define LOADSAVE_X				D_W + 16
 #define LOADSAVE_Y				D_H + 5
 #define LOADSAVE_W				610
-#define LOADSAVE_H				220
+#define LOADSAVE_H				215
 
 #define MAX_SAVE_NAME			60
 
@@ -82,10 +87,17 @@
 #define LOADENTRY_END			ID_LOADSAVE+10 +totalslots  // must have unique ID hmm -Q
 
 #define SAVEENTRY_EDIT			ID_LOADSAVE + totalslots + totalslots		// save edit box. must be highest value possible I guess. -Q
+#define AUTOSAVE_CAM_DIR "savegames/campaign/auto"
+#define AUTOSAVE_SKI_DIR "savegames/skirmish/auto"
 
 // ////////////////////////////////////////////////////////////////////////////
 static void displayLoadBanner(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset);
 static void displayLoadSlot(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset);
+
+struct LoadSaveDisplayLoadSlotCache {
+	std::string fullText;
+	WzText wzText;
+};
 
 static	W_SCREEN	*psRequestScreen;					// Widget screen for requester
 static	bool		mode;
@@ -96,7 +108,7 @@ char				saveGameName[256];          //the name of the save game to load from the
 char				sRequestResult[PATH_MAX];   // filename returned;
 bool				bRequestLoad = false;
 LOADSAVE_MODE		bLoadSaveMode;
-
+static const char *savedTitle;
 static const char *sExt = ".gam";
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -113,12 +125,19 @@ bool saveMidMission()
 	return bLoadSaveMode == SAVE_INGAME_MISSION;
 }
 
+void loadSaveScreenSizeDidChange(unsigned int oldWidth, unsigned int oldHeight, unsigned int newWidth, unsigned int newHeight)
+{
+	if (psRequestScreen == nullptr) return;
+	psRequestScreen->screenSizeDidChange(oldWidth, oldHeight, newWidth, newHeight);
+}
+
 // ////////////////////////////////////////////////////////////////////////////
 bool addLoadSave(LOADSAVE_MODE savemode, const char *title)
 {
 	bool bLoad = true;
 	char NewSaveGamePath[PATH_MAX] = {'\0'};
 	bLoadSaveMode = savemode;
+	savedTitle = title;
 	UDWORD			slotCount;
 	static char	sSlotCaps[totalslots][totalslotspace];
 	static char	sSlotTips[totalslots][totalslotspace];
@@ -134,6 +153,15 @@ bool addLoadSave(LOADSAVE_MODE savemode, const char *title)
 	case LOAD_FRONTEND_SKIRMISH:
 	case LOAD_INGAME_SKIRMISH:
 		ssprintf(NewSaveGamePath, "%s%s/", SaveGamePath, "skirmish");
+		break;
+	case LOAD_FRONTEND_MISSION_AUTO:
+	case LOAD_INGAME_MISSION_AUTO:
+	case LOAD_MISSIONEND_AUTO:
+		ssprintf(NewSaveGamePath, "%s%s/", SaveGamePath, "campaign/auto");
+		break;
+	case LOAD_FRONTEND_SKIRMISH_AUTO:
+	case LOAD_INGAME_SKIRMISH_AUTO:
+		ssprintf(NewSaveGamePath, "%s%s/", SaveGamePath, "skirmish/auto");
 		break;
 	case SAVE_MISSIONEND:
 	case SAVE_INGAME_MISSION:
@@ -154,22 +182,16 @@ bool addLoadSave(LOADSAVE_MODE savemode, const char *title)
 	debug(LOG_SAVE, "called (%d, %s)", bLoad, title);
 
 	if ((bLoadSaveMode == LOAD_INGAME_MISSION) || (bLoadSaveMode == SAVE_INGAME_MISSION)
-	    || (bLoadSaveMode == LOAD_INGAME_SKIRMISH) || (bLoadSaveMode == SAVE_INGAME_SKIRMISH))
+	    || (bLoadSaveMode == LOAD_INGAME_SKIRMISH) || (bLoadSaveMode == SAVE_INGAME_SKIRMISH)
+	    || (bLoadSaveMode == LOAD_INGAME_MISSION_AUTO) || (bLoadSaveMode == LOAD_INGAME_SKIRMISH_AUTO))
 	{
 		if (!bMultiPlayer || (NetPlay.bComms == 0))
 		{
 			gameTimeStop();
 			if (GetGameMode() == GS_NORMAL)
 			{
-				bool radOnScreen = radarOnScreen;				// Only do this in main game.
-
-				bRender3DOnly = true;
-				radarOnScreen = false;
-
-				displayWorld();									// Just display the 3d, no interface
-
-				radarOnScreen = radOnScreen;
-				bRender3DOnly = false;
+				// just display the 3d, no interface
+				displayWorld();
 			}
 
 			setGamePauseStatus(true);
@@ -193,7 +215,9 @@ bool addLoadSave(LOADSAVE_MODE savemode, const char *title)
 	// and * the gaps, add the banner, and finally, the fudge factor ;)
 	IntFormAnimated *loadSaveForm = new IntFormAnimated(parent);
 	loadSaveForm->id = LOADSAVE_FORM;
-	loadSaveForm->setGeometry(LOADSAVE_X, LOADSAVE_Y, LOADSAVE_W, slotsInColumn * (LOADENTRY_H + LOADSAVE_HGAP) + LOADSAVE_BANNER_DEPTH + 20);
+	loadSaveForm->setCalcLayout(LAMBDA_CALCLAYOUT_SIMPLE({
+		psWidget->setGeometry(LOADSAVE_X, LOADSAVE_Y, LOADSAVE_W, slotsInColumn * (LOADENTRY_H + LOADSAVE_HGAP) + LOADSAVE_BANNER_DEPTH + 20);
+	}));
 
 	// Add Banner
 	W_FORMINIT sFormInit;
@@ -206,19 +230,6 @@ bool addLoadSave(LOADSAVE_MODE savemode, const char *title)
 	sFormInit.pDisplay = displayLoadBanner;
 	sFormInit.UserData = bLoad;
 	widgAddForm(psRequestScreen, &sFormInit);
-
-	// Add Banner Label
-	W_LABINIT sLabInit;
-	sLabInit.formID = LOADSAVE_BANNER;
-	sLabInit.FontID = font_large;
-	sLabInit.id		= LOADSAVE_LABEL;
-	sLabInit.style	= WLAB_ALIGNCENTRE;
-	sLabInit.x		= 0;
-	sLabInit.y		= 0;
-	sLabInit.width	= LOADSAVE_W - (2 * LOADSAVE_HGAP);	//LOADSAVE_W;
-	sLabInit.height = LOADSAVE_BANNER_DEPTH;		//This looks right -Q
-	sLabInit.pText	= title;
-	widgAddLabel(psRequestScreen, &sLabInit);
 
 	// add cancel.
 	W_BUTINIT sButInit;
@@ -235,6 +246,19 @@ bool addLoadSave(LOADSAVE_MODE savemode, const char *title)
 	sButInit.pDisplay = intDisplayImageHilight;
 	widgAddButton(psRequestScreen, &sButInit);
 
+	// Add Banner Label
+	W_LABINIT sLabInit;
+	sLabInit.formID = LOADSAVE_BANNER;
+	sLabInit.FontID = font_large;
+	sLabInit.id		= LOADSAVE_LABEL;
+	sLabInit.style	= WLAB_ALIGNCENTRE;
+	sLabInit.x		= 0;
+	sLabInit.y		= 0;
+	sLabInit.width	= LOADSAVE_W - (2 * LOADSAVE_HGAP);	//LOADSAVE_W;
+	sLabInit.height = LOADSAVE_BANNER_DEPTH;		//This looks right -Q
+	sLabInit.pText	= WzString::fromUtf8(title);
+	widgAddLabel(psRequestScreen, &sLabInit);
+
 	// add slots
 	sButInit = W_BUTINIT();
 	sButInit.formID		= LOADSAVE_FORM;
@@ -242,6 +266,12 @@ bool addLoadSave(LOADSAVE_MODE savemode, const char *title)
 	sButInit.width		= LOADENTRY_W;
 	sButInit.height		= LOADENTRY_H;
 	sButInit.pDisplay	= displayLoadSlot;
+	sButInit.initPUserDataFunc = []() -> void * { return new LoadSaveDisplayLoadSlotCache(); };
+	sButInit.onDelete = [](WIDGET *psWidget) {
+		assert(psWidget->pUserData != nullptr);
+		delete static_cast<LoadSaveDisplayLoadSlotCache *>(psWidget->pUserData);
+		psWidget->pUserData = nullptr;
+	};
 
 	for (slotCount = 0; slotCount < totalslots; slotCount++)
 	{
@@ -271,6 +301,24 @@ bool addLoadSave(LOADSAVE_MODE savemode, const char *title)
 	// fill slots.
 	slotCount = 0;
 
+	// The first slot is for [auto] or [..]
+	{
+		W_BUTTON *button;
+
+		button = (W_BUTTON *)widgGetFromID(psRequestScreen, LOADENTRY_START + slotCount);
+		if (bLoadSaveMode >= LOAD_FRONTEND_MISSION_AUTO)
+		{
+			button->pTip = _("Parent directory");
+			button->pText = "[..]";
+		}
+		else
+		{
+			button->pTip = mode? _("Autosave directory") : _("Autosave directory (not allowed for saving)");
+			button->pText = "[auto]";
+		}
+		slotCount++;
+	}
+
 	debug(LOG_SAVE, "Searching \"%s\" for savegames", NewSaveGamePath);
 
 	// add savegame filenames minus extensions to buttons
@@ -295,9 +343,9 @@ bool addLoadSave(LOADSAVE_MODE savemode, const char *title)
 
 		/* Figure save-time */
 		snprintf(savefile, sizeof(savefile), "%s/%s", NewSaveGamePath, *i);
-		savetime = PHYSFS_getLastModTime(savefile);
+		savetime = WZ_PHYSFS_getLastModTime(savefile);
 		timeinfo = localtime(&savetime);
-		strftime(sSlotTips[slotCount], sizeof(sSlotTips[slotCount]), "%x %X", timeinfo);
+		strftime(sSlotTips[slotCount], sizeof(sSlotTips[slotCount]), "%F %H:%M:%S", timeinfo);
 
 		/* Set the button-text */
 		(*i)[strlen(*i) - 4] = '\0'; // remove .gam extension
@@ -305,7 +353,7 @@ bool addLoadSave(LOADSAVE_MODE savemode, const char *title)
 
 		/* Add button */
 		button->pTip = sSlotTips[slotCount];
-		button->pText = sSlotCaps[slotCount];
+		button->pText = WzString::fromUtf8(sSlotCaps[slotCount]);
 		slotCount++;		// goto next but...
 		if (slotCount == totalslots)
 		{
@@ -324,7 +372,8 @@ bool closeLoadSave()
 	bLoadSaveUp = false;
 
 	if ((bLoadSaveMode == LOAD_INGAME_MISSION) || (bLoadSaveMode == SAVE_INGAME_MISSION)
-	    || (bLoadSaveMode == LOAD_INGAME_SKIRMISH) || (bLoadSaveMode == SAVE_INGAME_SKIRMISH))
+	    || (bLoadSaveMode == LOAD_INGAME_SKIRMISH) || (bLoadSaveMode == SAVE_INGAME_SKIRMISH)
+	    || (bLoadSaveMode == LOAD_INGAME_MISSION_AUTO) || (bLoadSaveMode == LOAD_INGAME_SKIRMISH_AUTO))
 	{
 
 		if (!bMultiPlayer || (NetPlay.bComms == 0))
@@ -381,19 +430,76 @@ void deleteSaveGame(char *saveGameName)
 		// Delete the file
 		if (!PHYSFS_delete(del_file))
 		{
-			debug(LOG_ERROR, "Warning [%s] could not be deleted due to PhysicsFS error: %s", del_file, PHYSFS_getLastError());
+			debug(LOG_ERROR, "Warning [%s] could not be deleted due to PhysicsFS error: %s", del_file, WZ_PHYSFS_getLastError());
 		}
 	}
 	PHYSFS_freeList(files);
 
 	if (!PHYSFS_delete(saveGameName))		// now (should be)empty directory
 	{
-		debug(LOG_ERROR, "Warning directory[%s] could not be deleted because %s", saveGameName, PHYSFS_getLastError());
+		debug(LOG_ERROR, "Warning directory[%s] could not be deleted because %s", saveGameName, WZ_PHYSFS_getLastError());
 	}
 
 	return;
 }
 
+char lastSavePath[PATH_MAX];
+bool lastSaveMP;
+static time_t lastSaveTime;
+
+static bool findLastSaveFrom(const char *path)
+{
+	char **i, **files;
+	bool found = false;
+
+	files = PHYSFS_enumerateFiles(path);
+	for (i = files; *i != nullptr; ++i)
+	{
+		char savefile[PATH_MAX];
+		time_t savetime;
+
+		// See if this filename contains the extension we're looking for
+		if (!strstr(*i, sExt))
+		{
+			// If it doesn't, move on to the next filename
+			continue;
+		}
+		/* Figure save-time */
+		snprintf(savefile, sizeof(savefile), "%s/%s", path, *i);
+		savetime = WZ_PHYSFS_getLastModTime(savefile);
+		if (difftime(savetime, lastSaveTime) > 0.0)
+		{
+			lastSaveTime = savetime;
+			strcpy(lastSavePath, savefile);
+			found = true;
+		}
+	}
+	PHYSFS_freeList(files);
+	return found;
+}
+
+bool findLastSave()
+{
+	char NewSaveGamePath[PATH_MAX] = {'\0'};
+	bool foundMP, foundCAM;
+
+	lastSaveTime = 0;
+	lastSaveMP = false;
+	lastSavePath[0] = '\0';
+	ssprintf(NewSaveGamePath, "%scampaign/", SaveGamePath);
+	foundCAM = findLastSaveFrom(NewSaveGamePath);
+	ssprintf(NewSaveGamePath, "%scampaign/auto/", SaveGamePath);
+	foundCAM |= findLastSaveFrom(NewSaveGamePath);
+	ssprintf(NewSaveGamePath, "%sskirmish/", SaveGamePath);
+	foundMP = findLastSaveFrom(NewSaveGamePath);
+	ssprintf(NewSaveGamePath, "%sskirmish/auto/", SaveGamePath);
+	foundMP |= findLastSaveFrom(NewSaveGamePath);
+	if (foundMP)
+	{
+		lastSaveMP = true;
+	}
+	return foundMP | foundCAM;
+}
 
 // ////////////////////////////////////////////////////////////////////////////
 // Returns true if cancel pressed or a valid game slot was selected.
@@ -418,14 +524,36 @@ bool runLoadSave(bool bResetMissionWidgets)
 	}
 	if (bMultiPlayer)
 	{
-		ssprintf(NewSaveGamePath, "%s%s/", SaveGamePath, "skirmish");
+		if (bLoadSaveMode >= LOAD_FRONTEND_MISSION_AUTO)
+		{
+			ssprintf(NewSaveGamePath, "%s%s/auto/", SaveGamePath, "skirmish");
+		}
+		else
+		{
+			ssprintf(NewSaveGamePath, "%s%s/", SaveGamePath, "skirmish");
+		}
 	}
 	else
 	{
-		ssprintf(NewSaveGamePath, "%s%s/", SaveGamePath, "campaign");
+		if (bLoadSaveMode >= LOAD_FRONTEND_MISSION_AUTO)
+		{
+			ssprintf(NewSaveGamePath, "%s%s/auto/", SaveGamePath, "campaign");
+		}
+		else
+		{
+			ssprintf(NewSaveGamePath, "%s%s/", SaveGamePath, "campaign");
+		}
+	}
+	if (id == LOADENTRY_START && mode) // [auto] or [..], ignore click for saves
+	{
+		int iLoadSaveMode = (int)bLoadSaveMode; // for evil integer arithmetics
+		bLoadSaveMode = (enum LOADSAVE_MODE)(iLoadSaveMode ^ 16); // toggle _AUTO bit
+		closeLoadSave(); // decrement game time / pause counters
+		addLoadSave(bLoadSaveMode, savedTitle); // restart in other directory
+		return false;
 	}
 	// clicked a load entry
-	if (id >= LOADENTRY_START  &&  id <= LOADENTRY_END)
+	else if (id > LOADENTRY_START  &&  id <= LOADENTRY_END)
 	{
 		W_BUTTON *slotButton = (W_BUTTON *)widgGetFromID(psRequestScreen, id);
 
@@ -433,7 +561,7 @@ bool runLoadSave(bool bResetMissionWidgets)
 		{
 			if (!slotButton->pText.isEmpty())
 			{
-				ssprintf(sRequestResult, "%s%s%s", NewSaveGamePath, ((W_BUTTON *)widgGetFromID(psRequestScreen, id))->pText.toUtf8().constData(), sExt);
+				ssprintf(sRequestResult, "%s%s%s", NewSaveGamePath, ((W_BUTTON *)widgGetFromID(psRequestScreen, id))->pText.toUtf8().c_str(), sExt);
 			}
 			else
 			{
@@ -458,7 +586,7 @@ bool runLoadSave(bool bResetMissionWidgets)
 
 				if (!slotButton->pText.isEmpty())
 				{
-					ssprintf(sDelete, "%s%s%s", NewSaveGamePath, slotButton->pText.toUtf8().constData(), sExt);
+					ssprintf(sDelete, "%s%s%s", NewSaveGamePath, slotButton->pText.toUtf8().c_str(), sExt);
 				}
 				else
 				{
@@ -504,7 +632,7 @@ bool runLoadSave(bool bResetMissionWidgets)
 			{
 
 				if (!((W_BUTTON *)widgGetFromID(psRequestScreen, i))->pText.isEmpty()
-				    && strcmp(sTemp, ((W_BUTTON *)widgGetFromID(psRequestScreen, i))->pText.toUtf8().constData()) == 0)
+				    && strcmp(sTemp, ((W_BUTTON *)widgGetFromID(psRequestScreen, i))->pText.toUtf8().c_str()) == 0)
 				{
 					widgDelete(psRequestScreen, SAVEENTRY_EDIT);	//unselect this box, and go back ..
 					widgReveal(psRequestScreen, chosenSlotId);
@@ -645,6 +773,10 @@ static void displayLoadBanner(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 // ////////////////////////////////////////////////////////////////////////////
 static void displayLoadSlot(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 {
+	// Any widget using displayLoadSlot must have its pUserData initialized to a (LoadSaveDisplayLoadSlotCache*)
+	assert(psWidget->pUserData != nullptr);
+	LoadSaveDisplayLoadSlotCache& cache = *static_cast<LoadSaveDisplayLoadSlotCache *>(psWidget->pUserData);
+
 	int x = xOffset + psWidget->x();
 	int y = yOffset + psWidget->y();
 	char  butString[64];
@@ -653,15 +785,20 @@ static void displayLoadSlot(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 
 	if (!((W_BUTTON *)psWidget)->pText.isEmpty())
 	{
-		sstrcpy(butString, ((W_BUTTON *)psWidget)->pText.toUtf8().constData());
+		sstrcpy(butString, ((W_BUTTON *)psWidget)->pText.toUtf8().c_str());
 
-		iV_SetTextColour(WZCOL_FORM_TEXT);
-		while (iV_GetTextWidth(butString, font_regular) > psWidget->width())
+		if (cache.fullText != butString)
 		{
-			butString[strlen(butString) - 1] = '\0';
+			// Update cache
+			while (iV_GetTextWidth(butString, font_regular) > psWidget->width())
+			{
+				butString[strlen(butString) - 1] = '\0';
+			}
+			cache.wzText.setText(butString, font_regular);
+			cache.fullText = butString;
 		}
 
-		iV_DrawText(butString, x + 4, y + 17, font_regular);
+		cache.wzText.render(x + 4, y + 17, WZCOL_FORM_TEXT);
 	}
 }
 
@@ -669,4 +806,79 @@ void drawBlueBox(UDWORD x, UDWORD y, UDWORD w, UDWORD h)
 {
 	pie_BoxFill(x - 1, y - 1, x + w + 1, y + h + 1, WZCOL_MENU_BORDER);
 	pie_BoxFill(x, y , x + w, y + h, WZCOL_MENU_BACKGROUND);
+}
+
+static void freeAutoSaveSlot(const char *path)
+{
+	char **i, **files;
+	files = PHYSFS_enumerateFiles(path);
+	int nfiles = 0;
+	for (i = files; *i != nullptr; ++i)
+	{
+		// See if this filename contains the extension we're looking for
+		if (!strstr(*i, sExt))
+		{
+			// If it doesn't, move on to the next filename
+			continue;
+		}
+		nfiles++;
+	}
+	if (nfiles < totalslots)
+	{
+		PHYSFS_freeList(files);
+		return;
+	}
+
+	// too many autosaves, let's delete the oldest
+	char oldestSavePath[PATH_MAX];
+	time_t oldestSaveTime = time(nullptr);
+	for (i = files; *i != nullptr; ++i)
+	{
+		char savefile[PATH_MAX];
+
+		// See if this filename contains the extension we're looking for
+		if (!strstr(*i, sExt))
+		{
+			// If it doesn't, move on to the next filename
+			continue;
+		}
+		/* Figure save-time */
+		snprintf(savefile, sizeof(savefile), "%s/%s", path, *i);
+		time_t savetime = WZ_PHYSFS_getLastModTime(savefile);
+		if (difftime(savetime, oldestSaveTime) < 0.0)
+		{
+			oldestSaveTime = savetime;
+			strcpy(oldestSavePath, savefile);
+		}
+	}
+	PHYSFS_freeList(files);
+	deleteSaveGame(oldestSavePath);
+}
+
+void autoSave()
+{
+	// Bail out if we're running a _true_ multiplayer game or are playing a tutorial/debug/cheating
+	if (runningMultiplayer() || bInTutorial || getDebugMappingStatus() || Cheated)
+	{
+		return;
+	}
+	const char *dir = bMultiPlayer? AUTOSAVE_SKI_DIR : AUTOSAVE_CAM_DIR;
+	freeAutoSaveSlot(dir);
+
+	time_t now = time(nullptr);
+	struct tm *timeinfo = localtime(&now);
+	char savedate[PATH_MAX];
+	strftime(savedate, sizeof(savedate), "%F_%H%M%S", timeinfo);
+
+	std::string withoutTechlevel = mapNameWithoutTechlevel(getLevelName());
+	char savefile[PATH_MAX];
+	snprintf(savefile, sizeof(savefile), "%s/%s_%s.gam", dir, withoutTechlevel.c_str(), savedate);
+	if (saveGame(savefile, GTYPE_SAVE_MIDMISSION))
+	{
+		console("AutoSave %s", savefile);
+	}
+	else
+	{
+		console("AutoSave %s failed", savefile);
+	}
 }

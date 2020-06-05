@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -95,7 +95,6 @@ SIMPLE_OBJECT::~SIMPLE_OBJECT()
 BASE_OBJECT::BASE_OBJECT(OBJECT_TYPE type, uint32_t id, unsigned player)
 	: SIMPLE_OBJECT(type, id, player)
 	, selected(false)
-	, cluster(0)
 	, numWatchedTiles(0)
 	, lastEmission(0)
 	, lastHitWeapon(WSC_NUM_WEAPON_SUBCLASSES)  // No such weapon.
@@ -177,11 +176,11 @@ Vector2i getStatsSize(BASE_STATS const *pType, uint16_t direction)
 {
 	if (StatIsStructure(pType))
 	{
-		return getStructureStatsSize(static_cast<STRUCTURE_STATS const *>(pType), direction);
+		return static_cast<STRUCTURE_STATS const *>(pType)->size(direction);
 	}
 	else if (StatIsFeature(pType))
 	{
-		return getFeatureStatsSize(static_cast<FEATURE_STATS const *>(pType));
+		return static_cast<FEATURE_STATS const *>(pType)->size();
 	}
 	return Vector2i(1, 1);
 }

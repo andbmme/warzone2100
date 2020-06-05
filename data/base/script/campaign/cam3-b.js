@@ -2,6 +2,8 @@ include("script/campaign/libcampaign.js");
 include("script/campaign/templates.js");
 include("script/campaign/transitionTech.js");
 
+var trapActive;
+var gammaAttackCount;
 const GAMMA = 1; // Player 1 is Gamma team.
 const NEXUS_RES = [
 	"R-Defense-WallUpgrade08", "R-Struc-Materials08", "R-Struc-Factory-Upgrade06",
@@ -31,22 +33,36 @@ camAreaEvent("vtolRemoveZone", function(droid)
 
 camAreaEvent("trapTrigger", function(droid)
 {
-	if (droid.player === CAM_HUMAN_PLAYER)
-	{
-		playSound("pcv455.ogg"); //Incoming message.
-		queue("trapSprung", 2000);
-	}
-	else
-	{
-		resetLabel("trapTrigger", CAM_HUMAN_PLAYER);
-	}
+	camCallOnce("setupCapture");
 });
+
+camAreaEvent("mockBattleTrigger", function(droid)
+{
+	setAlliance(GAMMA, NEXUS, false); //brief mockup battle
+	camCallOnce("activateNexusGroups"); //help destroy Gamma base
+});
+
+function camEnemyBaseEliminated_NXEastBase()
+{
+	camRemoveEnemyTransporterBlip();
+}
+
+function camEnemyBaseEliminated_NXWestBase()
+{
+	camRemoveEnemyTransporterBlip();
+}
 
 //Setup Nexus VTOL hit and runners.
 function vtolAttack()
 {
-	var list; with (camTemplates) list = [nxmheapv, nxmtherv, nxlscouv];
-	camSetVtolData(NEXUS, "vtolAppearPos", "vtolRemovePos", list, camChangeOnDiff(120000), "NXCommandCenter"); //2 min
+	var list = [cTempl.nxmheapv, cTempl.nxlscouv, cTempl.nxmtherv, cTempl.nxlscouv];
+	var ext = {
+		limit: [5, 2, 5, 2], //paired with template list
+		alternate: true,
+		altIdx: 0
+	};
+
+	camSetVtolData(NEXUS, "vtolAppearPos", "vtolRemovePos", list, camChangeOnDiff(camMinutesToMilliseconds(2)), "NXCommandCenter", ext);
 }
 
 function enableAllFactories()
@@ -63,9 +79,8 @@ function getDroidsForNXLZ(isTransport)
 		isTransport = false;
 	}
 
-	const COUNT = isTransport ? 10 : 8 + camRand(8);
-	var units;
-	with (camTemplates) units = [nxcyrail, nxcyscou, nxcylas, nxmlinkh, nxmrailh, nxmsamh];
+	const COUNT = isTransport ? 10 : 10 + camRand(6);
+	var units = [cTempl.nxcyrail, cTempl.nxcyscou, cTempl.nxcylas, cTempl.nxmlinkh, cTempl.nxmrailh, cTempl.nxmsamh];
 
 	var droids = [];
 	for (var i = 0; i < COUNT; ++i)
@@ -79,28 +94,42 @@ function getDroidsForNXLZ(isTransport)
 //Send Nexus transport units
 function sendNXTransporter()
 {
-	if (!enumArea("NXEastBaseCleanup", NEXUS, false).length && !enumArea("NXWestBaseCleanup", NEXUS, false).length)
+	if (camCountStructuresInArea("NXEastBaseCleanup", NEXUS) === 0 &&
+		camCountStructuresInArea("NXWestBaseCleanup", NEXUS) === 0)
 	{
 		return; //Call off transport when both west and east Nexus bases are destroyed.
 	}
 
 	const LZ_ALIAS = "CM3B_TRANS"; //1 and 2
-	var lzNum = camRand(2) + 1;
 	var list = getDroidsForNXLZ(true);
-	var pos = (lzNum === 1) ? "nexusEastTransportPos" : "nexusWestTransportPos";
+	var lzNum;
+	var pos;
 
-	camSendReinforcement(NEXUS, camMakePos(pos), list,
-		CAM_REINFORCE_TRANSPORT, {
+	if (camCountStructuresInArea("NXEastBaseCleanup", NEXUS) > 0)
+	{
+		lzNum = 1;
+		pos = "nexusEastTransportPos";
+	}
+
+	if (camCountStructuresInArea("NXWestBaseCleanup", NEXUS) > 0 && (camRand(2) || !camDef(pos)))
+	{
+		lzNum = 2;
+		pos = "nexusWestTransportPos";
+	}
+
+	if (camDef(pos))
+	{
+		camSendReinforcement(NEXUS, camMakePos(pos), list, CAM_REINFORCE_TRANSPORT, {
 			message: LZ_ALIAS + lzNum,
-			entry: { x: 63, y: 4 },
-			exit: { x: 63, y: 4 }
-		}
-	);
+			entry: { x: 62, y: 4 },
+			exit: { x: 62, y: 4 }
+		});
 
-	queue("sendNXTransporter", camChangeOnDiff(180000)); //3 min
+		queue("sendNXTransporter", camChangeOnDiff(camMinutesToMilliseconds(3)));
+	}
 }
 
-//Send Nexus transport units
+//Send Nexus land units
 function sendNXlandReinforcements()
 {
 	if (!enumArea("NXWestBaseCleanup", NEXUS, false).length)
@@ -114,14 +143,14 @@ function sendNXlandReinforcements()
 		}
 	);
 
-	queue("sendNXlandReinforcements", camChangeOnDiff(240000)); //4 min
+	queue("sendNXlandReinforcements", camChangeOnDiff(camMinutesToMilliseconds(4)));
 }
 
 function transferPower()
 {
     const AWARD = 5000;
     var powerTransferSound = "power-transferred.ogg";
-    setPower(playerPower(me) + AWARD, me);
+    setPower(playerPower(CAM_HUMAN_PLAYER) + AWARD, CAM_HUMAN_PLAYER);
     playSound(powerTransferSound);
 }
 
@@ -134,7 +163,7 @@ function activateNexusGroups()
 			camMakePos("westRidge"),
 			camMakePos("eastRidge"),
 		],
-		interval: 45000,
+		interval: camSecondsToMilliseconds(45),
 		regroup: false,
 		count: -1
 		//morale: 90,
@@ -147,7 +176,7 @@ function activateNexusGroups()
 			camMakePos("eastDoorOfBase"),
 			camMakePos("playerLZ"),
 		],
-		interval: 45000,
+		interval: camSecondsToMilliseconds(45),
 		regroup: false,
 		count: -1
 		//morale: 90,
@@ -159,7 +188,7 @@ function activateNexusGroups()
 			camMakePos("gammaBase"),
 			camMakePos("northEndOfPass"),
 		],
-		interval: 30000,
+		interval: camSecondsToMilliseconds(30),
 		regroup: false,
 		count: -1
 	});
@@ -168,39 +197,71 @@ function activateNexusGroups()
 //Take everything Gamma has and donate to Nexus.
 function trapSprung()
 {
+	if (!trapActive)
+	{
+		playSound("pcv455.ogg"); //Incoming message.
+		trapActive = true;
+		setAlliance(GAMMA, NEXUS, false);
+		queue("trapSprung", camSecondsToMilliseconds(2)); //call this a few seconds later
+		return;
+	}
+
+	setAlliance(GAMMA, NEXUS, true);
+	setAlliance(GAMMA, CAM_HUMAN_PLAYER, false);
 	camPlayVideos("MB3_B_MSG3");
 	hackRemoveMessage("CM3B_GAMMABASE", PROX_MSG, CAM_HUMAN_PLAYER);
 
-	setMissionTime(camChangeOnDiff(5400));
-
-	activateNexusGroups();
+	setMissionTime(camChangeOnDiff(camMinutesToSeconds(90)));
+	camCallOnce("activateNexusGroups");
 	enableAllFactories();
 
-	sendNXlandReinforcements();
+	queue("sendNXlandReinforcements", camChangeOnDiff(camMinutesToMilliseconds(5)));
 	sendNXTransporter();
 	changePlayerColour(GAMMA, NEXUS); // Black painting.
 	playSound(SYNAPTICS_ACTIVATED);
 }
 
+function setupCapture()
+{
+	trapSprung();
+}
+
+function eventAttacked(victim, attacker)
+{
+	if (!trapActive && gammaAttackCount > 4)
+	{
+		camCallOnce("setupCapture");
+	}
+
+	if (victim.player === GAMMA && attacker.player === NEXUS)
+	{
+		gammaAttackCount = gammaAttackCount + 1;
+	}
+}
+
 function eventStartLevel()
 {
-	const MISSION_TIME = camChangeOnDiff(1800); //30 minutes. Rescue part.
+	trapActive = false;
+	gammaAttackCount = 0;
 	var startpos = getObject("startPosition");
 	var lz = getObject("landingZone");
 
      camSetStandardWinLossConditions(CAM_VICTORY_STANDARD, "SUB_3_2S");
-	setMissionTime(MISSION_TIME);
+	setMissionTime(camChangeOnDiff(camMinutesToSeconds(30))); // For the rescue mission.
 
 	centreView(startpos.x, startpos.y);
 	setNoGoArea(lz.x, lz.y, lz.x2, lz.y2, CAM_HUMAN_PLAYER);
 
-	setPower(AI_POWER, NEXUS);
-	setPower(AI_POWER, GAMMA);
+	var enemyLz = getObject("NXlandingZone");
+	var enemyLz2 = getObject("NXlandingZone2");
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, NEXUS);
+	setNoGoArea(enemyLz2.x, enemyLz2.y, enemyLz2.x2, enemyLz2.y2, 5);
 
 	camCompleteRequiredResearch(NEXUS_RES, NEXUS);
 	camCompleteRequiredResearch(GAMMA_ALLY_RES, GAMMA);
 	camCompleteRequiredResearch(NEXUS_RES, GAMMA); //They get even more research.
 
+	setAlliance(GAMMA, CAM_HUMAN_PLAYER, false);
 	setAlliance(GAMMA, NEXUS, true);
 
 	camSetArtifacts({
@@ -231,40 +292,41 @@ function eventStartLevel()
 		}
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"gammaFactory": {
 			assembly: "gammaFactoryAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(45000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(45)),
 			data: {
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxmrailh, nxmscouh]
+			templates: [cTempl.nxmrailh, cTempl.nxmscouh]
 		},
 		"gammaCyborgFactory": {
 			assembly: "gammaCyborgFactoryAssembly",
 			order: CAM_ORDER_ATTACK,
 			group: camMakeGroup("gammaBaseCleanup"),
 			groupSize: 6,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [nxcyrail, nxcyscou, nxcylas]
+			templates: [cTempl.nxcyrail, cTempl.nxcyscou, cTempl.nxcylas]
 		}
 	});
 
+	setAlliance(GAMMA, CAM_HUMAN_PLAYER, true);
 	hackAddMessage("CM3B_GAMMABASE", PROX_MSG, CAM_HUMAN_PLAYER, true);
 	camPlayVideos(["MB3_B_MSG", "MB3_B_MSG2"]);
 
 	changePlayerColour(GAMMA, 0);
+	setAlliance(GAMMA, CAM_HUMAN_PLAYER, true);
 
-	queue("transferPower", 3000);
-	queue("vtolAttack", camChangeOnDiff(300000)); //5 min
-	queue("enableAllFactories", camChangeOnDiff(301000)); //5 min
+	queue("transferPower", camSecondsToMilliseconds(3));
+	queue("vtolAttack", camChangeOnDiff(camMinutesToMilliseconds(5)));
 }

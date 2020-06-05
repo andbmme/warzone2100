@@ -163,6 +163,11 @@
 		"pos1": [2432, 7808],
 		"pos2": [6016, 8832]
 	},
+	"area_13": {
+		"label": "COLandingZone",
+		"pos1": [6272, 10624],
+		"pos2": [6528, 10880]
+	},
 
 	"object_0": {
 		"label": "rippleRocket",
@@ -221,6 +226,12 @@
 	"object_9": {
 		"label": "COResearchLab",
 		"id": 2293,
+		"player": 2,
+		"type": 1
+	},
+	"object_10": {
+		"label": "COInfernoEmplacement-Arti",
+		"id": 4308,
 		"player": 2,
 		"type": 1
 	}

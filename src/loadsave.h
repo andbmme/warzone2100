@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -36,7 +36,12 @@ enum LOADSAVE_MODE
 	LOAD_INGAME_SKIRMISH,
 	SAVE_MISSIONEND,
 	SAVE_INGAME_MISSION,
-	SAVE_INGAME_SKIRMISH
+	SAVE_INGAME_SKIRMISH,
+	LOAD_FRONTEND_MISSION_AUTO = 16,// internal use only
+	LOAD_MISSIONEND_AUTO,		// internal use only
+	LOAD_INGAME_MISSION_AUTO,	// internal use only
+	LOAD_FRONTEND_SKIRMISH_AUTO,	// internal use only
+	LOAD_INGAME_SKIRMISH_AUTO	// internal use only
 };
 
 /***************************************************************************/
@@ -48,6 +53,8 @@ enum LOADSAVE_MODE
 extern bool		bLoadSaveUp;							// true when interface is up and should be run.
 //the name of the save game to load from the front end
 extern char saveGameName[256];
+extern char lastSavePath[PATH_MAX];
+extern bool lastSaveMP;
 extern char	sRequestResult[PATH_MAX];
 extern bool		bRequestLoad;
 
@@ -73,5 +80,11 @@ bool saveInMissionRes();
 bool saveMidMission();
 
 void deleteSaveGame(char *saveGameName);
+
+void loadSaveScreenSizeDidChange(unsigned int oldWidth, unsigned int oldHeight, unsigned int newWidth, unsigned int newHeight);
+
+bool findLastSave();
+
+void autoSave();
 
 #endif // __INCLUDED_SRC_LOADSAVE_H__

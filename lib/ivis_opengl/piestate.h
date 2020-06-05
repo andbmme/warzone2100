@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -37,6 +37,7 @@
 #include "lib/framework/frame.h"
 #include "lib/framework/vector.h"
 #include "lib/framework/opengl.h"
+#include "lib/ivis_opengl/gfx_api.h"
 #include <glm/gtc/type_ptr.hpp>
 #include "piedef.h"
 
@@ -85,30 +86,47 @@ RENDER_STATE getCurrentRenderState();
 
 int pie_GetMaxAntialiasing();
 
+enum SHADER_VERSION
+{
+	VERSION_120,
+	VERSION_130,
+	VERSION_140,
+	VERSION_150_CORE,
+	VERSION_330_CORE,
+	VERSION_400_CORE,
+	VERSION_410_CORE,
+	VERSION_FIXED_IN_FILE,
+	VERSION_AUTODETECT_FROM_LEVEL_LOAD
+};
 bool pie_LoadShaders();
 void pie_FreeShaders();
-SHADER_MODE pie_LoadShader(const char *programName, const char *vertexPath, const char *fragmentPath,
+SHADER_MODE pie_LoadShader(SHADER_VERSION vertex_version, SHADER_VERSION fragment_version, const char *programName, const std::string &vertexPath, const std::string &fragmentPath,
 	const std::vector<std::string> &);
+inline SHADER_MODE pie_LoadShader(SHADER_VERSION version, const char *programName, const std::string &vertexPath, const std::string &fragmentPath,
+						   const std::vector<std::string> &uniformNames)
+{
+	return pie_LoadShader(version, version, programName, vertexPath, fragmentPath, uniformNames);
+}
 
 namespace pie_internal
 {
 	struct SHADER_PROGRAM
 	{
-		GLuint program;
+		GLuint program = 0;
 
 		// Uniforms
 		std::vector<GLint> locations;
 
 		// Attributes
-		GLint locVertex;
-		GLint locNormal;
-		GLint locTexCoord;
-		GLint locColor;
+		GLint locVertex = 0;
+		GLint locNormal = 0;
+		GLint locTexCoord = 0;
+		GLint locColor = 0;
 	};
 
 	extern std::vector<SHADER_PROGRAM> shaderProgram;
 	extern SHADER_MODE currentShaderMode;
-	extern GLuint rectBuffer;
+	extern gfx_api::buffer* rectBuffer;
 
 	/**
 	 * setUniforms is an overloaded wrapper around glUniform* functions

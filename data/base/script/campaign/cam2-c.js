@@ -2,7 +2,6 @@
 include("script/campaign/libcampaign.js");
 include("script/campaign/templates.js");
 
-const CIVILIAN = 7; //Civilian player number.
 var capturedCivCount; //How many civilians have been captured. 59 for defeat.
 var civilianPosIndex; //Current location of civilian groups.
 var shepardGroup; //Enemy group that protects civilians.
@@ -11,8 +10,7 @@ const COLLECTIVE_RES = [
 	"R-Defense-WallUpgrade03", "R-Struc-Materials04",
 	"R-Struc-Factory-Upgrade04", "R-Struc-VTOLFactory-Upgrade01",
 	"R-Struc-VTOLPad-Upgrade01", "R-Struc-Factory-Cyborg-Upgrade04",
-	"R-Vehicle-Engine04", "R-Vehicle-Metals03", "R-Cyborg-Metals04",
-	"R-Vehicle-Armor-Heat02", "R-Cyborg-Armor-Heat02",
+	"R-Vehicle-Engine04", "R-Vehicle-Metals05", "R-Cyborg-Metals05",
 	"R-Wpn-Cannon-Accuracy02", "R-Wpn-Cannon-Damage04",
 	"R-Wpn-Cannon-ROF03", "R-Wpn-Flamer-Damage06", "R-Wpn-Flamer-ROF03",
 	"R-Wpn-MG-Damage07", "R-Wpn-MG-ROF03", "R-Wpn-Mortar-Acc02",
@@ -22,14 +20,14 @@ const COLLECTIVE_RES = [
 	"R-Wpn-RocketSlow-Damage05", "R-Sys-Sensor-Upgrade01",
 	"R-Struc-VTOLFactory-Upgrade01", "R-Struc-VTOLPad-Upgrade01",
 	"R-Sys-Engineering02", "R-Wpn-Howitzer-Accuracy02",
-	"R-Wpn-Howitzer-Damage02", "R-Wpn-RocketSlow-ROF03",
+	"R-Wpn-Howitzer-Damage02", "R-Wpn-RocketSlow-ROF02",
 ];
 
 //Play video about civilians being captured by the Collective. Triggered
 //by destroying the air base or crossing the base3Trigger area.
 function videoTrigger()
 {
-	setMissionTime(getMissionTime() + camChangeOnDiff(1800)); //+30 minutes
+	setMissionTime(getMissionTime() + camChangeOnDiff(camMinutesToSeconds(30)));
 	civilianOrders();
 	captureCivilians();
 
@@ -39,16 +37,30 @@ function videoTrigger()
 }
 
 //Enable heavy factories and make groups do what they need to.
-camAreaEvent("groupTrigger", function()
+camAreaEvent("groupTrigger", function(droid)
 {
 	activateGroups();
 });
 
 //Play second video and add 30 minutes to timer when base3Trigger is crossed.
-camAreaEvent("base3Trigger", function()
+camAreaEvent("base3Trigger", function(droid)
 {
 	camCallOnce("videoTrigger");
 });
+
+//Send idle droids in this base to attack when the player spots the base
+function camEnemyBaseDetected_COAirBase()
+{
+	var droids = enumArea("airBaseCleanup", THE_COLLECTIVE, false).filter(function(obj) {
+		return obj.type === DROID && obj.group === null;
+	});
+
+	camManageGroup(camMakeGroup(droids), CAM_ORDER_ATTACK, {
+		count: -1,
+		regroup: false,
+		repair: 67
+	});
+}
 
 //...Or if the player destroys the VTOL base.
 function camEnemyBaseEliminated_COAirBase()
@@ -79,7 +91,7 @@ function activateGroups()
 			camMakePos("groundWayPoint3"),
 		],
 		//morale: 50,
-		interval: 70000,
+		interval: camSecondsToMilliseconds(70),
 		regroup: false,
 	});
 
@@ -89,21 +101,9 @@ function activateGroups()
 			camMakePos("centerOfPlayerBase"),
 		],
 		//morale: 50,
-		interval: 40000,
+		interval: camSecondsToMilliseconds(40),
 		regroup: false,
 	});
-
-	/*
-	camManageGroup(camMakeGroup("defensegroup1"), CAM_ORDER_PATROL, {
-		pos: [
-			camMakePos("defensePoint1"),
-			camMakePos("defensePoint2"),
-		],
-		//morale: 50,
-		interval: 25000,
-		regroup: false,
-	});
-	*/
 
 	camManageGroup(camMakeGroup("vtolGroup1"), CAM_ORDER_PATROL, {
 		pos: [
@@ -114,7 +114,7 @@ function activateGroups()
 			camMakePos("oilDerrick"),
 		],
 		//morale: 50,
-		interval: 30000,
+		interval: camSecondsToMilliseconds(30),
 		regroup: false,
 	});
 }
@@ -123,7 +123,7 @@ function truckDefense()
 {
 	if (enumDroid(THE_COLLECTIVE, DROID_CONSTRUCT).length > 0)
 	{
-		queue("truckDefense", 160000);
+		queue("truckDefense", camSecondsToMilliseconds(160));
 	}
 
 	const LIST = ["WallTower06", "PillBox1", "WallTower03"];
@@ -145,24 +145,25 @@ function captureCivilians()
 	if (shepardDroids.length)
 	{
 		//add some civs
+		var i = 0;
 		var num = 1 + camRand(3);
-		for (var i = 0; i < num; ++i)
+		for (i = 0; i < num; ++i)
 		{
-			addDroid(CIVILIAN, currPos.x, currPos.y, "Civilian",
+			addDroid(SCAV_7, currPos.x, currPos.y, "Civilian",
 					"B1BaBaPerson01", "BaBaLegs", "", "", "BabaMG");
 		}
 
 		//Only count civilians that are not in the the transporter base.
-		var civs = enumArea(0, 0, 35, mapHeight, CIVILIAN, false);
+		var civs = enumArea(0, 0, 35, mapHeight, SCAV_7, false);
 		//Move them
-		for (var i = 0; i < civs.length; ++i)
+		for (i = 0; i < civs.length; ++i)
 		{
 			orderDroidLoc(civs[i], DORDER_MOVE, currPos.x, currPos.y);
 		}
 
 		if (civilianPosIndex <= 5)
 		{
-			for (var i = 0; i < shepardDroids.length; ++i)
+			for (i = 0; i < shepardDroids.length; ++i)
 			{
 				orderDroidLoc(shepardDroids[i], DORDER_MOVE, currPos.x, currPos.y);
 			}
@@ -170,10 +171,10 @@ function captureCivilians()
 
 		if (civilianPosIndex === 7)
 		{
-			queue("sendCOTransporter", 6000);
+			queue("sendCOTransporter", camSecondsToMilliseconds(6));
 		}
 		civilianPosIndex = (civilianPosIndex > 6) ? 0 : (civilianPosIndex + 1);
-		queue("captureCivilians", camChangeOnDiff(10000)); //10 sec.
+		queue("captureCivilians", camChangeOnDiff(camSecondsToMilliseconds(10)));
 	}
 }
 
@@ -183,30 +184,32 @@ function civilianOrders()
 {
 	var lz = getObject("startPosition");
 	var rescueSound = "pcv612.ogg";	//"Civilian Rescued".
-	var civs = enumDroid(CIVILIAN);
+	var civs = enumDroid(SCAV_7);
 	var rescued = false;
 
 	//Check if a civilian is close to a player droid.
 	for (var i = 0; i < civs.length; ++i)
 	{
-		var pDroids = enumRange(civs[i].x, civs[i].y, 6, CAM_HUMAN_PLAYER, false).filter(function(obj) {
-			return obj.type === DROID;
-		});
-		if (pDroids.length)
+		var objs = enumRange(civs[i].x, civs[i].y, 6, CAM_HUMAN_PLAYER, false);
+		for (var j = 0; j < objs.length; ++j)
 		{
-			rescued = true;
-			orderDroidLoc(civs[i], DORDER_MOVE, lz.x, lz.y);
+			if (objs[j].type === DROID)
+			{
+				rescued = true;
+				orderDroidLoc(civs[i], DORDER_MOVE, lz.x, lz.y);
+				break;
+			}
 		}
 	}
 
-	//Play the "Civilian rescued" sound and throttle it for ten seconds.
-	if (rescued && ((lastSoundTime + 10000) < gameTime))
+	//Play the "Civilian rescued" sound and throttle it.
+	if (rescued && ((lastSoundTime + camSecondsToMilliseconds(30)) < gameTime))
 	{
 		lastSoundTime = gameTime;
 		playSound(rescueSound);
 	}
 
-	queue("civilianOrders", 2000);
+	queue("civilianOrders", camSecondsToMilliseconds(2));
 }
 
 //Capture civilans.
@@ -214,7 +217,7 @@ function eventTransporterLanded(transport)
 {
 	var escaping = "pcv632.ogg"; //"Enemy escaping".
 	var position = getObject("COTransportPos");
-	var civs = enumRange(position.x, position.y, 15, CIVILIAN, false);
+	var civs = enumRange(position.x, position.y, 15, SCAV_7, false);
 
 	if (civs.length)
 	{
@@ -230,7 +233,7 @@ function eventTransporterLanded(transport)
 //Send Collective transport as long as the player has not entered the base.
 function sendCOTransporter()
 {
-	var list; with (camTemplates) list = [npcybr, npcybr];
+	var list = [cTempl.npcybr, cTempl.npcybr];
 	var tPos = getObject("COTransportPos");
 	var pDroid = enumRange(tPos.x, tPos.y, 6, CAM_HUMAN_PLAYER, false);
 
@@ -238,8 +241,8 @@ function sendCOTransporter()
 	{
 		camSendReinforcement(THE_COLLECTIVE, camMakePos("COTransportPos"), list,
 			CAM_REINFORCE_TRANSPORT, {
-				entry: { x: 1, y: 80 },
-				exit: { x: 1, y: 80 }
+				entry: { x: 2, y: 80 },
+				exit: { x: 2, y: 80 }
 			}
 		);
 	}
@@ -258,7 +261,7 @@ function extraVictoryCondition()
 	else
 	{
 		var lz = getObject("startPosition");
-		var civs = enumRange(lz.x, lz.y, 30, CIVILIAN, false);
+		var civs = enumRange(lz.x, lz.y, 30, SCAV_7, false);
 
 		for (var i = 0; i < civs.length; ++i)
 		{
@@ -281,6 +284,9 @@ function eventStartLevel()
 	centreView(startpos.x, startpos.y);
 	setNoGoArea(lz.x, lz.y, lz.x2, lz.y2, CAM_HUMAN_PLAYER);
 
+	var enemyLz = getObject("COLandingZone");
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, THE_COLLECTIVE);
+
 	camSetArtifacts({
 		"rippleRocket": { tech: "R-Wpn-Rocket06-IDF" },
 		"quadbof": { tech: "R-Wpn-AAGun02" },
@@ -288,13 +294,13 @@ function eventStartLevel()
 		"COHeavyFac-Leopard": { tech: "R-Vehicle-Body02" }, //leopard
 		"COHeavyFac-Upgrade": { tech: "R-Struc-Factory-Upgrade04" },
 		"COVtolFacLeft-Prop": { tech: "R-Vehicle-Prop-VTOL" },
+		"COInfernoEmplacement-Arti": { tech: "R-Wpn-Flamer-ROF02" },
 	});
 
-	setPower(AI_POWER, THE_COLLECTIVE);
-	setMissionTime(camChangeOnDiff(7200)); //120 min
+	setMissionTime(camChangeOnDiff(camHoursToSeconds(2)));
 
-	setAlliance(THE_COLLECTIVE, CIVILIAN, true);
-	setAlliance(CAM_HUMAN_PLAYER, CIVILIAN, true);
+	setAlliance(THE_COLLECTIVE, SCAV_7, true);
+	setAlliance(CAM_HUMAN_PLAYER, SCAV_7, true);
 	camCompleteRequiredResearch(COLLECTIVE_RES, THE_COLLECTIVE);
 
 	camSetEnemyBases({
@@ -318,74 +324,74 @@ function eventStartLevel()
 		},
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"COHeavyFac-Upgrade": {
 			assembly: "COHeavyFac-UpgradeAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(60000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(60)),
 			data: {
 				regroup: false,
 				repair: 20,
 				count: -1,
 			},
-			templates: [comit, cohct, comhpv, cohbbt]
+			templates: [cTempl.comorb, cTempl.comit, cTempl.cohct, cTempl.comhpv, cTempl.cohbbt, cTempl.comsens]
 		},
 		"COHeavyFac-Leopard": {
 			assembly: "COHeavyFac-LeopardAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(60000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(60)),
 			data: {
 				regroup: false,
 				repair: 20,
 				count: -1,
 			},
-			templates: [comit, cohct, comhpv, cohbbt]
+			templates: [cTempl.comsens, cTempl.cohbbt, cTempl.comhpv, cTempl.cohct, cTempl.comit, cTempl.comorb]
 		},
 		"COCyborgFactoryL": {
 			assembly: "COCyborgFactoryLAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [npcybf, npcybc, npcybr]
+			templates: [cTempl.npcybf, cTempl.npcybc, cTempl.npcybr]
 		},
 		"COCyborgFactoryR": {
 			assembly: "COCyborgFactoryRAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [npcybf, npcybc, npcybr]
+			templates: [cTempl.npcybf, cTempl.npcybc, cTempl.npcybr]
 		},
 		"COVtolFacLeft-Prop": {
 			order: CAM_ORDER_ATTACK,
-			groupSize: 5,
-			throttle: camChangeOnDiff(70000),
+			groupSize: 4,
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(50)),
 			data: {
 				regroup: false,
 				count: -1,
 			},
-			templates: [commorv, colagv]
+			templates: [cTempl.commorv, cTempl.colagv]
 		},
 		"COVtolFacRight": {
 			order: CAM_ORDER_ATTACK,
-			groupSize: 5,
-			throttle: camChangeOnDiff(70000),
+			groupSize: 4,
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(50)),
 			data: {
 				regroup: false,
 				count: -1,
 			},
-			templates: [colagv, commorv]
+			templates: [cTempl.colagv, cTempl.commorv]
 		},
 	});
 
@@ -400,5 +406,5 @@ function eventStartLevel()
 	camPlayVideos("MB2_C_MSG");
 	hackAddMessage("C2C_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER, true);
 
-	queue("activateGroups", camChangeOnDiff(480000)); //8 min
+	queue("activateGroups", camChangeOnDiff(camMinutesToMilliseconds(8)));
 }

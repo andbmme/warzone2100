@@ -16,7 +16,7 @@ const NEXUS_RES = [
 ];
 var reunited;
 
-camAreaEvent("gammaBaseTrigger", function() {
+camAreaEvent("gammaBaseTrigger", function(droid) {
 	discoverGammaBase();
 });
 
@@ -31,7 +31,7 @@ function setupPatrolGroups()
 		],
 		//fallback: camMakePos("southBaseRetreat"),
 		//morale: 90,
-		interval: 35000,
+		interval: camSecondsToMilliseconds(35),
 		regroup: true,
 	});
 
@@ -44,7 +44,7 @@ function setupPatrolGroups()
 		],
 		//fallback: camMakePos("southBaseRetreat"),
 		//morale: 90,
-		interval: 35000,
+		interval: camSecondsToMilliseconds(35),
 		regroup: true,
 	});
 
@@ -61,6 +61,7 @@ function setupPatrolGroups()
 function enableAllFactories()
 {
 	camEnableFactory("NXbase1HeavyFacArti");
+	camEnableFactory("NXsouthCybFac");
 	camEnableFactory("NXcybFacArti");
 	camEnableFactory("NXvtolFacArti");
 }
@@ -72,14 +73,14 @@ function discoverGammaBase()
 	setScrollLimits(0, 0, 64, 192); //top and middle portion.
 	restoreLimboMissionData();
 	setNoGoArea(lz.x, lz.y, lz.x2, lz.y2, CAM_HUMAN_PLAYER);
-	setMissionTime(camChangeOnDiff(5400)); // 1.5 hr.
-	setPower(playerPower(me) + camChangeOnDiff(10000));
+	setMissionTime(camChangeOnDiff(camMinutesToSeconds(90)));
+	setPower(playerPower(CAM_HUMAN_PLAYER) + camChangeOnDiff(10000));
 
 	playSound("power-transferred.ogg");
 	playSound("pcv616.ogg"); //Group rescued.
 
 	camAbsorbPlayer(GAMMA, CAM_HUMAN_PLAYER); //Take everything they got!
-	setAlliance(GAMMA, NEXUS, false); //Probably don't need this.
+	setAlliance(NEXUS, GAMMA, false);
 
 	hackRemoveMessage("CM3C_GAMMABASE", PROX_MSG, CAM_HUMAN_PLAYER);
 	hackRemoveMessage("CM3C_BETATEAM", PROX_MSG, CAM_HUMAN_PLAYER);
@@ -121,13 +122,11 @@ function betaAlive()
 	}
 }
 
-
-//Vtol factory this time.
 function eventStartLevel()
 {
 	var startpos = getObject("startPosition");
 	var limboLZ = getObject("limboDroidLZ");
-	var reunited = false;
+	reunited = false;
 
 	camSetStandardWinLossConditions(CAM_VICTORY_STANDARD, "CAM3A-D1", {
 		callback: "betaAlive"
@@ -135,13 +134,18 @@ function eventStartLevel()
 
 	centreView(startpos.x, startpos.y);
 	setNoGoArea(limboLZ.x, limboLZ.y, limboLZ.x2, limboLZ.y2, -1);
-	setMissionTime(camChangeOnDiff(600)); //10 minutes for first part.
+	setMissionTime(camChangeOnDiff(camMinutesToSeconds(10)));
 
-	setPower(AI_POWER, NEXUS);
+	var enemyLz = getObject("NXlandingZone");
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, NEXUS);
+
 	camCompleteRequiredResearch(NEXUS_RES, NEXUS);
 	camCompleteRequiredResearch(GAMMA_ALLY_RES, GAMMA);
 	hackAddMessage("CM3C_GAMMABASE", PROX_MSG, CAM_HUMAN_PLAYER, true);
 	hackAddMessage("CM3C_BETATEAM", PROX_MSG, CAM_HUMAN_PLAYER, true);
+
+	setAlliance(CAM_HUMAN_PLAYER, GAMMA, true);
+	setAlliance(NEXUS, GAMMA, true);
 
 	camSetArtifacts({
 		"NXbase1HeavyFacArti": { tech: "R-Vehicle-Body07" }, //retribution
@@ -171,39 +175,54 @@ function eventStartLevel()
 		},
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"NXbase1HeavyFacArti": {
+			assembly: "NXHeavyAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(50000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(50)),
 			data: {
 				regroup: false,
 				repair: 45,
 				count: -1,
 			},
-			templates: [nxmrailh, nxlflash, nxmlinkh] //nxmsamh
+			templates: [cTempl.nxmrailh, cTempl.nxlflash, cTempl.nxmlinkh] //nxmsamh
+		},
+		"NXsouthCybFac": {
+			assembly: "NXsouthCybFacAssembly",
+			order: CAM_ORDER_ATTACK,
+			groupSize: 4,
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(30)),
+			data: {
+				regroup: false,
+				repair: 40,
+				count: -1,
+			},
+			templates: [cTempl.nxcyrail, cTempl.nxcyscou, cTempl.nxcylas]
 		},
 		"NXcybFacArti": {
+			assembly: "NXcybFacArtiAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(30000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(30)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [nxcyrail, nxcyscou, nxcylas]
+			templates: [cTempl.nxcyrail, cTempl.nxcyscou, cTempl.nxcylas]
 		},
 		"NXvtolFacArti": {
+			assembly: "NXvtolAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [nxmheapv, nxmtherv]
+			templates: [cTempl.nxmheapv, cTempl.nxmtherv]
 		},
 	});
 
@@ -211,6 +230,6 @@ function eventStartLevel()
 	setScrollLimits(0, 137, 64, 192); //Show the middle section of the map.
 	changePlayerColour(GAMMA, 0);
 
-	queue("enableAllFactories", camChangeOnDiff(180000)); // 3 min.
-	queue("setupPatrolGroups", 10000); // 10 sec.
+	queue("setupPatrolGroups", camSecondsToMilliseconds(10));
+	queue("enableAllFactories", camChangeOnDiff(camMinutesToMilliseconds(3)));
 }

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -27,9 +27,13 @@
 
 #include "track.h"
 #include "lib/framework/vector.h"
+#include "sounddefs.h"
 
-bool	sound_InitLibrary();
+bool	sound_InitLibrary(HRTFMode hrtf);
 void	sound_ShutdownLibrary();
+
+HRTFMode	sound_GetHRTFMode();
+bool	sound_SetHRTFMode(HRTFMode mode);
 
 void	sound_FreeTrack(TRACK *psTrack);
 
@@ -40,7 +44,7 @@ void	sound_StopSample(AUDIO_SAMPLE *psSample);
 void	sound_PauseSample(AUDIO_SAMPLE *psSample);
 void	sound_ResumeSample(AUDIO_SAMPLE *psSample);
 
-AUDIO_STREAM *sound_PlayStream(PHYSFS_file *PHYSFS_fileHandle, float volume, void (*onFinished)(void *), void *user_data);
+AUDIO_STREAM *sound_PlayStream(PHYSFS_file *PHYSFS_fileHandle, float volume, void (*onFinished)(const void *), const void *user_data);
 
 void	sound_SetSampleFreq(AUDIO_SAMPLE *psSample, SDWORD iFreq);
 void	sound_SetSampleVol(AUDIO_SAMPLE *psSample, SDWORD iVol,

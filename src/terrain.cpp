@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -42,6 +42,10 @@
 #include "lib/ivis_opengl/piestate.h"
 #include "lib/ivis_opengl/screen.h"
 #include "lib/ivis_opengl/piematrix.h"
+#include <glm/mat4x4.hpp>
+#ifndef GLM_ENABLE_EXPERIMENTAL
+	#define GLM_ENABLE_EXPERIMENTAL
+#endif
 #include <glm/gtx/transform.hpp>
 
 #include "terrain.h"
@@ -81,8 +85,8 @@ using RenderVertex = Vector3f;
 /// A vertex with a position and texture coordinates
 struct DecalVertex
 {
-	Vector3f pos;
-	Vector2f uv;
+	Vector3f pos = Vector3f(0.f, 0.f, 0.f);
+	Vector2f uv = Vector2f(0.f, 0.f);
 };
 
 /// The lightmap texture
@@ -98,9 +102,9 @@ static GLubyte *lightmapPixmap;
 static const unsigned int LIGHTMAP_REFRESH = 80;
 
 /// VBOs
-static GLuint geometryVBO, geometryIndexVBO, textureVBO, textureIndexVBO, decalVBO;
+static gfx_api::buffer *geometryVBO = nullptr, *geometryIndexVBO = nullptr, *textureVBO = nullptr, *textureIndexVBO = nullptr, *decalVBO = nullptr;
 /// VBOs
-static GLuint waterVBO, waterIndexVBO;
+static gfx_api::buffer *waterVBO = nullptr, *waterIndexVBO = nullptr;
 /// The amount we shift the water textures so the waves appear to be moving
 static float waterOffset;
 
@@ -120,7 +124,7 @@ static int xSectors, ySectors;
 static bool terrainInitialised = false;
 
 /// Helper to specify the offset in a VBO
-#define BUFFER_OFFSET(i) ((char *)NULL + (i))
+#define BUFFER_OFFSET(i) (reinterpret_cast<char *>(i))
 
 /// Helper variables for the DrawRangeElements functions
 GLuint dreStart, dreEnd, dreOffset;
@@ -415,7 +419,7 @@ static void setSectorDecals(int x, int y, DecalVertex *decaldata, int *decalSize
 			}
 			if (TILE_HAS_DECAL(mapTile(i, j)))
 			{
-				Vector2f center = getTileTexCoords(*uv, mapTile(i, j)->texture);
+				center = getTileTexCoords(*uv, mapTile(i, j)->texture);
 
 				getGridPos(&pos, i, j, true, false);
 				decaldata[*decalSize].pos = pos;
@@ -500,12 +504,10 @@ static void updateSectorGeometry(int x, int y)
 	ASSERT(geometrySize == sectors[x * ySectors + y].geometrySize, "something went seriously wrong updating the terrain");
 	ASSERT(waterSize    == sectors[x * ySectors + y].waterSize   , "something went seriously wrong updating the terrain");
 
-	glBindBuffer(GL_ARRAY_BUFFER, geometryVBO);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(RenderVertex)*sectors[x * ySectors + y].geometryOffset,
-	                sizeof(RenderVertex)*sectors[x * ySectors + y].geometrySize, geometry);
-	glBindBuffer(GL_ARRAY_BUFFER, waterVBO);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(RenderVertex)*sectors[x * ySectors + y].waterOffset,
-	                sizeof(RenderVertex)*sectors[x * ySectors + y].waterSize, water);
+	geometryVBO->update(sizeof(RenderVertex)*sectors[x * ySectors + y].geometryOffset,
+	                    sizeof(RenderVertex)*sectors[x * ySectors + y].geometrySize, geometry);
+	waterVBO->update(sizeof(RenderVertex)*sectors[x * ySectors + y].waterOffset,
+	                 sizeof(RenderVertex)*sectors[x * ySectors + y].waterSize, water);
 
 	free(geometry);
 	free(water);
@@ -520,9 +522,8 @@ static void updateSectorGeometry(int x, int y)
 	setSectorDecals(x, y, decaldata, &decalSize);
 	ASSERT(decalSize == sectors[x * ySectors + y].decalSize   , "the amount of decals has changed");
 
-	glBindBuffer(GL_ARRAY_BUFFER, decalVBO);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(DecalVertex)*sectors[x * ySectors + y].decalOffset,
-	                sizeof(DecalVertex)*sectors[x * ySectors + y].decalSize, decaldata);
+	decalVBO->update(sizeof(DecalVertex)*sectors[x * ySectors + y].decalOffset,
+	                 sizeof(DecalVertex)*sectors[x * ySectors + y].decalSize, decaldata);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
 	free(decaldata);
@@ -746,24 +747,28 @@ bool initTerrain()
 			sectors[x * ySectors + y].waterIndexSize = waterIndexSize - sectors[x * ySectors + y].waterIndexOffset;
 		}
 	}
-	glGenBuffers(1, &geometryVBO);
-	glBindBuffer(GL_ARRAY_BUFFER, geometryVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(RenderVertex)*geometrySize, geometry, GL_DYNAMIC_DRAW);
+	if (geometryVBO)
+		delete geometryVBO;
+	geometryVBO = gfx_api::context::get().create_buffer_object(gfx_api::buffer::usage::vertex_buffer, gfx_api::context::buffer_storage_hint::dynamic_draw);
+	geometryVBO->upload(sizeof(RenderVertex)*geometrySize, geometry);
 	free(geometry);
 
-	glGenBuffers(1, &geometryIndexVBO);
-	glBindBuffer(GL_ARRAY_BUFFER, geometryIndexVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(GLuint)*geometryIndexSize, geometryIndex, GL_STATIC_DRAW);
+	if (geometryIndexVBO)
+		delete geometryIndexVBO;
+	geometryIndexVBO = gfx_api::context::get().create_buffer_object(gfx_api::buffer::usage::index_buffer);
+	geometryIndexVBO->upload(sizeof(GLuint)*geometryIndexSize, geometryIndex);
 	free(geometryIndex);
 
-	glGenBuffers(1, &waterVBO);
-	glBindBuffer(GL_ARRAY_BUFFER, waterVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(RenderVertex)*waterSize, water, GL_DYNAMIC_DRAW);
+	if (waterVBO)
+		delete waterVBO;
+	waterVBO = gfx_api::context::get().create_buffer_object(gfx_api::buffer::usage::vertex_buffer, gfx_api::context::buffer_storage_hint::dynamic_draw);
+	waterVBO->upload(sizeof(RenderVertex)*waterSize, water);
 	free(water);
 
-	glGenBuffers(1, &waterIndexVBO);
-	glBindBuffer(GL_ARRAY_BUFFER, waterIndexVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(GLuint)*waterIndexSize, waterIndex, GL_STATIC_DRAW);
+	if (waterIndexVBO)
+		delete waterIndexVBO;
+	waterIndexVBO = gfx_api::context::get().create_buffer_object(gfx_api::buffer::usage::index_buffer);
+	waterIndexVBO->upload(sizeof(GLuint)*waterIndexSize, waterIndex);
 	free(waterIndex);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -870,14 +875,16 @@ bool initTerrain()
 			}
 		}
 	}
-	glGenBuffers(1, &textureVBO);
-	glBindBuffer(GL_ARRAY_BUFFER, textureVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(PIELIGHT)*xSectors * ySectors * (sectorSize + 1) * (sectorSize + 1) * 2 * numGroundTypes, texture, GL_STATIC_DRAW);
+	if (textureVBO)
+		delete textureVBO;
+	textureVBO = gfx_api::context::get().create_buffer_object(gfx_api::buffer::usage::vertex_buffer);
+	textureVBO->upload(sizeof(PIELIGHT)*xSectors * ySectors * (sectorSize + 1) * (sectorSize + 1) * 2 * numGroundTypes, texture);
 	free(texture);
 
-	glGenBuffers(1, &textureIndexVBO);
-	glBindBuffer(GL_ARRAY_BUFFER, textureIndexVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(GLuint)*textureIndexSize, textureIndex, GL_STATIC_DRAW);
+	if (textureIndexVBO)
+		delete textureIndexVBO;
+	textureIndexVBO = gfx_api::context::get().create_buffer_object(gfx_api::buffer::usage::index_buffer);
+	textureIndexVBO->upload(sizeof(GLuint)*textureIndexSize, textureIndex);
 	free(textureIndex);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -895,9 +902,10 @@ bool initTerrain()
 		}
 	}
 	debug(LOG_TERRAIN, "%i decals found", decalSize / 12);
-	glGenBuffers(1, &decalVBO);
-	glBindBuffer(GL_ARRAY_BUFFER, decalVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(DecalVertex)*decalSize, decaldata, GL_DYNAMIC_DRAW);
+	if (decalVBO)
+		delete decalVBO;
+	decalVBO = gfx_api::context::get().create_buffer_object(gfx_api::buffer::usage::vertex_buffer, gfx_api::context::buffer_storage_hint::dynamic_draw);
+	decalVBO->upload(sizeof(DecalVertex)*decalSize, decaldata);
 	free(decaldata);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -948,13 +956,20 @@ void shutdownTerrain()
 		debug(LOG_ERROR, "Trying to shutdown terrain when we did not need to!");
 		return;
 	}
-	glDeleteBuffers(1, &geometryVBO);
-	glDeleteBuffers(1, &geometryIndexVBO);
-	glDeleteBuffers(1, &waterVBO);
-	glDeleteBuffers(1, &waterIndexVBO);
-	glDeleteBuffers(1, &textureVBO);
-	glDeleteBuffers(1, &textureIndexVBO);
-	glDeleteBuffers(1, &decalVBO);
+	delete geometryVBO;
+	geometryVBO = nullptr;
+	delete geometryIndexVBO;
+	geometryIndexVBO = nullptr;
+	delete waterVBO;
+	waterVBO = nullptr;
+	delete waterIndexVBO;
+	waterIndexVBO = nullptr;
+	delete textureVBO;
+	textureVBO = nullptr;
+	delete textureIndexVBO;
+	textureIndexVBO = nullptr;
+	delete decalVBO;
+	decalVBO = nullptr;
 
 	for (int x = 0; x < xSectors; x++)
 	{
@@ -1074,7 +1089,7 @@ static void cullTerrain()
 
 static void drawDepthOnly(const glm::mat4 &ModelViewProjection, const glm::vec4 &paramsXLight, const glm::vec4 &paramsYLight)
 {
-	const auto &program = pie_ActivateShader(SHADER_TERRAIN_DEPTH, ModelViewProjection, paramsXLight, paramsYLight, 1, glm::mat4(), glm::mat4());
+	const auto &program = pie_ActivateShader(SHADER_TERRAIN_DEPTH, ModelViewProjection, paramsXLight, paramsYLight, 1, glm::mat4(1.f), glm::mat4(1.f));
 	pie_SetTexturePage(TEXPAGE_NONE);
 	pie_SetRendMode(REND_OPAQUE);
 
@@ -1090,11 +1105,11 @@ static void drawDepthOnly(const glm::mat4 &ModelViewProjection, const glm::vec4 
 	glPolygonOffset(0.1f, 1.0f);
 
 	// bind the vertex buffer
-	glEnableVertexAttribArray(program.locVertex);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, geometryIndexVBO);
-	glBindBuffer(GL_ARRAY_BUFFER, geometryVBO);
+	geometryIndexVBO->bind();
+	geometryVBO->bind();
 
 	glVertexAttribPointer(program.locVertex, 3, GL_FLOAT, GL_FALSE, sizeof(RenderVertex), BUFFER_OFFSET(0));
+	glEnableVertexAttribArray(program.locVertex);
 
 	for (int x = 0; x < xSectors; x++)
 	{
@@ -1135,8 +1150,8 @@ static void drawTerrainLayers(const glm::mat4 &ModelViewProjection, const glm::v
 		renderState.fogColour.vector[2] / 255.f,
 		renderState.fogColour.vector[3] / 255.f
 	);
-	const auto &program = pie_ActivateShader(SHADER_TERRAIN, ModelViewProjection, glm::vec4(), glm::vec4(), paramsXLight, paramsYLight, 0, 1,
-		glm::mat4(), textureMatrix, renderState.fogEnabled, renderState.fogBegin, renderState.fogEnd, fogColor);
+	const auto &program = pie_ActivateShader(SHADER_TERRAIN, ModelViewProjection, glm::vec4(0.f), glm::vec4(0.f), paramsXLight, paramsYLight, 0, 1,
+		glm::mat4(1.f), textureMatrix, renderState.fogEnabled, renderState.fogBegin, renderState.fogEnd, fogColor);
 
 	// additive blending
 	pie_SetRendMode(REND_ADDITIVE);
@@ -1144,15 +1159,14 @@ static void drawTerrainLayers(const glm::mat4 &ModelViewProjection, const glm::v
 	// only draw colors
 	glDepthMask(GL_FALSE);
 
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, textureIndexVBO);
+	textureIndexVBO->bind();
 
 	// load the vertex (geometry) buffer
-	glBindBuffer(GL_ARRAY_BUFFER, geometryVBO);
-	glEnableVertexAttribArray(program.locVertex);
+	geometryVBO->bind();
 	glVertexAttribPointer(program.locVertex, 3, GL_FLOAT, GL_FALSE, sizeof(RenderVertex), BUFFER_OFFSET(0));
+	glEnableVertexAttribArray(program.locVertex);
 
-	glEnableVertexAttribArray(program.locColor);
-	glBindBuffer(GL_ARRAY_BUFFER, textureVBO);
+	textureVBO->bind();
 
 	ASSERT_OR_RETURN(, psGroundTypes, "Ground type was not set, no textures will be seen.");
 
@@ -1161,7 +1175,7 @@ static void drawTerrainLayers(const glm::mat4 &ModelViewProjection, const glm::v
 	{
 		const glm::vec4 paramsX(0, 0, -1.0f / world_coord(psGroundTypes[layer].textureSize), 0 );
 		const glm::vec4 paramsY(1.0f / world_coord(psGroundTypes[layer].textureSize), 0, 0, 0 );
-		pie_ActivateShader(SHADER_TERRAIN, ModelViewProjection, paramsX, paramsY, paramsXLight, paramsYLight, 0, 1, glm::mat4(), textureMatrix,
+		pie_ActivateShader(SHADER_TERRAIN, ModelViewProjection, paramsX, paramsY, paramsXLight, paramsYLight, 0, 1, glm::mat4(1.f), textureMatrix,
 			renderState.fogEnabled, renderState.fogBegin, renderState.fogEnd, fogColor);
 
 		// load the texture
@@ -1172,6 +1186,7 @@ static void drawTerrainLayers(const glm::mat4 &ModelViewProjection, const glm::v
 
 		// load the color buffer
 		glVertexAttribPointer(program.locColor, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(PIELIGHT), BUFFER_OFFSET(sizeof(PIELIGHT)*xSectors * ySectors * (sectorSize + 1) * (sectorSize + 1) * 2 * layer));
+		glEnableVertexAttribArray(program.locColor);
 
 		for (int x = 0; x < xSectors; x++)
 		{
@@ -1216,12 +1231,12 @@ static void drawDecals(const glm::mat4 &ModelViewProjection, const glm::vec4 &pa
 	pie_SetRendMode(REND_ALPHA);
 
 	// and the texture coordinates buffer
-	glEnableVertexAttribArray(program.locVertex);
-	glBindBuffer(GL_ARRAY_BUFFER, decalVBO);
+	decalVBO->bind();
 	glVertexAttribPointer(program.locVertex, 3, GL_FLOAT, GL_FALSE, sizeof(DecalVertex), BUFFER_OFFSET(0));
+	glEnableVertexAttribArray(program.locVertex);
 
-	glEnableVertexAttribArray(program.locTexCoord);
 	glVertexAttribPointer(program.locTexCoord, 2, GL_FLOAT, GL_FALSE, sizeof(DecalVertex), BUFFER_OFFSET(12));
+	glEnableVertexAttribArray(program.locTexCoord);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
 	int size = 0;
@@ -1290,7 +1305,7 @@ void drawTerrain(const glm::mat4 &mvp)
 	glActiveTexture(GL_TEXTURE0);
 
 	// shift the lightmap half a tile as lights are supposed to be placed at the center of a tile
-	const glm::mat4 lightMatrix = glm::translate(1.f / lightmapWidth / 2, 1.f / lightmapHeight / 2, 0.f);
+	const glm::mat4 lightMatrix = glm::translate(glm::vec3(1.f / lightmapWidth / 2, 1.f / lightmapHeight / 2, 0.f));
 
 	//////////////////////////////////////
 	// canvas to draw on
@@ -1327,7 +1342,7 @@ void drawWater(const glm::mat4 &viewMatrix)
 	const auto &renderState = getCurrentRenderState();
 
 	const auto &program = pie_ActivateShader(SHADER_WATER, viewMatrix, paramsX, paramsY, paramsX2, paramsY2, 0, 1,
-		glm::translate(waterOffset, 0.f, 0.f), glm::mat4(), renderState.fogEnabled, renderState.fogBegin, renderState.fogEnd);
+		glm::translate(glm::vec3(waterOffset, 0.f, 0.f)), glm::mat4(1.f), renderState.fogEnabled, renderState.fogBegin, renderState.fogEnd);
 
 	glDepthMask(GL_FALSE);
 
@@ -1346,10 +1361,10 @@ void drawWater(const glm::mat4 &viewMatrix)
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
 	// bind the vertex buffer
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, waterIndexVBO);
-	glBindBuffer(GL_ARRAY_BUFFER, waterVBO);
-	glEnableVertexAttribArray(program.locVertex);
+	waterIndexVBO->bind();
+	waterVBO->bind();
 	glVertexAttribPointer(program.locVertex, 3, GL_FLOAT, GL_FALSE, sizeof(RenderVertex), BUFFER_OFFSET(0));
+	glEnableVertexAttribArray(program.locVertex);
 
 	for (x = 0; x < xSectors; x++)
 	{

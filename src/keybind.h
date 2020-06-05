@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -23,6 +23,16 @@
 
 #include "console.h"
 #include "lib/framework/fixedpoint.h"
+
+#define	MAP_ZOOM_RATE_MAX	(500)
+#define	MAP_ZOOM_RATE_MIN	(50)
+#define	MAP_ZOOM_RATE_DEFAULT	(250)
+#define	MAP_ZOOM_RATE_STEP	(50)
+
+#define MAP_PITCH_RATE		(SPIN_SCALING/SECS_PER_SPIN)
+
+extern int scrollDirUpDown;
+extern int scrollDirLeftRight;
 
 // --------------- All those keyboard mappable functions */
 void kf_HalveHeights();
@@ -86,8 +96,6 @@ void kf_AssignGrouping_9();
 void kf_SelectMoveGrouping();
 void kf_ToggleDroidInfo();
 void kf_addInGameOptions();
-void kf_AddMissionOffWorld();
-void kf_EndMissionOffWorld();
 void kf_NewPlayerPower();
 void kf_addMultiMenu();
 void kf_multiAudioStart();
@@ -96,6 +104,10 @@ void kf_JumpToMapMarker();
 void kf_TogglePowerBar();
 void kf_ToggleDebugMappings();
 void kf_ToggleGodMode();
+void kf_CameraUp();
+void kf_CameraDown();
+void kf_CameraLeft();
+void kf_CameraRight();
 void kf_SeekNorth();
 void kf_MaxScrollLimits();
 void kf_LevelSea();
@@ -143,6 +155,10 @@ void kf_SelectAllCombatUnits();
 void kf_SelectAllLandCombatUnits();
 void kf_SelectAllCombatCyborgs();
 void kf_SelectAllSameType();
+
+void kf_SetDroidRangeShort();
+void kf_SetDroidRangeOptimum();
+void kf_SetDroidRangeLong();
 
 void kf_SetDroidRetreatMedium();
 void kf_SetDroidRetreatHeavy();
@@ -194,10 +210,10 @@ void kf_SelectNextPowerStation();
 void kf_SelectNextResearch();
 void kf_ToggleConsoleDrop();
 void kf_ToggleMouseInvert();
-void kf_SetKillerLevel();
+void kf_BifferBaker();
 void kf_SetEasyLevel();
 void kf_SetNormalLevel();
-void kf_SetToughUnitsLevel();
+void kf_DoubleUp();
 void kf_UpThePower();
 void kf_MaxPower();
 void kf_KillEnemy();
@@ -262,5 +278,8 @@ void kf_DamageMe();
 void kf_AutoGame();
 
 void kf_PerformanceSample();
+
+void kf_QuickSave();
+void kf_QuickLoad();
 
 #endif // __INCLUDED_SRC_KEYBIND_H__

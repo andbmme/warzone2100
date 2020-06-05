@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -46,6 +46,8 @@
 #include "slider.h"
 #include "tip.h"
 
+#include <algorithm>
+
 static	bool	bWidgetsActive = true;
 
 /* The widget the mouse is over this update */
@@ -62,12 +64,18 @@ static std::vector<WIDGET *> widgetDeletionQueue;
 
 static bool debugBoundingBoxesOnly = false;
 
+struct OverlayScreen
+{
+	W_SCREEN* psScreen;
+	uint16_t zOrder;
+};
+static std::vector<OverlayScreen> overlays;
+
 
 /* Initialise the widget module */
 bool widgInitialise()
 {
 	tipInitialise();
-
 	return true;
 }
 
@@ -83,6 +91,46 @@ void widgReset(void)
 /* Shut down the widget module */
 void widgShutDown(void)
 {
+}
+
+void widgRegisterOverlayScreen(W_SCREEN* psScreen, uint16_t zOrder)
+{
+	OverlayScreen newOverlay {psScreen, zOrder};
+	overlays.insert(std::upper_bound(overlays.begin(), overlays.end(), newOverlay, [](const OverlayScreen& a, const OverlayScreen& b){ return a.zOrder > b.zOrder; }), newOverlay);
+}
+
+void widgRemoveOverlayScreen(W_SCREEN* psScreen)
+{
+	overlays.erase(
+		std::remove_if(
+			overlays.begin(), overlays.end(),
+			[psScreen](const OverlayScreen& a) { return a.psScreen == psScreen; }
+		)
+	);
+}
+
+bool isMouseOverScreenOverlayChild(int mx, int my)
+{
+	for (const auto& overlay : overlays)
+	{
+		W_FORM* psRoot = overlay.psScreen->psForm;
+
+		// Hit-test all children of root form
+		for (WIDGET::Children::const_iterator i = psRoot->children().begin(); i != psRoot->children().end(); ++i)
+		{
+			WIDGET *psCurr = *i;
+
+			if (!psCurr->visible() || !psCurr->hitTest(mx, my))
+			{
+				continue;  // Skip any hidden widgets, or widgets the click missed.
+			}
+
+			// hit test succeeded for child widget
+			return true;
+		}
+	}
+
+	return false;
 }
 
 static void deleteOldWidgets()
@@ -109,6 +157,10 @@ W_INIT::W_INIT()
 	, pCallback(nullptr)
 	, pUserData(nullptr)
 	, UserData(0)
+	, calcLayout(nullptr)
+	, onDelete(nullptr)
+	, customHitTest(nullptr)
+	, initPUserDataFunc(nullptr)
 {}
 
 WIDGET::WIDGET(W_INIT const *init, WIDGET_TYPE type)
@@ -120,10 +172,23 @@ WIDGET::WIDGET(W_INIT const *init, WIDGET_TYPE type)
 	, pUserData(init->pUserData)
 	, UserData(init->UserData)
 	, screenPointer(nullptr)
+	, calcLayout(init->calcLayout)
+	, onDelete(init->onDelete)
+	, customHitTest(init->customHitTest)
 	, parentWidget(nullptr)
 	, dim(init->x, init->y, init->width, init->height)
 	, dirty(true)
-{}
+{
+	/* Initialize and set the pUserData if necessary */
+	if (init->initPUserDataFunc != nullptr)
+	{
+		assert(pUserData == nullptr); // if the initPUserDataFunc is set, pUserData should not be already set
+		pUserData = init->initPUserDataFunc();
+	}
+
+	// if calclayout is not null, call it
+	callCalcLayout();
+}
 
 WIDGET::WIDGET(WIDGET *parent, WIDGET_TYPE type)
 	: id(0xFFFFEEEEu)
@@ -134,6 +199,9 @@ WIDGET::WIDGET(WIDGET *parent, WIDGET_TYPE type)
 	, pUserData(nullptr)
 	, UserData(0)
 	, screenPointer(nullptr)
+	, calcLayout(nullptr)
+	, onDelete(nullptr)
+	, customHitTest(nullptr)
 	, parentWidget(nullptr)
 	, dim(0, 0, 1, 1)
 	, dirty(true)
@@ -143,6 +211,11 @@ WIDGET::WIDGET(WIDGET *parent, WIDGET_TYPE type)
 
 WIDGET::~WIDGET()
 {
+	if (onDelete != nullptr)
+	{
+		onDelete(this);	// Call the onDelete function to handle any extra logic
+	}
+
 	setScreenPointer(nullptr);  // Clear any pointers to us directly from screenPointer.
 	tipStop(this);  // Stop showing tooltip, if we are.
 
@@ -162,7 +235,7 @@ void WIDGET::deleteLater()
 	widgetDeletionQueue.push_back(this);
 }
 
-void WIDGET::setGeometry(QRect const &r)
+void WIDGET::setGeometry(WzRect const &r)
 {
 	if (dim == r)
 	{
@@ -171,6 +244,53 @@ void WIDGET::setGeometry(QRect const &r)
 	dim = r;
 	geometryChanged();
 	dirty = true;
+}
+
+void WIDGET::screenSizeDidChange(int oldWidth, int oldHeight, int newWidth, int newHeight)
+{
+	// Default implementation of screenSizeDidChange calls its own calcLayout callback function (if present)
+	callCalcLayout();
+
+	// Then propagates the event to all children
+	for (Children::const_iterator i = childWidgets.begin(); i != childWidgets.end(); ++i)
+	{
+		WIDGET *psCurr = *i;
+		psCurr->screenSizeDidChange(oldWidth, oldHeight, newWidth, newHeight);
+	}
+}
+
+void WIDGET::setCalcLayout(const WIDGET_CALCLAYOUT_FUNC& calcLayoutFunc)
+{
+	calcLayout = calcLayoutFunc;
+	callCalcLayout();
+}
+
+void WIDGET::callCalcLayout()
+{
+	if (calcLayout)
+	{
+		calcLayout(this, screenWidth, screenHeight, screenWidth, screenHeight);
+	}
+#ifdef DEBUG
+//	// FOR DEBUGGING:
+//	// To help track down WIDGETs missing a calc layout function
+//	// (because something isn't properly re-adjusting when live window resizing occurs)
+//	// uncomment the else branch below.
+//	else
+//	{
+//		debug(LOG_ERROR, "Object is missing calc layout function");
+//	}
+#endif
+}
+
+void WIDGET::setOnDelete(const WIDGET_ONDELETE_FUNC& onDeleteFunc)
+{
+	onDelete = onDeleteFunc;
+}
+
+void WIDGET::setCustomHitTest(const WIDGET_HITTEST_FUNC& newCustomHitTestFunc)
+{
+	customHitTest = newCustomHitTestFunc;
 }
 
 void WIDGET::attach(WIDGET *widget)
@@ -247,6 +367,15 @@ W_SCREEN::W_SCREEN()
 W_SCREEN::~W_SCREEN()
 {
 	delete psForm;
+}
+
+void W_SCREEN::screenSizeDidChange(unsigned int oldWidth, unsigned int oldHeight, unsigned int newWidth, unsigned int newHeight)
+{
+	// resize the top-level form
+	psForm->setGeometry(0, 0, screenWidth - 1, screenHeight - 1);
+
+	// inform the top-level form of the event
+	psForm->screenSizeDidChange(oldWidth, oldHeight, newWidth, newHeight);
 }
 
 /* Check whether an ID has been used on a form */
@@ -478,13 +607,13 @@ void widgSetUserData2(W_SCREEN *psScreen, UDWORD id, UDWORD UserData)
 	}
 }
 
-void WIDGET::setTip(QString)
+void WIDGET::setTip(std::string)
 {
 	ASSERT(false, "Can't set widget type %u's tip.", type);
 }
 
 /* Set tip string for a widget */
-void widgSetTip(W_SCREEN *psScreen, UDWORD id, QString pTip)
+void widgSetTip(W_SCREEN *psScreen, UDWORD id, std::string pTip)
 {
 	WIDGET *psWidget = widgGetFromID(psScreen, id);
 
@@ -562,10 +691,10 @@ void widgSetButtonState(W_SCREEN *psScreen, UDWORD id, UDWORD state)
 	psWidget->setState(state);
 }
 
-QString WIDGET::getString() const
+WzString WIDGET::getString() const
 {
 	ASSERT(false, "Can't get widget type %u's string.", type);
-	return QString();
+	return WzString();
 }
 
 /* Return a pointer to a buffer containing the current string of a widget.
@@ -576,12 +705,23 @@ const char *widgGetString(W_SCREEN *psScreen, UDWORD id)
 	const WIDGET *psWidget = widgGetFromID(psScreen, id);
 	ASSERT_OR_RETURN("", psWidget, "Couldn't find widget by ID %u", id);
 
-	static QByteArray ret;  // Must be static so it isn't immediately freed when this function returns.
-	ret = psWidget->getString().toUtf8();
-	return ret.constData();
+	static WzString ret;  // Must be static so it isn't immediately freed when this function returns.
+	ret = psWidget->getString();
+	return ret.toUtf8().c_str();
 }
 
-void WIDGET::setString(QString)
+const WzString& widgGetWzString(W_SCREEN *psScreen, UDWORD id)
+{
+	static WzString emptyString = WzString();
+	const WIDGET *psWidget = widgGetFromID(psScreen, id);
+	ASSERT_OR_RETURN(emptyString, psWidget, "Couldn't find widget by ID %u", id);
+
+	static WzString ret;  // Must be static so it isn't immediately freed when this function returns.
+	ret = psWidget->getString();
+	return ret;
+}
+
+void WIDGET::setString(WzString)
 {
 	ASSERT(false, "Can't set widget type %u's string.", type);
 }
@@ -598,7 +738,7 @@ void widgSetString(W_SCREEN *psScreen, UDWORD id, const char *pText)
 		psScreen->setFocus(nullptr);
 	}
 
-	psWidget->setString(QString::fromUtf8(pText));
+	psWidget->setString(WzString::fromUtf8(pText));
 }
 
 void WIDGET::processCallbacksRecursive(W_CONTEXT *psContext)
@@ -655,8 +795,24 @@ void WIDGET::runRecursive(W_CONTEXT *psContext)
 	}
 }
 
-void WIDGET::processClickRecursive(W_CONTEXT *psContext, WIDGET_KEY key, bool wasPressed)
+bool WIDGET::hitTest(int x, int y)
 {
+	// default hit-testing bounding rect (based on the widget's x, y, width, height)
+	bool hitTestResult = dim.contains(x, y);
+
+	if(customHitTest)
+	{
+		// if the default bounding-rect hit-test succeeded, use the custom hit-testing func
+		hitTestResult = hitTestResult && customHitTest(this, x, y);
+	}
+
+	return hitTestResult;
+}
+
+bool WIDGET::processClickRecursive(W_CONTEXT *psContext, WIDGET_KEY key, bool wasPressed)
+{
+	bool didProcessClick = false;
+
 	W_CONTEXT shiftedContext;
 	shiftedContext.mx = psContext->mx - x();
 	shiftedContext.my = psContext->my - y();
@@ -668,20 +824,28 @@ void WIDGET::processClickRecursive(W_CONTEXT *psContext, WIDGET_KEY key, bool wa
 	{
 		WIDGET *psCurr = *i;
 
-		if (!psCurr->visible() || !psCurr->dim.contains(shiftedContext.mx, shiftedContext.my))
+		if (!psCurr->visible() || !psCurr->hitTest(shiftedContext.mx, shiftedContext.my))
 		{
 			continue;  // Skip any hidden widgets, or widgets the click missed.
 		}
 
 		// Process it (recursively).
-		psCurr->processClickRecursive(&shiftedContext, key, wasPressed);
+		didProcessClick = psCurr->processClickRecursive(&shiftedContext, key, wasPressed) || didProcessClick;
+	}
+
+	if (!visible())
+	{
+		// special case for root form
+		// since the processClickRecursive of children is only called if they are visible
+		// this should only trigger for the root form of a screen that's been set to invisible
+		return false;
 	}
 
 	if (psMouseOverWidget == nullptr)
 	{
 		psMouseOverWidget = this;  // Mark that the mouse is over a widget (if we haven't already).
 	}
-	if (screenPointer->lastHighlight != this && psMouseOverWidget == this)
+	if (screenPointer && screenPointer->lastHighlight != this && psMouseOverWidget == this)
 	{
 		if (screenPointer->lastHighlight != nullptr)
 		{
@@ -693,17 +857,23 @@ void WIDGET::processClickRecursive(W_CONTEXT *psContext, WIDGET_KEY key, bool wa
 
 	if (key == WKEY_NONE)
 	{
-		return;  // Just checking mouse position, not a click.
+		return false;  // Just checking mouse position, not a click.
 	}
 
-	if (wasPressed)
+	if (psMouseOverWidget == this)
 	{
-		clicked(psContext, key);
+		if (wasPressed)
+		{
+			clicked(psContext, key);
+		}
+		else
+		{
+			released(psContext, key);
+		}
+		didProcessClick = true;
 	}
-	else
-	{
-		released(psContext, key);
-	}
+
+	return didProcessClick;
 }
 
 
@@ -743,6 +913,10 @@ WidgetTriggers const &widgRunScreen(W_SCREEN *psScreen)
 			}
 			sContext.mx = c->pos.x;
 			sContext.my = c->pos.y;
+			for (const auto& overlay : overlays)
+			{
+				overlay.psScreen->psForm->processClickRecursive(&sContext, wkey, pressed);
+			}
 			psScreen->psForm->processClickRecursive(&sContext, wkey, pressed);
 
 			lastReleasedKey_DEPRECATED = wkey;
@@ -751,9 +925,17 @@ WidgetTriggers const &widgRunScreen(W_SCREEN *psScreen)
 
 	sContext.mx = mouseX();
 	sContext.my = mouseY();
+	for (const auto& overlay : overlays)
+	{
+		overlay.psScreen->psForm->processClickRecursive(&sContext, WKEY_NONE, true);  // Update highlights and psMouseOverWidget.
+	}
 	psScreen->psForm->processClickRecursive(&sContext, WKEY_NONE, true);  // Update highlights and psMouseOverWidget.
 
 	/* Process the screen's widgets */
+	for (const auto& overlay : overlays)
+	{
+		overlay.psScreen->psForm->runRecursive(&sContext);
+	}
 	psScreen->psForm->runRecursive(&sContext);
 
 	deleteOldWidgets();  // Delete any widgets that called deleteLater() while being run.
@@ -849,6 +1031,13 @@ void widgDisplayScreen(W_SCREEN *psScreen)
 
 	// Display the widgets.
 	psScreen->psForm->displayRecursive(0, 0);
+
+	// Always overlays on-top (i.e. draw them last)
+	for (const auto& overlay : overlays)
+	{
+		overlay.psScreen->psForm->processCallbacksRecursive(&sContext);
+		overlay.psScreen->psForm->displayRecursive(0, 0);
+	}
 
 	deleteOldWidgets();  // Delete any widgets that called deleteLater() while being displayed.
 

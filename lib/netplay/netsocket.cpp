@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -31,6 +31,9 @@
 #include <algorithm>
 #include <map>
 
+#if !defined(ZLIB_CONST)
+#  define ZLIB_CONST
+#endif
 #include <zlib.h>
 
 enum
@@ -82,7 +85,7 @@ static WZ_MUTEX *socketThreadMutex;
 static WZ_SEMAPHORE *socketThreadSemaphore;
 static WZ_THREAD *socketThread = nullptr;
 static bool socketThreadQuit;
-typedef std::map<Socket *, std::vector<uint8_t> > SocketThreadWriteMap;
+typedef std::map<Socket *, std::vector<uint8_t>> SocketThreadWriteMap;
 static SocketThreadWriteMap socketThreadWrites;
 
 
@@ -119,13 +122,25 @@ typedef int (WINAPI *GETADDRINFO_DLL_FUNC)(const char *node, const char *service
 typedef int (WINAPI *FREEADDRINFO_DLL_FUNC)(struct addrinfo *res);
 
 static HMODULE winsock2_dll = nullptr;
-static unsigned int major_windows_version = 0;
 
 static GETADDRINFO_DLL_FUNC getaddrinfo_dll_func = nullptr;
 static FREEADDRINFO_DLL_FUNC freeaddrinfo_dll_func = nullptr;
 
 # define getaddrinfo  getaddrinfo_dll_dispatcher
 # define freeaddrinfo freeaddrinfo_dll_dispatcher
+
+# include <ntverp.h>				// Windows SDK - include for access to VER_PRODUCTBUILD
+# if VER_PRODUCTBUILD >= 9600
+	// 9600 is the Windows SDK 8.1
+	# include <VersionHelpers.h>	// For IsWindowsVistaOrGreater()
+# else
+	// Earlier SDKs may not have VersionHelpers.h - use simple fallback
+	inline bool IsWindowsVistaOrGreater()
+	{
+		DWORD dwMajorVersion = (DWORD)(LOBYTE(LOWORD(GetVersion())));
+		return dwMajorVersion >= 6;
+	}
+# endif
 
 static int getaddrinfo(const char *node, const char *service,
                        const struct addrinfo *hints,
@@ -137,77 +152,55 @@ static int getaddrinfo(const char *node, const char *service,
 		memcpy(&hint, hints, sizeof(hint));
 	}
 
-	switch (major_windows_version)
-	{
-	case 0:
-	case 1:
-	case 2:
-	case 3:
-	// Windows 95, 98 and ME
-	case 4:
-		debug(LOG_ERROR, "Name resolution isn't supported on this version (%u) of Windows", major_windows_version);
-		return EAI_FAIL;
+//	// Windows 95, 98 and ME
+//		debug(LOG_ERROR, "Name resolution isn't supported on this version of Windows");
+//		return EAI_FAIL;
 
-	// Windows 2000, XP and Server 2003
-	case 5:
+	if (!IsWindowsVistaOrGreater())
+	{
+		// Windows 2000, XP and Server 2003
 		if (hints)
 		{
-			// These flags are only supported from version 6 and onward
+			// These flags are only supported from Windows Vista+
 			hint.ai_flags &= ~(AI_V4MAPPED | AI_ADDRCONFIG);
 		}
-	// Windows Vista and Server 2008
-	case 6:
-	// Onward (aka: in the future)
-	default:
-		if (!winsock2_dll)
-		{
-			debug(LOG_ERROR, "Failed to load winsock2 DLL. Required for name resolution.");
-			return EAI_FAIL;
-		}
-
-		if (!getaddrinfo_dll_func)
-		{
-			debug(LOG_ERROR, "Failed to retrieve \"getaddrinfo\" function from winsock2 DLL. Required for name resolution.");
-			return EAI_FAIL;
-		}
-
-		return getaddrinfo_dll_func(node, service, hints ? &hint : NULL, res);
 	}
+
+	if (!winsock2_dll)
+	{
+		debug(LOG_ERROR, "Failed to load winsock2 DLL. Required for name resolution.");
+		return EAI_FAIL;
+	}
+
+	if (!getaddrinfo_dll_func)
+	{
+		debug(LOG_ERROR, "Failed to retrieve \"getaddrinfo\" function from winsock2 DLL. Required for name resolution.");
+		return EAI_FAIL;
+	}
+
+	return getaddrinfo_dll_func(node, service, hints ? &hint : NULL, res);
 }
 
 static void freeaddrinfo(struct addrinfo *res)
 {
-	switch (major_windows_version)
+
+//	// Windows 95, 98 and ME
+//		debug(LOG_ERROR, "Name resolution isn't supported on this version of Windows");
+//		return;
+
+	if (!winsock2_dll)
 	{
-	case 0:
-	case 1:
-	case 2:
-	case 3:
-	// Windows 95, 98 and ME
-	case 4:
-		debug(LOG_ERROR, "Name resolution isn't supported on this version (%u) of Windows", major_windows_version);
+		debug(LOG_ERROR, "Failed to load winsock2 DLL. Required for name resolution.");
 		return;
-
-	// Windows 2000, XP and Server 2003
-	case 5:
-	// Windows Vista and Server 2008
-	case 6:
-	// Onward (aka: in the future)
-	default:
-		if (!winsock2_dll)
-		{
-			debug(LOG_ERROR, "Failed to load winsock2 DLL. Required for name resolution.");
-			return;
-		}
-
-		if (!freeaddrinfo_dll_func)
-		{
-			debug(LOG_ERROR, "Failed to retrieve \"freeaddrinfo\" function from winsock2 DLL. Required for name resolution.");
-			return;
-		}
-
-		freeaddrinfo_dll_func(res);
 	}
+
+	if (!freeaddrinfo_dll_func)
+	{
+		debug(LOG_ERROR, "Failed to retrieve \"freeaddrinfo\" function from winsock2 DLL. Required for name resolution.");
+		return;
+	}
+
+	freeaddrinfo_dll_func(res);
 }
 #endif
 
@@ -222,14 +215,27 @@ static int addressToText(const struct sockaddr *addr, char *buf, size_t size)
 	{
 	case AF_INET:
 		{
-			return handleIpv4(((const struct sockaddr_in *)addr)->sin_addr.s_addr);
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wcast-align"
+#endif
+			return handleIpv4((reinterpret_cast<const sockaddr_in *>(addr))->sin_addr.s_addr);
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__)
+# pragma GCC diagnostic pop
+#endif
 		}
 	case AF_INET6:
 		{
 
-			uint16_t *address = (uint16_t *) & ((const struct sockaddr_in6 *)addr)->sin6_addr.s6_addr;
 			// Check to see if this is really a IPv6 address
-			struct sockaddr_in6 *mappedIP = (struct sockaddr_in6 *)addr;
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wcast-align"
+#endif
+			const struct sockaddr_in6 *mappedIP = reinterpret_cast<const sockaddr_in6 *>(addr);
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__)
+# pragma GCC diagnostic pop
+#endif
 			if (IN6_IS_ADDR_V4MAPPED(&mappedIP->sin6_addr))
 			{
 				// looks like it is ::ffff:(...) so lets set up a IPv4 socket address structure
@@ -241,6 +247,17 @@ static int addressToText(const struct sockaddr *addr, char *buf, size_t size)
 			}
 			else
 			{
+				static_assert(sizeof(in6_addr::s6_addr) == 16, "Standard expects in6_addr structure that contains member s6_addr[16], a 16-element array of uint8_t");
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wcast-align"
+#endif
+				const uint8_t *address_u8 = &((reinterpret_cast<const sockaddr_in6 *>(addr))->sin6_addr.s6_addr[0]);
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__)
+# pragma GCC diagnostic pop
+#endif
+				uint16_t address[8] = {0};
+				memcpy(&address, address_u8, sizeof(uint8_t) * 16);
 				return snprintf(buf, size,
 								"%hx:%hx:%hx:%hx:%hx:%hx:%hx:%hx",
 								ntohs(address[0]),
@@ -622,7 +639,31 @@ ssize_t writeAll(Socket *sock, const void *buf, size_t size, size_t *rawByteCoun
 		}
 		else
 		{
-			sock->zDeflate.next_in = (Bytef *)buf;
+		#if ZLIB_VERNUM < 0x1252
+			// zlib < 1.2.5.2 does not support `#define ZLIB_CONST`
+			// Unfortunately, some OSes (ex. OpenBSD) ship with zlib < 1.2.5.2
+			// Workaround: cast away the const of the input, and disable the resulting -Wcast-qual warning
+			#if defined(__clang__)
+			#  pragma clang diagnostic push
+			#  pragma clang diagnostic ignored "-Wcast-qual"
+			#elif defined(__GNUC__)
+			#  pragma GCC diagnostic push
+			#  pragma GCC diagnostic ignored "-Wcast-qual"
+			#endif
+
+			// cast away the const for earlier zlib versions
+			sock->zDeflate.next_in = (Bytef *)buf; // -Wcast-qual
+
+			#if defined(__clang__)
+			#  pragma clang diagnostic pop
+			#elif defined(__GNUC__)
+			#  pragma GCC diagnostic pop
+			#endif
+		#else
+			// zlib >= 1.2.5.2 supports ZLIB_CONST
+			sock->zDeflate.next_in = (const Bytef *)buf;
+		#endif
+
 			sock->zDeflate.avail_in = size;
 			sock->zDeflateInSize += sock->zDeflate.avail_in;
 			do
@@ -763,12 +804,12 @@ void SocketSet_AddSocket(SocketSet *set, Socket *socket)
 	size_t i = std::find(set->fds.begin(), set->fds.end(), socket) - set->fds.begin();
 	if (i != set->fds.size())
 	{
-		debug(LOG_NET, "Already found, socket: (set->fds[%lu]) %p", (unsigned long)i, socket);
+		debug(LOG_NET, "Already found, socket: (set->fds[%lu]) %p", (unsigned long)i, static_cast<void *>(socket));
 		return;
 	}
 
 	set->fds.push_back(socket);
-	debug(LOG_NET, "Socket added: set->fds[%lu] = %p", (unsigned long)i, socket);
+	debug(LOG_NET, "Socket added: set->fds[%lu] = %p", (unsigned long)i, static_cast<void *>(socket));
 }
 
 /**
@@ -779,10 +820,51 @@ void SocketSet_DelSocket(SocketSet *set, Socket *socket)
 	size_t i = std::find(set->fds.begin(), set->fds.end(), socket) - set->fds.begin();
 	if (i != set->fds.size())
 	{
-		debug(LOG_NET, "Socket %p erased (set->fds[%lu])", socket, (unsigned long)i);
+		debug(LOG_NET, "Socket %p erased (set->fds[%lu])", static_cast<void *>(socket), (unsigned long)i);
 		set->fds.erase(set->fds.begin() + i);
 	}
 }
+
+#if !defined(SOCK_CLOEXEC)
+static bool setSocketInheritable(SOCKET fd, bool inheritable)
+{
+#if   defined(WZ_OS_UNIX)
+	int sockopts = fcntl(fd, F_SETFD);
+	if (sockopts == SOCKET_ERROR)
+	{
+		debug(LOG_NET, "Failed to retrieve current socket options: %s", strSockError(getSockErr()));
+		return false;
+	}
+
+	// Set or clear FD_CLOEXEC flag
+	if (inheritable)
+	{
+		sockopts &= ~FD_CLOEXEC;
+	}
+	else
+	{
+		sockopts |= FD_CLOEXEC;
+	}
+
+	if (fcntl(fd, F_SETFD, sockopts) == SOCKET_ERROR)
+	{
+		debug(LOG_NET, "Failed to set socket %sinheritable: %s", (inheritable ? "" : "non-"), strSockError(getSockErr()));
+		return false;
+	}
+#elif defined(WZ_OS_WIN)
+	DWORD dwFlags = (inheritable) ? HANDLE_FLAG_INHERIT : 0;
+	if (::SetHandleInformation((HANDLE)fd, HANDLE_FLAG_INHERIT, dwFlags) == 0)
+	{
+		DWORD dwErr = GetLastError();
+		debug(LOG_NET, "Failed to set socket %sinheritable: %s", (inheritable ? "" : "non-"), std::to_string(dwErr).c_str());
+		return false;
+	}
+#endif
+
+	debug(LOG_NET, "Socket is set to %sinheritable.", (inheritable ? "" : "non-"));
+	return true;
+}
+#endif // !defined(SOCK_CLOEXEC)
 
 static bool setSocketBlocking(const SOCKET fd, bool blocking)
 {
@@ -932,7 +1014,7 @@ ssize_t readAll(Socket *sock, void *buf, size_t size, unsigned int timeout)
 
 	if (sock->fd[SOCK_CONNECTION] == INVALID_SOCKET)
 	{
-		debug(LOG_ERROR, "Invalid socket (%p), sock->fd[SOCK_CONNECTION]=%x  (error: EBADF)", sock, sock->fd[SOCK_CONNECTION]);
+		debug(LOG_ERROR, "Invalid socket (%p), sock->fd[SOCK_CONNECTION]=%x  (error: EBADF)", static_cast<void *>(sock), sock->fd[SOCK_CONNECTION]);
 		setSockErr(EBADF);
 		return SOCKET_ERROR;
 	}
@@ -950,10 +1032,10 @@ ssize_t readAll(Socket *sock, void *buf, size_t size, unsigned int timeout)
 			{
 				if (ret == 0)
 				{
-					debug(LOG_NET, "socket (%p) has timed out.", socket);
+					debug(LOG_NET, "socket (%p) has timed out.", static_cast<void *>(sock));
 					setSockErr(ETIMEDOUT);
 				}
-				debug(LOG_NET, "socket (%p) error.", socket);
+				debug(LOG_NET, "socket (%p) error.", static_cast<void *>(sock));
 				return SOCKET_ERROR;
 			}
 		}
@@ -1003,7 +1085,7 @@ static void socketCloseNow(Socket *sock)
 #endif
 			if (err)
 			{
-				debug(LOG_ERROR, "Failed to close socket %p: %s", sock, strSockError(getSockErr()));
+				debug(LOG_ERROR, "Failed to close socket %p: %s", static_cast<void *>(sock), strSockError(getSockErr()));
 			}
 
 			/* Make sure that dangling pointers to this
@@ -1049,14 +1131,18 @@ Socket *socketAccept(Socket *sock)
 			Socket *conn;
 			unsigned int j;
 
+#if defined(SOCK_CLOEXEC)
+			const SOCKET newConn = accept4(sock->fd[i], (struct sockaddr *)&addr, &addr_len, SOCK_CLOEXEC);
+#else
 			const SOCKET newConn = accept(sock->fd[i], (struct sockaddr *)&addr, &addr_len);
+#endif
 			if (newConn == INVALID_SOCKET)
 			{
 				// Ignore the case where no connection is pending
 				if (getSockErr() != EAGAIN
 				    && getSockErr() != EWOULDBLOCK)
 				{
-					debug(LOG_ERROR, "accept failed for socket %p: %s", sock, strSockError(getSockErr()));
+					debug(LOG_ERROR, "accept failed for socket %p: %s", static_cast<void *>(sock), strSockError(getSockErr()));
 				}
 
 				continue;
@@ -1070,10 +1156,18 @@ Socket *socketAccept(Socket *sock)
 				return nullptr;
 			}
 
-			debug(LOG_NET, "setting socket (%p) blocking status (false).", conn);
+#if !defined(SOCK_CLOEXEC)
+			if (!setSocketInheritable(newConn, false))
+			{
+				debug(LOG_NET, "Couldn't set socket (%p) inheritable status (false). Ignoring...", static_cast<void *>(conn));
+				// ignore and continue
+			}
+#endif
+
+			debug(LOG_NET, "setting socket (%p) blocking status (false).", static_cast<void *>(conn));
 			if (!setSocketBlocking(newConn, false))
 			{
-				debug(LOG_NET, "Couldn't set socket (%p) blocking status (false).  Closing.", conn);
+				debug(LOG_NET, "Couldn't set socket (%p) blocking status (false).  Closing.", static_cast<void *>(conn));
 				socketClose(conn);
 				return nullptr;
 			}
@@ -1092,7 +1186,7 @@ Socket *socketAccept(Socket *sock)
 
 			addressToText((const struct sockaddr *)&addr, conn->textAddress, sizeof(conn->textAddress));
 			debug(LOG_NET, "Incoming connection from [%s]:/*%%d*/ (FIXME: gives strict-aliasing error)", conn->textAddress/*, (unsigned int)ntohs(((const struct sockaddr_in*)&addr)->sin_port)*/);
-			debug(LOG_NET, "Using socket %p", conn);
+			debug(LOG_NET, "Using socket %p", static_cast<void *>(conn));
 			return conn;
 		}
 	}
@@ -1116,7 +1210,14 @@ Socket *socketOpen(const SocketAddress *addr, unsigned timeout)
 	ASSERT(addr != nullptr, "NULL Socket provided");
 
 	addressToText(addr->ai_addr, conn->textAddress, sizeof(conn->textAddress));
-	debug(LOG_NET, "Connecting to [%s]:%d", conn->textAddress, (int)ntohs(((const struct sockaddr_in *)addr->ai_addr)->sin_port));
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wcast-align"
+#endif
+	debug(LOG_NET, "Connecting to [%s]:%d", conn->textAddress, (int)ntohs((reinterpret_cast<const sockaddr_in *>(addr->ai_addr))->sin_port));
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__)
+# pragma GCC diagnostic pop
+#endif
 
 	// Mark all unused socket handles as invalid
 	for (i = 0; i < ARRAY_SIZE(conn->fd); ++i)
@@ -1124,19 +1225,31 @@ Socket *socketOpen(const SocketAddress *addr, unsigned timeout)
 		conn->fd[i] = INVALID_SOCKET;
 	}
 
-	conn->fd[SOCK_CONNECTION] = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+	int socket_type = addr->ai_socktype;
+#if defined(SOCK_CLOEXEC)
+	socket_type |= SOCK_CLOEXEC;
+#endif
+	conn->fd[SOCK_CONNECTION] = socket(addr->ai_family, socket_type, addr->ai_protocol);
 
 	if (conn->fd[SOCK_CONNECTION] == INVALID_SOCKET)
 	{
-		debug(LOG_ERROR, "Failed to create a socket (%p): %s", conn, strSockError(getSockErr()));
+		debug(LOG_ERROR, "Failed to create a socket (%p): %s", static_cast<void *>(conn), strSockError(getSockErr()));
 		socketClose(conn);
 		return nullptr;
 	}
 
-	debug(LOG_NET, "setting socket (%p) blocking status (false).", conn);
+#if !defined(SOCK_CLOEXEC)
+	if (!setSocketInheritable(conn->fd[SOCK_CONNECTION], false))
+	{
+		debug(LOG_NET, "Couldn't set socket (%p) inheritable status (false). Ignoring...", static_cast<void *>(conn));
+		// ignore and continue
+	}
+#endif
+
+	debug(LOG_NET, "setting socket (%p) blocking status (false).", static_cast<void *>(conn));
 	if (!setSocketBlocking(conn->fd[SOCK_CONNECTION], false))
 	{
-		debug(LOG_NET, "Couldn't set socket (%p) blocking status (false).  Closing.", conn);
+		debug(LOG_NET, "Couldn't set socket (%p) blocking status (false).  Closing.", static_cast<void *>(conn));
 		socketClose(conn);
 		return nullptr;
 	}
@@ -1159,7 +1272,7 @@ Socket *socketOpen(const SocketAddress *addr, unsigned timeout)
 #endif
 		    || timeout == 0)
 		{
-			debug(LOG_NET, "Failed to start connecting: %s, using socket %p", strSockError(getSockErr()), conn);
+			debug(LOG_NET, "Failed to start connecting: %s, using socket %p", strSockError(getSockErr()), static_cast<void *>(conn));
 			socketClose(conn);
 			return nullptr;
 		}
@@ -1185,7 +1298,7 @@ Socket *socketOpen(const SocketAddress *addr, unsigned timeout)
 
 		if (ret == SOCKET_ERROR)
 		{
-			debug(LOG_NET, "Failed to wait for connection: %s, socket %p.  Closing.", strSockError(getSockErr()), conn);
+			debug(LOG_NET, "Failed to wait for connection: %s, socket %p.  Closing.", strSockError(getSockErr()), static_cast<void *>(conn));
 			socketClose(conn);
 			return nullptr;
 		}
@@ -1193,7 +1306,7 @@ Socket *socketOpen(const SocketAddress *addr, unsigned timeout)
 		if (ret == 0)
 		{
 			setSockErr(ETIMEDOUT);
-			debug(LOG_NET, "Timed out while waiting for connection to be established: %s, using socket %p.  Closing.", strSockError(getSockErr()), conn);
+			debug(LOG_NET, "Timed out while waiting for connection to be established: %s, using socket %p.  Closing.", strSockError(getSockErr()), static_cast<void *>(conn));
 			socketClose(conn);
 			return nullptr;
 		}
@@ -1211,7 +1324,7 @@ Socket *socketOpen(const SocketAddress *addr, unsigned timeout)
 		    && getSockErr() != EISCONN)
 #endif
 		{
-			debug(LOG_NET, "Failed to connect: %s, with socket %p.  Closing.", strSockError(getSockErr()), conn);
+			debug(LOG_NET, "Failed to connect: %s, with socket %p.  Closing.", strSockError(getSockErr()), static_cast<void *>(conn));
 			socketClose(conn);
 			return nullptr;
 		}
@@ -1261,31 +1374,35 @@ Socket *socketListen(unsigned int port)
 	addr6.sin6_flowinfo = 0;
 	addr6.sin6_scope_id = 0;
 
-	conn->fd[SOCK_IPV4_LISTEN] = socket(addr4.sin_family, SOCK_STREAM, 0);
-	conn->fd[SOCK_IPV6_LISTEN] = socket(addr6.sin6_family, SOCK_STREAM, 0);
+	int socket_type = SOCK_STREAM;
+#if defined(SOCK_CLOEXEC)
+	socket_type |= SOCK_CLOEXEC;
+#endif
+	conn->fd[SOCK_IPV4_LISTEN] = socket(addr4.sin_family, socket_type, 0);
+	conn->fd[SOCK_IPV6_LISTEN] = socket(addr6.sin6_family, socket_type, 0);
 
 	if (conn->fd[SOCK_IPV4_LISTEN] == INVALID_SOCKET
 	    && conn->fd[SOCK_IPV6_LISTEN] == INVALID_SOCKET)
 	{
-		debug(LOG_ERROR, "Failed to create an IPv4 and IPv6 (only supported address families) socket (%p): %s.  Closing.", conn, strSockError(getSockErr()));
+		debug(LOG_ERROR, "Failed to create an IPv4 and IPv6 (only supported address families) socket (%p): %s.  Closing.", static_cast<void *>(conn), strSockError(getSockErr()));
 		socketClose(conn);
 		return nullptr;
 	}
 
 	if (conn->fd[SOCK_IPV4_LISTEN] != INVALID_SOCKET)
 	{
-		debug(LOG_NET, "Successfully created an IPv4 socket (%p)", conn);
+		debug(LOG_NET, "Successfully created an IPv4 socket (%p)", static_cast<void *>(conn));
 	}
 
 	if (conn->fd[SOCK_IPV6_LISTEN] != INVALID_SOCKET)
 	{
-		debug(LOG_NET, "Successfully created an IPv6 socket (%p)", conn);
+		debug(LOG_NET, "Successfully created an IPv6 socket (%p)", static_cast<void *>(conn));
 	}
 
 #if defined(IPV6_V6ONLY)
 	if (conn->fd[SOCK_IPV6_LISTEN] != INVALID_SOCKET)
 	{
-		if (setsockopt(conn->fd[SOCK_IPV6_LISTEN], IPPROTO_IPV6, IPV6_V6ONLY, (char *)&ipv6_v6only, sizeof(ipv6_v6only)) == SOCKET_ERROR)
+		if (setsockopt(conn->fd[SOCK_IPV6_LISTEN], IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&ipv6_v6only, sizeof(ipv6_v6only)) == SOCKET_ERROR)
 		{
 			debug(LOG_INFO, "Failed to set IPv6 socket to perform IPv4 to IPv6 mapping. Falling back to using two sockets. Error: %s", strSockError(getSockErr()));
 		}
@@ -1304,12 +1421,20 @@ Socket *socketListen(unsigned int port)
 
 	if (conn->fd[SOCK_IPV4_LISTEN] != INVALID_SOCKET)
 	{
-		if (setsockopt(conn->fd[SOCK_IPV4_LISTEN], SOL_SOCKET, SO_REUSEADDR, (char *)&so_reuseaddr, sizeof(so_reuseaddr)) == SOCKET_ERROR)
+#if !defined(SOCK_CLOEXEC)
+		if (!setSocketInheritable(conn->fd[SOCK_IPV4_LISTEN], false))
+		{
+			debug(LOG_NET, "Couldn't set socket (%p) inheritable status (false). Ignoring...", static_cast<void *>(conn));
+			// ignore and continue
+		}
+#endif
+
+		if (setsockopt(conn->fd[SOCK_IPV4_LISTEN], SOL_SOCKET, SO_REUSEADDR, (const char *)&so_reuseaddr, sizeof(so_reuseaddr)) == SOCKET_ERROR)
 		{
 			debug(LOG_WARNING, "Failed to set SO_REUSEADDR on IPv4 socket. Error: %s", strSockError(getSockErr()));
 		}
 
-		debug(LOG_NET, "setting socket (%p) blocking status (false, IPv4).", conn);
+		debug(LOG_NET, "setting socket (%p) blocking status (false, IPv4).", static_cast<void *>(conn));
 		if (bind(conn->fd[SOCK_IPV4_LISTEN], (const struct sockaddr *)&addr4, sizeof(addr4)) == SOCKET_ERROR
 		    || listen(conn->fd[SOCK_IPV4_LISTEN], 5) == SOCKET_ERROR
 		    || !setSocketBlocking(conn->fd[SOCK_IPV4_LISTEN], false))
@@ -1326,12 +1451,20 @@ Socket *socketListen(unsigned int port)
 
 	if (conn->fd[SOCK_IPV6_LISTEN] != INVALID_SOCKET)
 	{
-		if (setsockopt(conn->fd[SOCK_IPV6_LISTEN], SOL_SOCKET, SO_REUSEADDR, (char *)&so_reuseaddr, sizeof(so_reuseaddr)) == SOCKET_ERROR)
+#if !defined(SOCK_CLOEXEC)
+		if (!setSocketInheritable(conn->fd[SOCK_IPV6_LISTEN], false))
+		{
+			debug(LOG_NET, "Couldn't set socket (%p) inheritable status (false). Ignoring...", static_cast<void *>(conn));
+			// ignore and continue
+		}
+#endif
+
+		if (setsockopt(conn->fd[SOCK_IPV6_LISTEN], SOL_SOCKET, SO_REUSEADDR, (const char *)&so_reuseaddr, sizeof(so_reuseaddr)) == SOCKET_ERROR)
 		{
 			debug(LOG_INFO, "Failed to set SO_REUSEADDR on IPv6 socket. Error: %s", strSockError(getSockErr()));
 		}
 
-		debug(LOG_NET, "setting socket (%p) blocking status (false, IPv6).", conn);
+		debug(LOG_NET, "setting socket (%p) blocking status (false, IPv6).", static_cast<void *>(conn));
 		if (bind(conn->fd[SOCK_IPV6_LISTEN], (const struct sockaddr *)&addr6, sizeof(addr6)) == SOCKET_ERROR
 		    || listen(conn->fd[SOCK_IPV6_LISTEN], 5) == SOCKET_ERROR
 		    || !setSocketBlocking(conn->fd[SOCK_IPV6_LISTEN], false))
@@ -1394,15 +1527,105 @@ void socketArrayClose(Socket **sockets, size_t maxSockets)
 	std::fill(sockets, sockets + maxSockets, (Socket *)nullptr);      // Set the pointers to NULL.
 }
 
+WZ_DECL_NONNULL(1) bool socketHasIPv4(Socket *sock)
+{
+	if (sock->fd[SOCK_IPV4_LISTEN] != INVALID_SOCKET)
+	{
+		return true;
+	}
+	else
+	{
+#if defined(IPV6_V6ONLY)
+		if (sock->fd[SOCK_IPV6_LISTEN] != INVALID_SOCKET)
+		{
+			int ipv6_v6only = 1;
+			socklen_t len = sizeof(ipv6_v6only);
+			if (getsockopt(sock->fd[SOCK_IPV6_LISTEN], IPPROTO_IPV6, IPV6_V6ONLY, (char *)&ipv6_v6only, &len) == 0)
+			{
+				return ipv6_v6only == 0;
+			}
+		}
+#endif
+		return false;
+	}
+}
+
+WZ_DECL_NONNULL(1) bool socketHasIPv6(Socket *sock)
+{
+	return sock->fd[SOCK_IPV6_LISTEN] != INVALID_SOCKET;
+}
+
 char const *getSocketTextAddress(Socket const *sock)
 {
 	return sock->textAddress;
 }
 
+std::vector<unsigned char> ipv4_AddressString_To_NetBinary(const std::string& ipv4Address)
+{
+	std::vector<unsigned char> binaryForm(sizeof(struct in_addr), 0);
+	if (inet_pton(AF_INET, ipv4Address.c_str(), binaryForm.data()) <= 0)
+	{
+		// inet_pton failed
+		binaryForm.clear();
+	}
+	return binaryForm;
+}
+
+#ifndef INET_ADDRSTRLEN
+# define INET_ADDRSTRLEN 16
+#endif
+
+std::string ipv4_NetBinary_To_AddressString(const std::vector<unsigned char>& ip4NetBinaryForm)
+{
+	if (ip4NetBinaryForm.size() != sizeof(struct in_addr))
+	{
+		return "";
+	}
+
+	char buf[INET_ADDRSTRLEN] = {0};
+	if (inet_ntop(AF_INET, ip4NetBinaryForm.data(), buf, sizeof(buf)) == nullptr)
+	{
+		return "";
+	}
+	std::string ipv4Address = buf;
+	return ipv4Address;
+}
+
+std::vector<unsigned char> ipv6_AddressString_To_NetBinary(const std::string& ipv6Address)
+{
+	std::vector<unsigned char> binaryForm(sizeof(struct in6_addr), 0);
+	if (inet_pton(AF_INET6, ipv6Address.c_str(), binaryForm.data()) <= 0)
+	{
+		// inet_pton failed
+		binaryForm.clear();
+	}
+	return binaryForm;
+}
+
+#ifndef INET6_ADDRSTRLEN
+# define INET6_ADDRSTRLEN 46
+#endif
+
+std::string ipv6_NetBinary_To_AddressString(const std::vector<unsigned char>& ip6NetBinaryForm)
+{
+	if (ip6NetBinaryForm.size() != sizeof(struct in6_addr))
+	{
+		return "";
+	}
+
+	char buf[INET6_ADDRSTRLEN] = {0};
+	if (inet_ntop(AF_INET6, ip6NetBinaryForm.data(), buf, sizeof(buf)) == nullptr)
+	{
+		return "";
+	}
+	std::string ipv6Address = buf;
+	return ipv6Address;
+}
+
 SocketAddress *resolveHost(const char *host, unsigned int port)
 {
 	struct addrinfo *results;
-	char *service;
+	std::string service;
 	struct addrinfo hint;
 	int error, flags = 0;
 
@@ -1421,12 +1644,12 @@ SocketAddress *resolveHost(const char *host, unsigned int port)
 	hint.ai_canonname = nullptr;
 	hint.ai_next      = nullptr;
 
-	sasprintf(&service, "%u", port);
+	service = astringf("%u", port);
 
-	error = getaddrinfo(host, service, &hint, &results);
+	error = getaddrinfo(host, service.c_str(), &hint, &results);
 	if (error != 0)
 	{
-		debug(LOG_NET, "getaddrinfo failed for %s:%s: %s", host, service, gai_strerror(error));
+		debug(LOG_NET, "getaddrinfo failed for %s:%s: %s", host, service.c_str(), gai_strerror(error));
 		return nullptr;
 	}
 
@@ -1459,12 +1682,9 @@ void SOCKETinit()
 		winsock2_dll = LoadLibraryA("ws2_32.dll");
 		if (winsock2_dll)
 		{
-			getaddrinfo_dll_func = (GETADDRINFO_DLL_FUNC) GetProcAddress(winsock2_dll, "getaddrinfo");
-			freeaddrinfo_dll_func = (FREEADDRINFO_DLL_FUNC) GetProcAddress(winsock2_dll, "freeaddrinfo");
+			getaddrinfo_dll_func = reinterpret_cast<GETADDRINFO_DLL_FUNC>(reinterpret_cast<void*>(GetProcAddress(winsock2_dll, "getaddrinfo")));
+			freeaddrinfo_dll_func = reinterpret_cast<FREEADDRINFO_DLL_FUNC>(reinterpret_cast<void*>(GetProcAddress(winsock2_dll, "freeaddrinfo")));
 		}
-
-		// Determine major Windows version
-		major_windows_version = LOBYTE(LOWORD(GetVersion()));
 	}
 #endif
 

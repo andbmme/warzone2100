@@ -3,6 +3,7 @@ include("script/campaign/libcampaign.js");
 include("script/campaign/templates.js");
 
 var index; //Number of bonus transports that have flown in.
+var startedFromMenu;
 
 //Remove Nexus VTOL droids.
 camAreaEvent("vtolRemoveZone", function(droid)
@@ -59,7 +60,10 @@ function setHeroUnits()
 
 function eventTransporterLanded(transport)
 {
-	camCallOnce("setHeroUnits");
+	if (startedFromMenu)
+	{
+		camCallOnce("setHeroUnits");
+	}
 }
 
 //Enable all factories.
@@ -92,12 +96,12 @@ function sendPlayerTransporter()
 	}
 
 	var droids = [];
-	var list;
-	with (camTemplates) list = [prhasgnt, prhhpvt, prhaacnt, prtruck];
+	var list = [cTempl.prhasgnt, cTempl.prhhpvt, cTempl.prhaacnt, cTempl.prtruck];
 
+	// send 4 Assault Guns, 2 Hyper Velocity Cannons, 2 Cyclone AA Turrets and 2 Trucks
 	for (var i = 0, d = list.length; i < 10; ++i)
 	{
-		droids.push((i < d) ? list[i] : list[camRand(d)]);
+		droids.push(i < d * 2 ? list[i % 4] : list[0]);
 	}
 
 	camSendReinforcement(CAM_HUMAN_PLAYER, camMakePos("landingZone"), droids,
@@ -108,14 +112,14 @@ function sendPlayerTransporter()
 	);
 
 	index = index + 1;
-	queue("sendPlayerTransporter", 300000); //5 min
+	queue("sendPlayerTransporter", camMinutesToMilliseconds(5));
 }
 
 //Setup Nexus VTOL hit and runners.
 function vtolAttack()
 {
-	var list; with (camTemplates) list = [nxlneedv, nxlscouv, nxmtherv];
-	camSetVtolData(NEXUS, "vtolAppearPos", "vtolRemovePos", list, camChangeOnDiff(300000), "NXCommandCenter"); //5 min
+	var list = [cTempl.nxlneedv, cTempl.nxlscouv, cTempl.nxmtherv];
+	camSetVtolData(NEXUS, "vtolAppearPos", "vtolRemovePos", list, camChangeOnDiff(camMinutesToMilliseconds(5)), "NXCommandCenter");
 }
 
 //These groups are active immediately.
@@ -155,7 +159,9 @@ function groupPatrolNoTrigger()
 function truckDefense()
 {
 	if (enumDroid(NEXUS, DROID_CONSTRUCT).length > 0)
-		queue("truckDefense", 160000);
+	{
+		queue("truckDefense", camSecondsToMilliseconds(160));
+	}
 
 	const DEFENSE = ["NX-Tower-Rail1", "NX-Tower-ATMiss"];
 	camQueueBuilding(NEXUS, DEFENSE[camRand(DEFENSE.length)]);
@@ -164,6 +170,8 @@ function truckDefense()
 //Gives starting tech and research.
 function cam3Setup()
 {
+	var x = 0;
+	var l = 0;
 	const NEXUS_RES = [
 		"R-Wpn-MG1Mk1", "R-Sys-Engineering03", "R-Defense-WallUpgrade07",
 		"R-Struc-Materials07", "R-Struc-Factory-Upgrade06",
@@ -176,12 +184,12 @@ function cam3Setup()
 		"R-Wpn-Rail-ROF01", "R-Wpn-Rail-Accuracy01", "R-Wpn-Flamer-Damage06",
 	];
 
-	for (var x = 0, l = BETA_TECH.length; x < l; ++x)
+	for (x = 0, l = BETA_TECH.length; x < l; ++x)
 	{
 		makeComponentAvailable(BETA_TECH[x], CAM_HUMAN_PLAYER);
 	}
 
-	for (var x = 0, l = STRUCTS_GAMMA.length; x < l; ++x)
+	for (x = 0, l = STRUCTS_GAMMA.length; x < l; ++x)
 	{
 		enableStructure(STRUCTS_GAMMA[x], CAM_HUMAN_PLAYER);
 	}
@@ -199,28 +207,28 @@ function cam3Setup()
 
 function eventStartLevel()
 {
-	const MISSION_TIME = camChangeOnDiff(7200); //120 minutes.
 	const PLAYER_POWER = 16000;
-	const REINFORCEMENT_TIME = 300; //5 minutes.
 	var startpos = getObject("startPosition");
 	var lz = getObject("landingZone");
 	var tent = getObject("transporterEntry");
 	var text = getObject("transporterExit");
 
 	camSetStandardWinLossConditions(CAM_VICTORY_STANDARD, "SUB_3_1S");
-	setMissionTime(MISSION_TIME);
+	setMissionTime(camChangeOnDiff(camHoursToSeconds(2)));
 
 	centreView(startpos.x, startpos.y);
 	setNoGoArea(lz.x, lz.y, lz.x2, lz.y2, CAM_HUMAN_PLAYER);
 	startTransporterEntry(tent.x, tent.y, CAM_HUMAN_PLAYER);
 	setTransporterExit(text.x, text.y, CAM_HUMAN_PLAYER);
 
+	var enemyLz = getObject("NXlandingZone");
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, NEXUS);
+
 	camSetArtifacts({
 		"NXPowerGenArti": { tech: "R-Struc-Power-Upgrade02" },
 		"NXResearchLabArti": { tech: "R-Sys-Engineering03" },
 	});
 
-	setPower(AI_POWER, NEXUS);
 	setPower(PLAYER_POWER, CAM_HUMAN_PLAYER);
 	cam3Setup();
 
@@ -251,7 +259,7 @@ function eventStartLevel()
 		},
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"NXcybFac-b3": {
 			assembly: "NXcybFac-b3Assembly",
 			order: CAM_ORDER_ATTACK,
@@ -261,9 +269,9 @@ function eventStartLevel()
 				count: -1,
 			},
 			groupSize: 4,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			group: camMakeGroup("NEAttackerGroup"),
-			templates: [nxcyrail, nxcyscou]
+			templates: [cTempl.nxcyrail, cTempl.nxcyscou]
 		},
 		"NXcybFac-b2-1": {
 			assembly: "NXcybFac-b2-1Assembly",
@@ -274,9 +282,9 @@ function eventStartLevel()
 				count: -1,
 			},
 			groupSize: 4,
-			throttle: camChangeOnDiff(30000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(30)),
 			group: camMakeGroup("cybAttackers"),
-			templates: [nxcyrail, nxcyscou]
+			templates: [cTempl.nxcyrail, cTempl.nxcyscou]
 		},
 		"NXcybFac-b2-2": {
 			assembly: "NXcybFac-b2-2Assembly",
@@ -292,9 +300,9 @@ function eventStartLevel()
 				count: -1,
 			},
 			groupSize: 4,
-			throttle: camChangeOnDiff(30000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(30)),
 			group: camMakeGroup("cybValleyPatrol"),
-			templates: [nxcyrail, nxcyscou]
+			templates: [cTempl.nxcyrail, cTempl.nxcyscou]
 		},
 		"NXHvyFac-b2": {
 			assembly: "NXHvyFac-b2Assembly",
@@ -310,9 +318,9 @@ function eventStartLevel()
 				count: -1,
 			},
 			groupSize: 4,
-			throttle: camChangeOnDiff(60000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(60)),
 			group: camMakeGroup("hoverPatrolGrp"),
-			templates: [nxmscouh]
+			templates: [cTempl.nxmscouh]
 		},
 		"NXcybFac-b4": {
 			assembly: "NXcybFac-b4Assembly",
@@ -327,28 +335,30 @@ function eventStartLevel()
 				count: -1,
 			},
 			groupSize: 4,
-			throttle: camChangeOnDiff(30000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(30)),
 			group: camMakeGroup("NEDefenderGroup"),
-			templates: [nxcyrail, nxcyscou]
+			templates: [cTempl.nxcyrail, cTempl.nxcyscou]
 		},
 	});
 
 	camManageTrucks(NEXUS);
 	truckDefense();
 	camPlayVideos(["MB3A_MSG", "MB3A_MSG2"]);
+	startedFromMenu = false;
 
 	//Only if starting Gamma directly rather than going through Beta
 	if (enumDroid(CAM_HUMAN_PLAYER, DROID_TRANSPORTER).length === 0)
 	{
+		startedFromMenu = true;
 		setReinforcementTime(LZ_COMPROMISED_TIME);
 		sendPlayerTransporter();
 	}
 	else
 	{
-		setReinforcementTime(REINFORCEMENT_TIME);
+		setReinforcementTime(camMinutesToSeconds(5));
 	}
 
 	groupPatrolNoTrigger();
-	queue("vtolAttack", camChangeOnDiff(480000)); //8 min
-	queue("enableAllFactories", camChangeOnDiff(1200000)); //20 minutes.
+	queue("vtolAttack", camChangeOnDiff(camMinutesToMilliseconds(8)));
+	queue("enableAllFactories", camChangeOnDiff(camMinutesToMilliseconds(20)));
 }

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 #define __INCLUDED_MESSAGEDEF_H__
 
 #include <vector>
-#include <QtCore/QStringList>
+#include "lib/framework/wzstring.h"
 #include "positiondef.h"
 #include "stringdef.h"
 
@@ -72,16 +72,16 @@ struct VIEW_RESEARCH : VIEW_BASE
 {
 	iIMDShape	*pIMD = nullptr;
 	iIMDShape	*pIMD2 = nullptr;	// allows base plates and turrets to be drawn as well
-	QString		sequenceName;		// which windowed flic to display
-	QString		audio;			// name of audio track to play (for this seq)
+	WzString		sequenceName;	// which windowed flic to display
+	WzString		audio;			// name of audio track to play (for this seq)
 };
 
 struct SEQ_DISPLAY
 {
-	QString 	sequenceName;
-	UBYTE		flag;			//flag data to control video playback 1 = loop till audio finish
-	QStringList     textMsg;	//Text messages - if any
-	QString         audio;		// name of audio track to play (for this seq)
+	WzString				sequenceName;
+	UBYTE					flag;		//flag data to control video playback 1 = loop till audio finish
+	std::vector<WzString>	textMsg;	//Text messages - if any
+	WzString				audio;		// name of audio track to play (for this seq)
 };
 
 //info required to view a flic in Intelligence Screen
@@ -104,11 +104,11 @@ struct VIEW_PROXIMITY : VIEW_BASE
 
 struct VIEWDATA
 {
-	QString		name;		//name ID of the message - used for loading in and identifying
-	VIEW_TYPE	type;		//the type of view
-	QStringList     textMsg;        //Text messages, if any
-	VIEW_BASE       *pData = nullptr; // the data required to view - either VIEW_RESEARCH, VIEW_PROXIMITY or VIEW_REPLAY
-	QString         fileName;       // file it came from, for piecemeal destruction (pretty lame reason)
+	WzString				name;			//name ID of the message - used for loading in and identifying
+	VIEW_TYPE				type;			//the type of view
+	std::vector<WzString>	textMsg;        //Text messages, if any
+	VIEW_BASE				*pData = nullptr; // the data required to view - either VIEW_RESEARCH, VIEW_PROXIMITY or VIEW_REPLAY
+	WzString				fileName;       // file it came from, for piecemeal destruction (pretty lame reason)
 };
 
 enum MSG_DATA_TYPE

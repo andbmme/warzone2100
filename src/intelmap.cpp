@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -53,8 +53,6 @@
 #include "research.h"
 #include "lib/gamelib/gtime.h"
 #include "loop.h"
-#include "lib/script/script.h"
-#include "scripttabs.h"
 #include "warzoneconfig.h"
 #include "seqdisp.h"
 #include "mission.h"
@@ -63,9 +61,8 @@
 #include "lib/sequence/sequence.h"
 #include "lib/sound/track.h"
 
-#include "scriptextern.h"
-
 #include "multimenu.h"
+#include "qtscript.h"
 
 /* Intelligence Map screen IDs */
 #define IDINTMAP_MSGFORM		6001	//The intelligence map tabbed form
@@ -239,7 +236,7 @@ bool intAddIntelMap()
 			sLabInit.y = INTMAP_LABELY + PAUSEMESSAGE_YOFFSET;
 			sLabInit.width = INTMAP_LABELWIDTH;
 			sLabInit.height = INTMAP_LABELHEIGHT;
-			sLabInit.pText = _("PAUSED");
+			sLabInit.pText = WzString::fromUtf8(_("PAUSED"));
 			if (!widgAddLabel(psWScreen, &sLabInit))
 			{
 				return false;
@@ -255,7 +252,9 @@ bool intAddIntelMap()
 	// Add the main Intelligence Map form
 	IntFormAnimated *intMapForm = new IntFormAnimated(parent, Animate);  // Do not animate the opening, if the window was already open.
 	intMapForm->id = IDINTMAP_FORM;
-	intMapForm->setGeometry(INTMAP_X, INTMAP_Y, INTMAP_WIDTH, INTMAP_HEIGHT);
+	intMapForm->setCalcLayout(LAMBDA_CALCLAYOUT_SIMPLE({
+		psWidget->setGeometry(INTMAP_X, INTMAP_Y, INTMAP_WIDTH, INTMAP_HEIGHT);
+	}));
 
 	if (!intAddMessageForm(playCurrent))
 	{
@@ -315,7 +314,7 @@ static bool intAddMessageForm(bool playCurrent)
 			psResearch = getResearchForMsg(psMessage->pViewData);
 			if (psResearch)
 			{
-				button->setTip(psResearch->name);
+				button->setTip(_(psResearch->name.toUtf8().c_str()));
 			}
 			else
 			{
@@ -386,7 +385,9 @@ bool intAddMessageView(MESSAGE *psMessage)
 
 	IntFormAnimated *intMapMsgView = new IntFormAnimated(parent, Animate);  // Do not animate the opening, if the window was already open.
 	intMapMsgView->id = IDINTMAP_MSGVIEW;
-	intMapMsgView->setGeometry(INTMAP_RESEARCHX, INTMAP_RESEARCHY, INTMAP_RESEARCHWIDTH, INTMAP_RESEARCHHEIGHT);
+	intMapMsgView->setCalcLayout(LAMBDA_CALCLAYOUT_SIMPLE({
+		psWidget->setGeometry(INTMAP_RESEARCHX, INTMAP_RESEARCHY, INTMAP_RESEARCHWIDTH, INTMAP_RESEARCHHEIGHT);
+	}));
 
 	/* Add the close box */
 	W_BUTINIT sButInit;
@@ -449,7 +450,7 @@ bool intAddMessageView(MESSAGE *psMessage)
 
 	ASSERT_OR_RETURN(false, psResearch != nullptr, "Research not found");
 	//sLabInit.pText=psResearch->pName;
-	sLabInit.pText = psResearch->name;
+	sLabInit.pText = WzString::fromUtf8(_(psResearch->name.toUtf8().c_str()));
 
 	sLabInit.FontID = font_regular;
 	if (!widgAddLabel(psWScreen, &sLabInit))
@@ -564,7 +565,7 @@ static bool intDisplaySeqTextViewPage(VIEW_REPLAY *psViewReplay,
 		{
 			if (render)
 			{
-				cur_y = iV_DrawFormattedText(psSeqDisplay->textMsg[i].toUtf8().constData(),
+				cur_y = iV_DrawFormattedText(psSeqDisplay->textMsg[i].toUtf8().c_str(),
 				                             x0 + TEXT_XINDENT, cur_y, width, false, font_regular);
 			}
 			else
@@ -792,7 +793,7 @@ void intIntelButtonPressed(bool proxMsg, UDWORD id)
 
 					if (audio != nullptr)
 					{
-						playing = audio_PlayStream(audio, maxVolume, [](void *) { playing = nullptr; }, nullptr);
+						playing = audio_PlayStream(audio, maxVolume, [](const void *) { playing = nullptr; }, nullptr);
 					}
 				}
 
@@ -823,21 +824,6 @@ static void intCleanUpIntelMap()
 	}
 	resetIntelligencePauseState();
 	immediateMessage = false;
-
-	if (interpProcessorActive())
-	{
-		debug(LOG_SCRIPT, "intCleanUpIntelMap: interpreter running, storing CALL_VIDEO_QUIT");
-		if (!msgStackPush(CALL_VIDEO_QUIT, -1, -1, "\0", -1, -1, nullptr))
-		{
-			debug(LOG_ERROR, "intCleanUpIntelMap() - msgStackPush - stack failed");
-			return;
-		}
-	}
-	else
-	{
-		debug(LOG_SCRIPT, "intCleanUpIntelMap: not running");
-		eventFireCallbackTrigger((TRIGGER_TYPE)CALL_VIDEO_QUIT);
-	}
 }
 
 
@@ -904,7 +890,16 @@ void intRemoveMessageView(bool animated)
 
 	//stop the video
 	VIEW_RESEARCH *psViewResearch = (VIEW_RESEARCH *)form->pUserData;
-	seq_RenderVideoToBuffer(psViewResearch->sequenceName, SEQUENCE_KILL);
+
+	if (psViewResearch != nullptr)
+	{
+		seq_RenderVideoToBuffer(psViewResearch->sequenceName, SEQUENCE_KILL);
+	}
+	else
+	{
+		const WzString dummy = "";
+		seq_RenderVideoToBuffer(dummy, SEQUENCE_KILL);
+	}
 
 	if (animated)
 	{
@@ -1122,7 +1117,7 @@ void intDisplayTEXTView(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 				return;
 			}
 			//need to check the string will fit!
-			iV_DrawText(_(psMessage->pViewData->textMsg[i].toUtf8().constData()), x0 + TEXT_XINDENT,
+			iV_DrawText(_(psMessage->pViewData->textMsg[i].toUtf8().c_str()), x0 + TEXT_XINDENT,
 			            (ty + TEXT_YINDENT * 3) + (i * linePitch), font_regular);
 		}
 	}
@@ -1141,7 +1136,7 @@ void addVideoText(SEQ_DISPLAY *psSeqDisplay, UDWORD sequence)
 		x = VIDEO_TEXT_TOP_X;
 		y = VIDEO_TEXT_TOP_Y;
 
-		seq_AddTextForVideo(psSeqDisplay->textMsg[0].toUtf8().constData(), x, y, TEXT_START_FRAME, TEXT_END_FRAME, SEQ_TEXT_POSITION); //startframe endFrame
+		seq_AddTextForVideo(psSeqDisplay->textMsg[0].toUtf8().c_str(), x, y, TEXT_START_FRAME, TEXT_END_FRAME, SEQ_TEXT_POSITION); //startframe endFrame
 
 		//add each message, the rest at the bottom
 		x = VIDEO_TEXT_BOTTOM_X;
@@ -1150,7 +1145,7 @@ void addVideoText(SEQ_DISPLAY *psSeqDisplay, UDWORD sequence)
 		i = 1;
 		while (i < psSeqDisplay->textMsg.size())
 		{
-			seq_AddTextForVideo(psSeqDisplay->textMsg[i].toUtf8().constData(), x, y, TEXT_START_FRAME, TEXT_END_FRAME, SEQ_TEXT_POSITION); //startframe endFrame
+			seq_AddTextForVideo(psSeqDisplay->textMsg[i].toUtf8().c_str(), x, y, TEXT_START_FRAME, TEXT_END_FRAME, SEQ_TEXT_POSITION); //startframe endFrame
 			//initialise after the first setting
 			x = y = 0;
 			i++;

@@ -56,7 +56,8 @@ function sendTransport()
 	}
 	// find an LZ that is not compromised
 	var list = [];
-	for (var i = 0; i < landingZoneList.length; ++i)
+	var i = 0;
+	for (i = 0; i < landingZoneList.length; ++i)
 	{
 		var lz = landingZoneList[i];
 		if (enumArea(lz, CAM_HUMAN_PLAYER, false).length === 0)
@@ -67,7 +68,7 @@ function sendTransport()
 	//If all are compromised then choose the LZ randomly
 	if (list.length === 0)
 	{
-		for (var i = 0; i < 2; ++i)
+		for (i = 0; i < 2; ++i)
 		{
 			var rnd = camRand(landingZoneList.length);
 			list.push({ idx: rnd, label: landingZoneList[rnd] });
@@ -85,19 +86,18 @@ function sendTransport()
 	if (lastHeavy)
 	{
 		lastHeavy = false;
-		queue("sendTransport", camChangeOnDiff(90000));
-		with (camTemplates) templates = [ nppod, nphmg, npmrl, npsmc ];
+		queue("sendTransport", camChangeOnDiff(camMinutesToMilliseconds(1.5)));
+		templates = [ cTempl.nppod, cTempl.nphmg, cTempl.npmrl, cTempl.npsmc ];
 	}
 	else
 	{
 		lastHeavy = true;
-		queue("sendTransport", camChangeOnDiff(180000));
-		with (camTemplates) templates = [ npsmct, npmor, npsmc, npmmct,
-		                                  npmrl, nphmg, npsbb ];
+		queue("sendTransport", camChangeOnDiff(camMinutesToMilliseconds(3)));
+		templates = [ cTempl.npsmct, cTempl.npmor, cTempl.npsmc, cTempl.npmmct, cTempl.npmrl, cTempl.nphmg, cTempl.npsbb ];
 	}
 
 	var droids = [];
-	for (var i = 0; i < count; ++i)
+	for (i = 0; i < count; ++i)
 	{
 		var t = templates[camRand(templates.length)];
 		// two droids of each template
@@ -128,7 +128,6 @@ function eventStartLevel()
 	var lz = getObject("landingZone");
 	centreView(startpos.x, startpos.y);
 	setNoGoArea(lz.x, lz.y, lz.x2, lz.y2, CAM_HUMAN_PLAYER);
-	setPower(AI_POWER, NEW_PARADIGM);
 
 	// make sure player doesn't build on enemy LZs
 	for (var i = 1; i <= 5; ++i)
@@ -139,9 +138,9 @@ function eventStartLevel()
 		setNoGoArea(ph.x, ph.y, ph.x2, ph.y2, i + 1);
 	}
 
-	setMissionTime(camChangeOnDiff(1800));
+	setMissionTime(camChangeOnDiff(camMinutesToSeconds(30)));
 	camPlayVideos("MB1CA_MSG");
 
 	// first transport after 10 seconds; will re-queue itself
-	queue('sendTransport', 10000);
+	queue('sendTransport', camSecondsToMilliseconds(10));
 }

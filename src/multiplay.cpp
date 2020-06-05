@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -25,10 +25,13 @@
  * Contains the day to day networking stuff, and received message handler.
  */
 #include <string.h>
+#include <algorithm>
+#include <chrono>
 
 #include "lib/framework/frame.h"
 #include "lib/framework/input.h"
 #include "lib/framework/strres.h"
+#include "lib/framework/physfs_ext.h"
 #include "map.h"
 
 #include "game.h"									// for loading maps
@@ -57,10 +60,6 @@
 #include "qtscript.h"
 #include "design.h"
 
-#include "lib/script/script.h"				//Because of "ScriptTabs.h"
-#include "scripttabs.h"			//because of CALL_AI_MSG
-#include "scriptcb.h"			//for console callback
-#include "scriptfuncs.h"
 #include "template.h"
 #include "lib/netplay/netplay.h"								// the netplay library.
 #include "modding.h"
@@ -72,6 +71,9 @@
 #include "multiint.h"
 #include "keymap.h"
 #include "cheat.h"
+#include "main.h"								// for gamemode
+#include "multiint.h"
+#include "activity.h"
 
 // ////////////////////////////////////////////////////////////////////////////
 // ////////////////////////////////////////////////////////////////////////////
@@ -87,26 +89,12 @@ MULTIPLAYERINGAME			ingame;
 char						beaconReceiveMsg[MAX_PLAYERS][MAX_CONSOLE_STRING_LENGTH];	//beacon msg for each player
 char								playerName[MAX_PLAYERS][MAX_STR_LENGTH];	//Array to store all player names (humans and AIs)
 
-/////////////////////////////////////
-/* multiplayer message stack stuff */
-/////////////////////////////////////
-#define MAX_MSG_STACK	100				// must be *at least* 64
-
-static char msgStr[MAX_MSG_STACK][MAX_STR_LENGTH];
-static SDWORD msgPlFrom[MAX_MSG_STACK];
-static SDWORD msgPlTo[MAX_MSG_STACK];
-static SDWORD callbackType[MAX_MSG_STACK];
-static SDWORD locx[MAX_MSG_STACK];
-static SDWORD locy[MAX_MSG_STACK];
-static DROID *msgDroid[MAX_MSG_STACK];
-static SDWORD msgStackPos = -1;				//top element pointer
-
 // ////////////////////////////////////////////////////////////////////////////
 // Local Prototypes
 
 static bool recvBeacon(NETQUEUE queue);
 static bool recvResearch(NETQUEUE queue);
-static bool sendAIMessage(char *pStr, UDWORD player, UDWORD to);
+static bool sendAIMessage(const char *pStr, UDWORD player, UDWORD to);
 
 bool multiplayPlayersReady(bool bNotifyStatus);
 void startMultiplayerGame();
@@ -129,8 +117,7 @@ void turnOffMultiMsg(bool bDoit)
 // throw a party when you win!
 bool multiplayerWinSequence(bool firstCall)
 {
-	static Position pos;
-	Position pos2;
+	static Position pos = Position(0, 0, 0);
 	static UDWORD last = 0;
 	float		rotAmount;
 	STRUCTURE	*psStruct;
@@ -175,7 +162,7 @@ bool multiplayerWinSequence(bool firstCall)
 
 	if (rand() % 3 == 0)
 	{
-		pos2 = pos;
+		Position pos2 = pos;
 		pos2.x += (rand() % world_coord(8)) - world_coord(4);
 		pos2.z += (rand() % world_coord(8)) - world_coord(4);
 
@@ -235,6 +222,7 @@ bool multiPlayerLoop()
 		if (keyPressed(KEY_ESC))// check for cancel
 		{
 			bDisplayMultiJoiningStatus = 0;
+			clearDisplayMultiJoiningStatusCache();
 			setWidgetsStatus(true);
 			setPlayerHasLost(true);
 		}
@@ -244,6 +232,7 @@ bool multiPlayerLoop()
 		if (bDisplayMultiJoiningStatus)
 		{
 			bDisplayMultiJoiningStatus = 0;
+			clearDisplayMultiJoiningStatusCache();
 			setWidgetsStatus(true);
 		}
 		if (!ingame.TimeEveryoneIsInGame)
@@ -561,7 +550,6 @@ int scavengerPlayer()
 // probably temporary. Places the camera on the players 1st droid or struct.
 Vector3i cameraToHome(UDWORD player, bool scroll)
 {
-	Vector3i res;
 	UDWORD x, y;
 	STRUCTURE	*psBuilding;
 
@@ -598,6 +586,7 @@ Vector3i cameraToHome(UDWORD player, bool scroll)
 		setViewPos(x, y, true);
 	}
 
+	Vector3i res;
 	res.x = world_coord(x);
 	res.y = map_TileHeight(x, y);
 	res.z = world_coord(y);
@@ -772,6 +761,7 @@ bool recvMessage()
 				{
 					MultiPlayerLeave(player_id);		// get rid of their stuff
 					NET_InitPlayer(player_id, false);
+					ActivityManager::instance().updateMultiplayGameData(game, ingame, NETGameIsLocked());
 				}
 				NETsetPlayerConnectionStatus(CONNECTIONSTATUS_PLAYER_DROPPED, player_id);
 				break;
@@ -850,6 +840,7 @@ bool recvMessage()
 				{
 					debug(LOG_ERROR, "You were kicked because %s", reason);
 					setPlayerHasLost(true);
+					ActivityManager::instance().wasKickedByPlayer(NetPlay.players[queue.index], KICK_TYPE, reason);
 				}
 				else
 				{
@@ -1150,7 +1141,30 @@ static void printchatmsg(const char *text, int from, bool team = false)
 {
 	char msg[MAX_CONSOLE_STRING_LENGTH];
 
-	sstrcpy(msg, getPlayerName(from));
+	time_t current_time;
+	time(&current_time);
+	struct tm time_info;
+#if defined(WZ_OS_WIN)
+	gmtime_s(&time_info, &current_time);
+#else
+	gmtime_r(&current_time, &time_info);
+#endif
+	char time_str[9];
+	ssprintf(time_str, "[%d:%d] ", time_info.tm_hour, time_info.tm_min);
+
+	sstrcpy(msg, time_str);
+	sstrcat(msg, getPlayerName(from));
+	if (from == selectedPlayer && GetGameMode() == GS_NORMAL)
+	{
+		if (team)
+		{
+			sstrcat(msg, _(" (Ally)"));
+		}
+		else
+		{
+			sstrcat(msg, _(" (Global)"));
+		}
+	}
 	sstrcat(msg, ": ");					// separator
 	sstrcat(msg, text);					// add message
 	addConsoleMessage(msg, DEFAULT_JUSTIFY, from, team);	// display
@@ -1189,7 +1203,6 @@ void sendTeamMessage(const char *pStr, uint32_t from)
 			}
 			else if (myResponsibility(i))
 			{
-				msgStackPush(CALL_AI_MSG, from, i, display, -1, -1, nullptr);
 				triggerEventChat(from, i, display);
 			}
 			else	//also send to AIs now (non-humans), needed for AI
@@ -1210,7 +1223,7 @@ bool sendTextMessage(const char *pStr, bool all, uint32_t from)
 	UDWORD				i;
 	char				display[MAX_CONSOLE_STRING_LENGTH];
 	char				msg[MAX_CONSOLE_STRING_LENGTH];
-	char				*curStr = (char *)pStr;
+	const char			*curStr = pStr;
 
 	memset(display, 0x0, sizeof(display));	//clear buffer
 	memset(msg, 0x0, sizeof(msg));		//clear buffer
@@ -1295,11 +1308,11 @@ bool sendTextMessage(const char *pStr, bool all, uint32_t from)
 		{
 			if (i == selectedPlayer && from != i)
 			{
+				sstrcat(display, curStr);
 				printchatmsg(display, from); // also display it
 			}
 			if (i != from && !isHumanPlayer(i) && myResponsibility(i))
 			{
-				msgStackPush(CALL_AI_MSG, from, i, msg, -1, -1, nullptr);
 				triggerEventChat(from, i, msg);
 			}
 			else if (i != from && !isHumanPlayer(i) && !myResponsibility(i))
@@ -1328,7 +1341,6 @@ bool sendTextMessage(const char *pStr, bool all, uint32_t from)
 				}
 				else if (myResponsibility(i))
 				{
-					msgStackPush(CALL_AI_MSG, from, i, msg, -1, -1, nullptr);
 					triggerEventChat(from, i, msg);
 				}
 				else	// send to AIs on different host
@@ -1358,7 +1370,6 @@ bool sendTextMessage(const char *pStr, bool all, uint32_t from)
 				}
 				else if (myResponsibility(i))
 				{
-					msgStackPush(CALL_AI_MSG, from, i, curStr, -1, -1, nullptr);
 					triggerEventChat(from, i, curStr);
 				}
 				else	//also send to AIs now (non-humans), needed for AI
@@ -1386,7 +1397,7 @@ void printConsoleNameChange(const char *oldName, const char *newName)
 
 
 //AI multiplayer message, send from a certain player index to another player index
-static bool sendAIMessage(char *pStr, UDWORD player, UDWORD to)
+static bool sendAIMessage(const char *pStr, UDWORD player, UDWORD to)
 {
 	UDWORD	sendPlayer;
 
@@ -1447,8 +1458,7 @@ bool sendBeacon(int32_t locX, int32_t locY, int32_t forPlayer, int32_t sender, c
 	NETint32_t(&locX);                                  // save location
 	NETint32_t(&locY);
 
-	// const_cast: need to cast away constness because of the const-incorrectness of NETstring (const-incorrect when sending/encoding a packet)
-	NETstring((char *)pStr, MAX_CONSOLE_STRING_LENGTH); // copy message in.
+	NETstring(pStr, MAX_CONSOLE_STRING_LENGTH); // copy message in.
 	NETend();
 
 	return true;
@@ -1489,16 +1499,8 @@ bool recvTextMessage(NETQUEUE queue)
 
 	addConsoleMessage(msg, DEFAULT_JUSTIFY, playerIndex, team);
 
-	// Multiplayer message callback
-	// Received a console message from a player, save
-	MultiMsgPlayerFrom = playerIndex;
-	MultiMsgPlayerTo = selectedPlayer;
-
-	sstrcpy(MultiplayMsg, newmsg);
-	eventFireCallbackTrigger((TRIGGER_TYPE)CALL_AI_MSG);
-
 	// make some noise!
-	if (titleMode == MULTIOPTION || titleMode == MULTILIMIT)
+	if (GetGameMode() != GS_NORMAL)
 	{
 		audio_PlayTrack(FE_AUDIO_MESSAGEEND);
 	}
@@ -1530,15 +1532,6 @@ bool recvTextMessageAI(NETQUEUE queue)
 
 	sstrcpy(msg, newmsg);
 	triggerEventChat(sender, receiver, newmsg);
-
-	//Received a console message from a player callback
-	//store and call later
-	//-------------------------------------------------
-	if (!msgStackPush(CALL_AI_MSG, sender, receiver, msg, -1, -1, nullptr))
-	{
-		debug(LOG_ERROR, "recvTextMessageAI() - msgStackPush - stack failed");
-		return false;
-	}
 
 	return true;
 }
@@ -1615,6 +1608,7 @@ bool recvMapFileRequested(NETQUEUE queue)
 		addConsoleMessage(_("Map was requested: SENDING MAP!"), DEFAULT_JUSTIFY, SYSTEM_MESSAGE);
 
 		LEVEL_DATASET *mapData = levFindDataSet(game.map, &game.hash);
+		ASSERT_OR_RETURN(false, mapData, "levFindDataSet failed for game.map: %s", game.map);
 		filename = mapData->realFileName;
 		debug(LOG_INFO, "Map was requested. Looking for %s", filename.c_str());
 	}
@@ -1634,7 +1628,7 @@ bool recvMapFileRequested(NETQUEUE queue)
 	PHYSFS_file *pFileHandle = PHYSFS_openRead(filename.c_str());
 	if (pFileHandle == nullptr)
 	{
-		debug(LOG_ERROR, "Failed to open %s for reading: %s", filename.c_str(), PHYSFS_getLastError());
+		debug(LOG_ERROR, "Failed to open %s for reading: %s", filename.c_str(), WZ_PHYSFS_getLastError());
 		debug(LOG_FATAL, "You have a map (%s) that can't be located.\n\nMake sure it is in the correct directory and or format! (No map packs!)", filename.c_str());
 		// NOTE: if we get here, then the game is basically over, The host can't send the file for whatever reason...
 		// Which also means, that we can't continue.
@@ -1650,7 +1644,7 @@ bool recvMapFileRequested(NETQUEUE queue)
 	ASSERT_OR_RETURN(false, fileSize_64 <= 0xFFFFFFFF, "File too big!");
 
 	// Schedule file to be sent.
-	files.emplace_back(pFileHandle, hash, fileSize_64);
+	files.emplace_back(pFileHandle, hash, (uint32_t)fileSize_64);
 
 	return true;
 }
@@ -1658,12 +1652,35 @@ bool recvMapFileRequested(NETQUEUE queue)
 // Continue sending maps and mods.
 void sendMap()
 {
+	// maximum "budget" in time per call to sendMap
+	// (at 60fps, total frame budget is ~16ms - allocate 4ms max for each call to sendMap)
+	const uint64_t maxMicroSecondsPerSendMapCall = (4 * 1000);
+
+	// calculate the time budget per file
+	uint64_t totalFilesToSend = 0;
+	for (int i = 0; i < MAX_PLAYERS; ++i)
+	{
+		totalFilesToSend += NetPlay.players[i].wzFiles.size();
+	}
+	const uint64_t maxMicroSecondsPerFile = maxMicroSecondsPerSendMapCall / std::max((uint64_t)1, totalFilesToSend);
+
+	using microDuration = std::chrono::duration<uint64_t, std::micro>;
+	auto file_startTime = std::chrono::high_resolution_clock::now();
+	microDuration file_currentDuration;
+
 	for (int i = 0; i < MAX_PLAYERS; ++i)
 	{
 		auto &files = NetPlay.players[i].wzFiles;
 		for (auto &file : files)
 		{
-			int done = NETsendFile(file, i);
+			int done = 0;
+			file_startTime = std::chrono::high_resolution_clock::now();
+			do
+			{
+				done = NETsendFile(file, i);
+				file_currentDuration = std::chrono::duration_cast<microDuration>(std::chrono::high_resolution_clock::now() - file_startTime);
+			}
+			while (done < 100 && (file_currentDuration.count() < maxMicroSecondsPerFile));
 			if (done == 100)
 			{
 				netPlayersUpdated = true;  // Remove download icon from player.
@@ -1720,278 +1737,148 @@ bool recvMapFileData(NETQUEUE queue)
 }
 
 
-//------------------------------------------------------------------------------------------------//
-
-/* multiplayer message stack */
-void msgStackReset()
+//prepare viewdata for help blip
+VIEWDATA *CreateBeaconViewData(SDWORD sender, UDWORD LocX, UDWORD LocY)
 {
-	msgStackPos = -1;		//Beginning of the stack
+	UDWORD height;
+	VIEWDATA *psViewData = nullptr;
+	SDWORD audioID;
+	char name[255];
+
+	//allocate message space
+	psViewData = new VIEWDATA;
+
+	//store name
+	sprintf(name, _("Beacon %d"), sender);
+	psViewData->name = name;
+
+	//store text message, hardcoded for now
+	psViewData->textMsg.push_back(WzString::fromUtf8(getPlayerName(sender)));
+
+	//store message type
+	psViewData->type = VIEW_BEACON;
+
+	//allocate memory for blip location etc
+	psViewData->pData = new VIEW_PROXIMITY;
+
+	//store audio
+	audioID = NO_SOUND;
+	((VIEW_PROXIMITY *)psViewData->pData)->audioID = audioID;
+
+	//store blip location
+	((VIEW_PROXIMITY *)psViewData->pData)->x = (UDWORD)LocX;
+	((VIEW_PROXIMITY *)psViewData->pData)->y = (UDWORD)LocY;
+
+	//check the z value is at least the height of the terrain
+	height = map_Height(LocX, LocY);
+
+	((VIEW_PROXIMITY *)psViewData->pData)->z = height;
+
+	//store prox message type
+	((VIEW_PROXIMITY *)psViewData->pData)->proxType = PROX_ENEMY; //PROX_ENEMY for now
+
+	//remember who sent this msg, so we could remove this one, when same player sends a new help-blip msg
+	((VIEW_PROXIMITY *)psViewData->pData)->sender = sender;
+
+	//remember when the message was created so can remove it after some time
+	((VIEW_PROXIMITY *)psViewData->pData)->timeAdded = gameTime;
+	debug(LOG_MSG, "Added message");
+
+	return psViewData;
 }
 
-UDWORD msgStackPush(SDWORD CBtype, SDWORD plFrom, SDWORD plTo, const char *tStr, SDWORD x, SDWORD y, DROID *psDroid)
+/* Looks through the players list of messages to find VIEW_BEACON (one per player!) pointer */
+MESSAGE *findBeaconMsg(UDWORD player, SDWORD sender)
 {
-	debug(LOG_WZ, "msgStackPush: pushing message type %d to pos %d", CBtype, msgStackPos + 1);
-
-	if (msgStackPos + 1 >= MAX_MSG_STACK)
+	for (MESSAGE *psCurr = apsMessages[player]; psCurr != nullptr; psCurr = psCurr->psNext)
 	{
-		debug(LOG_ERROR, "msgStackPush() - stack full");
-		return false;
-	}
-
-	//make point to the last valid element
-	msgStackPos++;
-
-	//remember values
-	msgPlFrom[msgStackPos] = plFrom;
-	msgPlTo[msgStackPos] = plTo;
-
-	callbackType[msgStackPos] = CBtype;
-	locx[msgStackPos] = x;
-	locy[msgStackPos] = y;
-
-	sstrcpy(msgStr[msgStackPos], tStr);
-
-	msgDroid[msgStackPos] = psDroid;
-
-	return true;
-}
-
-bool isMsgStackEmpty()
-{
-	if (msgStackPos <= (-1))
-	{
-		return true;
-	}
-	return false;
-}
-
-bool msgStackGetFrom(SDWORD  *psVal)
-{
-	if (msgStackPos < 0)
-	{
-		debug(LOG_ERROR, "msgStackGetFrom: msgStackPos < 0");
-		return false;
-	}
-
-	*psVal = msgPlFrom[0];
-
-	return true;
-}
-
-bool msgStackGetTo(SDWORD  *psVal)
-{
-	if (msgStackPos < 0)
-	{
-		debug(LOG_ERROR, "msgStackGetTo: msgStackPos < 0");
-		return false;
-	}
-
-	*psVal = msgPlTo[0];
-
-	return true;
-}
-
-static bool msgStackGetCallbackType(SDWORD  *psVal)
-{
-	if (msgStackPos < 0)
-	{
-		debug(LOG_ERROR, "msgStackGetCallbackType: msgStackPos < 0");
-		return false;
-	}
-
-	*psVal = callbackType[0];
-
-	return true;
-}
-
-static bool msgStackGetXY(SDWORD  *psValx, SDWORD  *psValy)
-{
-	if (msgStackPos < 0)
-	{
-		debug(LOG_ERROR, "msgStackGetXY: msgStackPos < 0");
-		return false;
-	}
-
-	*psValx = locx[0];
-	*psValy = locy[0];
-
-	return true;
-}
-
-
-bool msgStackGetMsg(char  *psVal)
-{
-	if (msgStackPos < 0)
-	{
-		debug(LOG_ERROR, "msgStackGetMsg: msgStackPos < 0");
-		return false;
-	}
-
-	strcpy(psVal, msgStr[0]);
-	//*psVal = msgPlTo[msgStackPos];
-
-	return true;
-}
-
-static bool msgStackSort()
-{
-	SDWORD i;
-
-	//go through all-1 elements (bottom-top)
-	for (i = 0; i < msgStackPos; i++)
-	{
-		msgPlFrom[i] = msgPlFrom[i + 1];
-		msgPlTo[i] = msgPlTo[i + 1];
-
-		callbackType[i] = callbackType[i + 1];
-		locx[i] = locx[i + 1];
-		locy[i] = locy[i + 1];
-
-		sstrcpy(msgStr[i], msgStr[i + 1]);
-	}
-
-	//erase top element
-	msgPlFrom[msgStackPos] = -2;
-	msgPlTo[msgStackPos] = -2;
-
-	callbackType[msgStackPos] = -2;
-	locx[msgStackPos] = -2;
-	locy[msgStackPos] = -2;
-
-	sstrcpy(msgStr[msgStackPos], "ERROR char!!!!!!!!");
-
-	msgStackPos--;		//since removed the top element
-
-	return true;
-}
-
-bool msgStackPop()
-{
-	debug(LOG_WZ, "msgStackPop: stack size %d", msgStackPos);
-
-	if (msgStackPos < 0 || msgStackPos > MAX_MSG_STACK)
-	{
-		debug(LOG_ERROR, "msgStackPop: wrong msgStackPos index: %d", msgStackPos);
-		return false;
-	}
-
-	return msgStackSort();		//move all elements 1 pos lower
-}
-
-bool msgStackGetDroid(DROID **ppsDroid)
-{
-	if (msgStackPos < 0)
-	{
-		debug(LOG_ERROR, "msgStackGetDroid: msgStackPos < 0");
-		return false;
-	}
-
-	*ppsDroid = msgDroid[0];
-
-	return true;
-}
-
-SDWORD msgStackGetCount()
-{
-	return msgStackPos + 1;
-}
-
-bool msgStackFireTop()
-{
-	SDWORD		_callbackType;
-	char		msg[255];
-
-	if (msgStackPos < 0)
-	{
-		debug(LOG_ERROR, "msgStackFireTop: msgStackPos < 0");
-		return false;
-	}
-
-	if (!msgStackGetCallbackType(&_callbackType))
-	{
-		return false;
-	}
-
-	switch (_callbackType)
-	{
-	case CALL_VIDEO_QUIT:
-		debug(LOG_SCRIPT, "msgStackFireTop: popped CALL_VIDEO_QUIT");
-		eventFireCallbackTrigger((TRIGGER_TYPE)CALL_VIDEO_QUIT);
-		break;
-
-	case CALL_DORDER_STOP:
-		ASSERT(false, "CALL_DORDER_STOP is currently disabled");
-
-		debug(LOG_SCRIPT, "msgStackFireTop: popped CALL_DORDER_STOP");
-
-		if (!msgStackGetDroid(&psScrCBOrderDroid))
+		//look for VIEW_BEACON, should only be 1 per player
+		if (psCurr->dataType == MSG_DATA_BEACON)
 		{
-			return false;
+			if (psCurr->pViewData->type == VIEW_BEACON)
+			{
+				debug(LOG_WZ, "findBeaconMsg: %d ALREADY HAS A MESSAGE STORED", player);
+				if (((VIEW_PROXIMITY *)psCurr->pViewData->pData)->sender == sender)
+				{
+					debug(LOG_WZ, "findBeaconMsg: %d ALREADY HAS A MESSAGE STORED from %d", player, sender);
+					return psCurr;
+				}
+			}
 		}
-
-		eventFireCallbackTrigger((TRIGGER_TYPE)CALL_DORDER_STOP);
-		break;
-
-	case CALL_BEACON:
-
-		if (!msgStackGetXY(&beaconX, &beaconY))
-		{
-			return false;
-		}
-
-		if (!msgStackGetFrom(&MultiMsgPlayerFrom))
-		{
-			return false;
-		}
-
-		if (!msgStackGetTo(&MultiMsgPlayerTo))
-		{
-			return false;
-		}
-
-		if (!msgStackGetMsg(msg))
-		{
-			return false;
-		}
-
-		sstrcpy(MultiplayMsg, msg);
-
-		eventFireCallbackTrigger((TRIGGER_TYPE)CALL_BEACON);
-		break;
-
-	case CALL_AI_MSG:
-		if (!msgStackGetFrom(&MultiMsgPlayerFrom))
-		{
-			return false;
-		}
-
-		if (!msgStackGetTo(&MultiMsgPlayerTo))
-		{
-			return false;
-		}
-
-		if (!msgStackGetMsg(msg))
-		{
-			return false;
-		}
-
-		sstrcpy(MultiplayMsg, msg);
-
-		eventFireCallbackTrigger((TRIGGER_TYPE)CALL_AI_MSG);
-		break;
-
-	default:
-		debug(LOG_ERROR, "msgStackFireTop: unknown callback type");
-		return false;
-		break;
 	}
 
-	if (!msgStackPop())
+	//not found the message so return NULL
+	return nullptr;
+}
+
+/* Add a beacon (blip) */
+bool addBeaconBlip(SDWORD locX, SDWORD locY, SDWORD forPlayer, SDWORD sender, const char *textMsg)
+{
+	MESSAGE *psMessage;
+
+	if (forPlayer >= MAX_PLAYERS)
 	{
+		debug(LOG_ERROR, "addBeaconBlip: player number is too high");
 		return false;
+	}
+
+	//find the message if was already added previously
+	psMessage = findBeaconMsg(forPlayer, sender);
+	if (psMessage)
+	{
+		//remove it
+		removeMessage(psMessage, forPlayer);
+	}
+
+	//create new message
+	psMessage = addBeaconMessage(MSG_PROXIMITY, false, forPlayer);
+	if (psMessage)
+	{
+		VIEWDATA *pTempData = CreateBeaconViewData(sender, locX, locY);
+		ASSERT_OR_RETURN(false, pTempData != nullptr, "Empty help data for radar beacon");
+		psMessage->pViewData = pTempData;
+		debug(LOG_MSG, "blip added, pViewData=%p", static_cast<void *>(psMessage->pViewData));
+	}
+	else
+	{
+		debug(LOG_WARNING, "call failed");
+	}
+
+	//Received a blip message from a player callback
+	//store and call later
+	//-------------------------------------------------
+	//call beacon callback only if not adding for ourselves
+	if (forPlayer != sender)
+	{
+		triggerEventBeacon(sender, forPlayer, textMsg, locX, locY);
+
+		if (selectedPlayer == forPlayer)
+		{
+			// show console message
+			CONPRINTF(_("Beacon received from %s!"), getPlayerName(sender));
+			// play audio
+			audio_QueueTrackPos(ID_SOUND_BEACON, locX, locY, 0);
+		}
 	}
 
 	return true;
+}
+
+bool sendBeaconToPlayer(SDWORD locX, SDWORD locY, SDWORD forPlayer, SDWORD sender, const char *beaconMsg)
+{
+	bool retval;
+	if (sender == forPlayer || myResponsibility(forPlayer))	//if destination player is on this machine
+	{
+		debug(LOG_WZ, "sending beacon to player %d (local player) from %d", forPlayer, sender);
+		retval = addBeaconBlip(locX, locY, forPlayer, sender, beaconMsg);
+	}
+	else
+	{
+		debug(LOG_WZ, "sending beacon to player %d (remote player) from %d", forPlayer, sender);
+		retval = sendBeacon(locX, locY, forPlayer, sender, beaconMsg);
+	}
+	jsDebugMessageUpdate();
+	return retval;
 }
 
 static bool recvBeacon(NETQUEUE queue)
@@ -2057,4 +1944,16 @@ void resetReadyStatus(bool bSendOptions)
 		sendOptions();
 	}
 	netPlayersUpdated = true;
+
+	//Really reset ready status
+	if (NetPlay.isHost)
+	{
+		for (unsigned int i = 0; i < game.maxPlayers; ++i)
+		{
+			if (isHumanPlayer(i) && ingame.JoiningInProgress[i])
+			{
+				changeReadyStatus(i, false);
+			}
+		}
+	}
 }

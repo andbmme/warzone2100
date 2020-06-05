@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2013-2017  Warzone 2100 Project
+	Copyright (C) 2011-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -23,6 +23,8 @@
 #include "lib/framework/frame.h"
 
 class QScriptEngine;
+class QString;
+class WzString;
 struct BASE_OBJECT;
 struct DROID;
 struct DROID_TEMPLATE;
@@ -39,16 +41,37 @@ enum SCRIPT_TRIGGER_TYPE
 	TRIGGER_TRANSPORTER_LAUNCH,
 	TRIGGER_TRANSPORTER_EXIT,
 	TRIGGER_TRANSPORTER_DONE,
+	TRIGGER_DELIVERY_POINT_MOVING,
+	TRIGGER_DELIVERY_POINT_MOVED,
 	TRIGGER_VIDEO_QUIT,
 	TRIGGER_MISSION_TIMEOUT,
 	TRIGGER_GAME_LOADED,
 	TRIGGER_GAME_SAVING,
 	TRIGGER_GAME_SAVED,
+	TRIGGER_DESIGN_BODY,
+	TRIGGER_DESIGN_WEAPON,
+	TRIGGER_DESIGN_COMMAND,
+	TRIGGER_DESIGN_SYSTEM,
+	TRIGGER_DESIGN_PROPULSION,
+	TRIGGER_DESIGN_QUIT,
+	TRIGGER_MENU_DESIGN_UP,
+	TRIGGER_MENU_BUILD_UP,
+	TRIGGER_MENU_BUILD_SELECTED,
+	TRIGGER_MENU_MANUFACTURE_UP,
+	TRIGGER_MENU_RESEARCH_UP,
+	TRIGGER_MENU_RESEARCH_SELECTED,
 	TRIGGER_OBJECT_RECYCLED
 };
 
+extern bool bInTutorial;
+
 // ----------------------------------------------
 // State functions
+
+bool scriptInit();
+void scriptSetStartPos(int position, int x, int  y);
+void scriptSetDerrickPos(int x, int y);
+Vector2i getPlayerStartPosition(int player);
 
 /// Initialize script system
 bool initScripts();
@@ -63,8 +86,8 @@ bool prepareScripts(bool loadGame);
 bool updateScripts();
 
 // Load and evaluate the given script, kept in memory
-bool loadGlobalScript(QString path);
-QScriptEngine *loadPlayerScript(const QString& path, int player, int difficulty);
+bool loadGlobalScript(WzString path);
+QScriptEngine *loadPlayerScript(const WzString& path, int player, int difficulty);
 
 // Set/write variables in the script's global context, run after loading script,
 // but before triggering any events.
@@ -87,13 +110,13 @@ void jsShowDebug();
 void jsAutogame();
 
 /// Choose a specific autogame AI
-void jsAutogameSpecific(const QString &name, int player);
+void jsAutogameSpecific(const WzString &name, int player);
 
 /// Run-time code from user
 bool jsEvaluate(QScriptEngine *engine, const QString &text);
 
 /// Run a named script callback
-bool namedScriptCallback(QScriptEngine *engine, const QString& func, int player);
+bool namedScriptCallback(QScriptEngine *engine, const WzString& func, int player);
 
 // ----------------------------------------------
 // Event functions
@@ -106,6 +129,7 @@ bool triggerEventDroidBuilt(DROID *psDroid, STRUCTURE *psFactory);
 bool triggerEventAttacked(BASE_OBJECT *psVictim, BASE_OBJECT *psAttacker, int lastHit);
 bool triggerEventResearched(RESEARCH *psResearch, STRUCTURE *psStruct, int player);
 bool triggerEventStructBuilt(STRUCTURE *psStruct, DROID *psDroid);
+bool triggerEventStructDemolish(STRUCTURE *psStruct, DROID *psDroid);
 bool triggerEventDroidIdle(DROID *psDroid);
 bool triggerEventDestroyed(BASE_OBJECT *psVictim);
 bool triggerEventStructureReady(STRUCTURE *psStruct);
@@ -124,6 +148,9 @@ bool triggerEventPlayerLeft(int id);
 bool triggerEventDesignCreated(DROID_TEMPLATE *psTemplate);
 bool triggerEventSyncRequest(int from, int req_id, int x, int y, BASE_OBJECT *psObj, BASE_OBJECT *psObj2);
 bool triggerEventKeyPressed(int meta, int key);
+bool triggerEventAllianceOffer(uint8_t from, uint8_t to);
+bool triggerEventAllianceAccepted(uint8_t from, uint8_t to);
+bool triggerEventAllianceBroken(uint8_t from, uint8_t to);
 
 // ----------------------------------------------
 // Debug functions
@@ -131,5 +158,8 @@ bool triggerEventKeyPressed(int meta, int key);
 void jsDebugSelected(const BASE_OBJECT *psObj);
 void jsDebugMessageUpdate();
 void jsDebugUpdate();
+
+#define QStringToWzString(_qstring) \
+WzString::fromUtf8((_qstring).toUtf8().constData())
 
 #endif

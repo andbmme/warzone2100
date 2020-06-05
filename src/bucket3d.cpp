@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -62,8 +62,8 @@ static std::vector<BUCKET_TAG> bucketArray;
 static SDWORD bucketCalculateZ(RENDER_TYPE objectType, void *pObject, const glm::mat4 &viewMatrix)
 {
 	SDWORD				z = 0, radius;
-	Vector2i				pixel;
-	Vector3i				position;
+	Vector2i				pixel(0, 0);
+	Vector3i				position(0, 0, 0);
 	UDWORD				droidSize;
 	DROID				*psDroid;
 	BODY_STATS			*psBStats;
@@ -217,7 +217,14 @@ static SDWORD bucketCalculateZ(RENDER_TYPE objectType, void *pObject, const glm:
 		{
 			const PROXIMITY_DISPLAY *ptr = (PROXIMITY_DISPLAY *)pObject;
 			position.x = ((VIEW_PROXIMITY *)ptr->psMessage->pViewData->pData)->x - player.p.x;
+#if defined( _MSC_VER )
+	#pragma warning( push )
+	#pragma warning( disable : 4146 ) // warning C4146: unary minus operator applied to unsigned type, result still unsigned
+#endif
 			position.z = -(((VIEW_PROXIMITY *)ptr->psMessage->pViewData->pData)->y - player.p.z);
+#if defined( _MSC_VER )
+	#pragma warning( pop )
+#endif
 			position.y = ((VIEW_PROXIMITY *)ptr->psMessage->pViewData->pData)->z;
 		}
 		else if (((PROXIMITY_DISPLAY *)pObject)->type == POS_PROXOBJ)

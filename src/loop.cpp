@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -36,7 +36,6 @@
 #include "lib/ivis_opengl/screen.h"
 
 #include "lib/gamelib/gtime.h"
-#include "lib/script/script.h"
 #include "lib/sound/audio.h"
 #include "lib/sound/cdaudio.h"
 #include "lib/sound/mixer.h"
@@ -60,7 +59,6 @@
 #include "warzoneconfig.h"
 
 #include "multiplay.h" //ajl
-#include "scripttabs.h"
 #include "levels.h"
 #include "visibility.h"
 #include "multimenu.h"
@@ -78,14 +76,13 @@
 #include "mapgrid.h"
 #include "edit3d.h"
 #include "fpath.h"
-#include "scriptextern.h"
-#include "cluster.h"
 #include "cmddroid.h"
 #include "keybind.h"
 #include "wrappers.h"
 #include "random.h"
 #include "qtscript.h"
 #include "version.h"
+#include "notifications.h"
 
 #include "warzoneconfig.h"
 
@@ -95,8 +92,6 @@
 
 #include <numeric>
 
-
-static void fireWaitingCallbacks();
 
 /*
  * Global variables
@@ -119,13 +114,13 @@ struct PAUSE_STATE
 	bool scrollPause;
 	bool consolePause;
 };
+static PAUSE_STATE pauseState;
 
-static PAUSE_STATE	pauseState;
-static	UDWORD	numDroids[MAX_PLAYERS];
-static	UDWORD	numMissionDroids[MAX_PLAYERS];
-static	UDWORD	numTransporterDroids[MAX_PLAYERS];
-static	UDWORD	numCommandDroids[MAX_PLAYERS];
-static	UDWORD	numConstructorDroids[MAX_PLAYERS];
+static unsigned numDroids[MAX_PLAYERS];
+static unsigned numMissionDroids[MAX_PLAYERS];
+static unsigned numTransporterDroids[MAX_PLAYERS];
+static unsigned numCommandDroids[MAX_PLAYERS];
+static unsigned numConstructorDroids[MAX_PLAYERS];
 
 static SDWORD videoMode = 0;
 
@@ -146,7 +141,6 @@ static GAMECODE renderLoop()
 	wzShowMouse(true);
 
 	INT_RETVAL intRetVal = INT_NONE;
-	CURSOR cursor = CURSOR_DEFAULT;
 	if (!paused)
 	{
 		/* Run the in game interface and see if it grabbed any mouse clicks */
@@ -161,8 +155,7 @@ static GAMECODE renderLoop()
 		if (!gameUpdatePaused() && intRetVal != INT_QUIT)
 		{
 			if (dragBox3D.status != DRAG_DRAGGING && wallDrag.status != DRAG_DRAGGING
-			    && (intRetVal == INT_INTERCEPT
-			        || (radarOnScreen && CoordInRadar(mouseX(), mouseY()) && radarPermitted)))
+			    && (intRetVal == INT_INTERCEPT || isMouseOverRadar()))
 			{
 				// Using software cursors (when on) for these menus due to a bug in SDL's SDL_ShowCursor()
 				wzSetCursor(CURSOR_DEFAULT);
@@ -201,7 +194,7 @@ static GAMECODE renderLoop()
 		}
 		if (!scrollPaused() && dragBox3D.status != DRAG_DRAGGING && intMode != INT_INGAMEOP)
 		{
-			cursor = scroll();
+			scroll();
 			zoom();
 		}
 	}
@@ -212,7 +205,7 @@ static GAMECODE renderLoop()
 
 		if (dragBox3D.status != DRAG_DRAGGING)
 		{
-			cursor = scroll();
+			scroll();
 			zoom();
 		}
 
@@ -222,7 +215,7 @@ static GAMECODE renderLoop()
 			unsigned widgval = triggers.empty() ? 0 : triggers.front().widget->id; // Just use first click here, since the next click could be on another menu.
 
 			intProcessInGameOptions(widgval);
-			if (widgval == INTINGAMEOP_QUIT_CONFIRM || widgval == INTINGAMEOP_POPUP_QUIT)
+			if (widgval == INTINGAMEOP_QUIT || widgval == INTINGAMEOP_POPUP_QUIT)
 			{
 				if (gamePaused())
 				{
@@ -311,11 +304,11 @@ static GAMECODE renderLoop()
 			processInput();
 
 			//no key clicks or in Intelligence Screen
-			if (!isMouseOverRadar() && intRetVal == INT_NONE && !InGameOpUp && !isInGamePopupUp)
+			if (!isMouseOverRadar() && !isDraggingInGameNotification() && intRetVal == INT_NONE && !InGameOpUp && !isInGamePopupUp)
 			{
-				CURSOR cursor2 = processMouseClickInput();
-				cursor = cursor2 == CURSOR_DEFAULT? cursor : cursor2;
+				processMouseClickInput();
 			}
+			bRender3DOnly = false;
 			displayWorld();
 		}
 		wzPerfBegin(PERF_GUI, "User interface");
@@ -337,8 +330,6 @@ static GAMECODE renderLoop()
 		pie_SetFogStatus(true);
 		wzPerfEnd(PERF_GUI);
 	}
-
-	wzSetCursor(cursor);
 
 	pie_GetResetCounts(&loopPieCount, &loopPolyCount);
 
@@ -375,7 +366,6 @@ static GAMECODE renderLoop()
 		// just wait for this to be changed when the new mission starts
 		break;
 	case LMS_NEWLEVEL:
-		//nextMissionType = MISSION_NONE;
 		nextMissionType = LDS_NONE;
 		return GAMECODE_NEWLEVEL;
 		break;
@@ -419,7 +409,7 @@ static GAMECODE renderLoop()
 }
 
 // Carry out the various counting operations we perform each loop
-static void countUpdate(bool synch)
+void countUpdate(bool synch)
 {
 	for (unsigned i = 0; i < MAX_PLAYERS; i++)
 	{
@@ -446,24 +436,7 @@ static void countUpdate(bool synch)
 				break;
 			case DROID_TRANSPORTER:
 			case DROID_SUPERTRANSPORTER:
-				if ((psCurr->psGroup != nullptr))
-				{
-					DROID *psDroid = nullptr;
-
-					numTransporterDroids[i] += psCurr->psGroup->refCount - 1;
-					// and count the units inside it...
-					for (psDroid = psCurr->psGroup->psList; psDroid != nullptr && psDroid != psCurr; psDroid = psDroid->psGrpNext)
-					{
-						if (psDroid->droidType == DROID_CYBORG_CONSTRUCT || psDroid->droidType == DROID_CONSTRUCT)
-						{
-							numConstructorDroids[i] += 1;
-						}
-						if (psDroid->droidType == DROID_COMMAND)
-						{
-							numCommandDroids[i] += 1;
-						}
-					}
-				}
+				droidCountsInTransporter(psCurr, i);
 				break;
 			default:
 				break;
@@ -483,10 +456,7 @@ static void countUpdate(bool synch)
 				break;
 			case DROID_TRANSPORTER:
 			case DROID_SUPERTRANSPORTER:
-				if ((psCurr->psGroup != nullptr))
-				{
-					numTransporterDroids[i] += psCurr->psGroup->refCount - 1;
-				}
+				droidCountsInTransporter(psCurr, i);
 				break;
 			default:
 				break;
@@ -565,15 +535,6 @@ static void gameStateUpdate()
 
 	if (!paused && !scriptPaused())
 	{
-		/* Update the event system */
-		if (!bInTutorial)
-		{
-			eventProcessTriggers(gameTime / SCR_TICKRATE);
-		}
-		else
-		{
-			eventProcessTriggers(realTime / SCR_TICKRATE);
-		}
 		updateScripts();
 	}
 
@@ -595,13 +556,8 @@ static void gameStateUpdate()
 	//update the findpath system
 	fpathUpdate();
 
-	// update the cluster system
-	clusterUpdate();
-
 	// update the command droids
 	cmdDroidUpdate();
-
-	fireWaitingCallbacks(); //Now is the good time to fire waiting callbacks (since interpreter is off now)
 
 	for (unsigned i = 0; i < MAX_PLAYERS; i++)
 	{
@@ -660,7 +616,7 @@ static void gameStateUpdate()
 	// Must end update, since we may or may not have ticked, and some message queue processing code may vary depending on whether it's in an update.
 	gameTimeUpdateEnd();
 
-	// Must be at the beginning or end of each tick, since countUpdate is also called randomly (unsynchronised) between ticks.
+	// Must be at the end of gameStateUpdate, since countUpdate is also called randomly (unsynchronised) between gameStateUpdate calls, but should have no effect if we already called it, and recvMessage requires consistent counts on all clients.
 	countUpdate(true);
 
 	static int i = 0;
@@ -680,6 +636,7 @@ GAMECODE gameLoop()
 	const Rational renderFraction(2, 5);  // Minimum fraction of time spent rendering.
 	const Rational updateFraction = Rational(1) - renderFraction;
 
+	// Shouldn't this be when initialising the game, rather than randomly called between ticks?
 	countUpdate(false); // kick off with correct counts
 
 	while (true)
@@ -757,14 +714,9 @@ void videoLoop()
 				intResetScreen(true);
 				setMessageImmediate(false);
 			}
-			//don't do the callback if we're playing the win/lose video
-			if (!getScriptWinLoseVideo())
+			if (!bMultiPlayer && getScriptWinLoseVideo())
 			{
-				eventFireCallbackTrigger((TRIGGER_TYPE)CALL_VIDEO_QUIT);
-			}
-			else if (!bMultiPlayer)
-			{
-				displayGameOver(getScriptWinLoseVideo() == PLAY_WIN);
+				displayGameOver(getScriptWinLoseVideo() == PLAY_WIN, false);
 			}
 			triggerEvent(TRIGGER_VIDEO_QUIT);
 		}
@@ -873,17 +825,17 @@ void setAllPauseStates(bool state)
 
 UDWORD	getNumDroids(UDWORD player)
 {
-	return (numDroids[player]);
+	return numDroids[player];
 }
 
 UDWORD	getNumTransporterDroids(UDWORD player)
 {
-	return (numTransporterDroids[player]);
+	return numTransporterDroids[player];
 }
 
 UDWORD	getNumMissionDroids(UDWORD player)
 {
-	return (numMissionDroids[player]);
+	return numMissionDroids[player];
 }
 
 UDWORD	getNumCommandDroids(UDWORD player)
@@ -896,32 +848,47 @@ UDWORD	getNumConstructorDroids(UDWORD player)
 	return numConstructorDroids[player];
 }
 
-
 // increase the droid counts - used by update factory to keep the counts in sync
-void incNumDroids(UDWORD player)
-{
-	numDroids[player] += 1;
-}
-void incNumCommandDroids(UDWORD player)
-{
-	numCommandDroids[player] += 1;
-}
-void incNumConstructorDroids(UDWORD player)
-{
-	numConstructorDroids[player] += 1;
-}
-
-/* Fire waiting beacon messages which we couldn't run before */
-static void fireWaitingCallbacks()
-{
-	bool bOK = true;
-
-	while (!isMsgStackEmpty() && bOK)
+void adjustDroidCount(DROID *droid, int delta) {
+	int player = droid->player;
+	syncDebug("numDroids[%d]:%d=%d→%d", player, droid->droidType, numDroids[player], numDroids[player] + delta);
+	numDroids[player] += delta;
+	switch (droid->droidType)
 	{
-		bOK = msgStackFireTop();
-		if (!bOK)
+	case DROID_COMMAND:
+		numCommandDroids[player] += delta;
+		break;
+	case DROID_CONSTRUCT:
+	case DROID_CYBORG_CONSTRUCT:
+		numConstructorDroids[player] += delta;
+		break;
+	default:
+		break;
+	}
+}
+
+// Increase counts of droids in a transporter
+void droidCountsInTransporter(DROID *droid, int player)
+{
+	DROID *psDroid = nullptr;
+
+	if (!isTransporter(droid) || droid->psGroup == nullptr)
+	{
+		return;
+	}
+
+	numTransporterDroids[player] += droid->psGroup->refCount - 1;
+
+	// and count the units inside it...
+	for (psDroid = droid->psGroup->psList; psDroid != nullptr && psDroid != droid; psDroid = psDroid->psGrpNext)
+	{
+		if (psDroid->droidType == DROID_CYBORG_CONSTRUCT || psDroid->droidType == DROID_CONSTRUCT)
 		{
-			ASSERT(false, "fireWaitingCallbacks: msgStackFireTop() failed (stack count: %d)", msgStackGetCount());
+			numConstructorDroids[player] += 1;
+		}
+		if (psDroid->droidType == DROID_COMMAND)
+		{
+			numCommandDroids[player] += 1;
 		}
 	}
 }

@@ -2,7 +2,6 @@
 include("script/campaign/libcampaign.js");
 include("script/campaign/templates.js");
 
-const SCAVS = 7; // Scav player number
 const NEW_PARADIGM_RES = [
 	"R-Wpn-MG-Damage04", "R-Wpn-MG-ROF01", "R-Defense-WallUpgrade02",
 	"R-Struc-Materials02", "R-Struc-Factory-Upgrade02",
@@ -17,17 +16,11 @@ const SCAVENGER_RES = [
 	"R-Wpn-MG-Damage03", "R-Wpn-Rocket-Damage02", "R-Wpn-Cannon-Damage02",
 ];
 
-
 //Get some droids for the New Paradigm transport
 function getDroidsForNPLZ(args)
 {
-	var scouts;
-	var heavies;
-
-	with (camTemplates) {
-		scouts = [ npsens, nppod, nphmg ];
-		heavies = [ npsbb, npmmct, npmrl ];
-	}
+	var scouts = [ cTempl.npsens, cTempl.nppod, cTempl.nphmg ];
+	var heavies = [ cTempl.npsbb, cTempl.npmmct, cTempl.npmrl ];
 
 	var numScouts = camRand(5) + 1;
 	var heavy = heavies[camRand(heavies.length)];
@@ -38,7 +31,7 @@ function getDroidsForNPLZ(args)
 		list[list.length] = scouts[camRand(scouts.length)];
 	}
 
-	for (var i = numScouts; i < 8; ++i)
+	for (var a = numScouts; a < 8; ++a)
 	{
 		list[list.length] = heavy;
 	}
@@ -46,20 +39,37 @@ function getDroidsForNPLZ(args)
 	return list;
 }
 
-//These enable scav factories when close enough
-camAreaEvent("NorthScavFactoryTrigger", function()
+//These enable Scav and NP factories when close enough
+camAreaEvent("NorthScavFactoryTrigger", function(droid)
 {
 	camEnableFactory("ScavNorthFactory");
+	camEnableFactory("NPCyborgFactory");
+	camEnableFactory("NPLeftFactory");
+	camEnableFactory("NPRightFactory");
 });
 
-camAreaEvent("SouthWestScavFactoryTrigger", function()
+camAreaEvent("SouthWestScavFactoryTrigger", function(droid)
 {
 	camEnableFactory("ScavSouthWestFactory");
 });
 
-camAreaEvent("SouthEastScavFactoryTrigger", function()
+camAreaEvent("SouthEastScavFactoryTrigger", function(droid)
 {
 	camEnableFactory("ScavSouthEastFactory");
+});
+
+camAreaEvent("NPFactoryTrigger", function(droid)
+{
+	if (camIsTransporter(droid) === false)
+	{
+		camEnableFactory("NPCyborgFactory");
+		camEnableFactory("NPLeftFactory");
+		camEnableFactory("NPRightFactory");
+	}
+	else
+	{
+		resetLabel("NPFactoryTrigger", CAM_HUMAN_PLAYER);
+	}
 });
 
 //Land New Paradigm transport in the LZ area (protected by four hardpoints in the New Paradigm base)
@@ -77,8 +87,8 @@ function sendNPTransport()
 	{
 		var list = getDroidsForNPLZ();
 		camSendReinforcement(NEW_PARADIGM, camMakePos("NPTransportPos"), list, CAM_REINFORCE_TRANSPORT, {
-			entry: { x: 1, y: 42 },
-			exit: { x: 1, y: 42 },
+			entry: { x: 2, y: 42 },
+			exit: { x: 2, y: 42 },
 			order: CAM_ORDER_ATTACK,
 			data: {
 				regroup: true,
@@ -88,20 +98,8 @@ function sendNPTransport()
 			},
 		});
 
-		queue("sendNPTransport", camChangeOnDiff(180000)); //3 min
+		queue("sendNPTransport", camChangeOnDiff(camMinutesToMilliseconds(3)));
 	}
-}
-
-//Enable transport reinforcements
-function enableReinforcements()
-{
-	playSound("pcv440.ogg"); // Reinforcements are available.
-	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "CAM_1A-C", {
-		area: "RTLZ",
-		message: "C1-5_LZ",
-		reinforcements: 180, //3 min
-		annihilate: true
-	});
 }
 
 function enableNPFactories()
@@ -120,9 +118,9 @@ function camEnemyBaseEliminated_NPBaseGroup()
 	camEnableFactory("ScavSouthWestFactory");
 	camEnableFactory("ScavSouthEastFactory");
 
-	//All SCAVS on map attack
+	//Make all scavengers on map attack
 	camManageGroup(
-		camMakeGroup(enumArea(0, 0, mapWidth, mapHeight, SCAVS, false)),
+		camMakeGroup(enumArea(0, 0, mapWidth, mapHeight, SCAV_7, false)),
 		CAM_ORDER_ATTACK
 	);
 }
@@ -132,7 +130,7 @@ function eventStartLevel()
 	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "CAM_1A-C", {
 		area: "RTLZ",
 		message: "C1-5_LZ",
-		reinforcements: -1,
+		reinforcements: camMinutesToSeconds(3),
 		annihilate: true
 	});
 
@@ -150,13 +148,10 @@ function eventStartLevel()
 	cameraTrack(transporter[0]);
 
 	//Make sure the New Paradigm and Scavs are allies
-	setAlliance(NEW_PARADIGM, SCAVS, true);
-
-	setPower(AI_POWER, NEW_PARADIGM);
-	setPower(AI_POWER, SCAVS);
+	setAlliance(NEW_PARADIGM, SCAV_7, true);
 
 	camCompleteRequiredResearch(NEW_PARADIGM_RES, NEW_PARADIGM);
-	camCompleteRequiredResearch(SCAVENGER_RES, SCAVS);
+	camCompleteRequiredResearch(SCAVENGER_RES, SCAV_7);
 
 
 	camSetEnemyBases({
@@ -194,13 +189,13 @@ function eventStartLevel()
 		"NPResearchFacility": { tech: "R-Comp-SynapticLink" },
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"NPLeftFactory": {
 			assembly: "NPLeftAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(50000),
-			templates: [ npmrl, npmmct, npsbb, nphmg ],
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
+			templates: [ cTempl.npmrl, cTempl.npmmct, cTempl.npsbb, cTempl.nphmg ],
 			data: {
 				regroup: false,
 				repair: 40,
@@ -211,8 +206,8 @@ function eventStartLevel()
 			assembly: "NPRightAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(60000),
-			templates: [ npmor, npsens, npsbb, nphmg ],
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(50)),
+			templates: [ cTempl.npmor, cTempl.npsens, cTempl.npsbb, cTempl.nphmg ],
 			data: {
 				regroup: false,
 				repair: 40,
@@ -223,8 +218,8 @@ function eventStartLevel()
 			assembly: "NPCyborgAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(40000),
-			templates: [ npcybc, npcybf, npcybm ],
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(35)),
+			templates: [ cTempl.npcybc, cTempl.npcybf, cTempl.npcybm ],
 			data: {
 				regroup: false,
 				repair: 40,
@@ -235,8 +230,8 @@ function eventStartLevel()
 			assembly: "ScavSouthWestAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(15000),
-			templates: [ firecan, rbjeep, rbuggy, bloke ],
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(15)),
+			templates: [ cTempl.firecan, cTempl.rbjeep, cTempl.rbuggy, cTempl.bloke ],
 			data: {
 				regroup: false,
 				count: -1,
@@ -246,8 +241,8 @@ function eventStartLevel()
 			assembly: "ScavSouthEastAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(15000),
-			templates: [ firecan, rbjeep, rbuggy, bloke ],
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(15)),
+			templates: [ cTempl.firecan, cTempl.rbjeep, cTempl.rbuggy, cTempl.bloke ],
 			data: {
 				regroup: false,
 				count: -1,
@@ -257,8 +252,8 @@ function eventStartLevel()
 			assembly: "ScavNorthAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(15000),
-			templates: [ firecan, rbjeep, rbuggy, bloke ],
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(15)),
+			templates: [ cTempl.firecan, cTempl.rbjeep, cTempl.rbuggy, cTempl.bloke ],
 			data: {
 				regroup: false,
 				count: -1,
@@ -266,6 +261,5 @@ function eventStartLevel()
 		},
 	});
 
-	queue("enableReinforcements", 30000);
-	queue("enableNPFactories", camChangeOnDiff(600000)); // 10 minutes
+	queue("enableNPFactories", camChangeOnDiff(camMinutesToMilliseconds(10)));
 }

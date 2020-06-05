@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -43,7 +43,7 @@ extern ECM_STATS			*asECMStats;
 extern REPAIR_STATS			*asRepairStats;
 extern WEAPON_STATS			*asWeaponStats;
 extern CONSTRUCT_STATS		*asConstructStats;
-extern PROPULSION_TYPES		*asPropulsionTypes;
+extern std::vector<PROPULSION_TYPES> asPropulsionTypes;
 
 //used to hold the modifiers cross refd by weapon effect and propulsion type
 extern WEAPON_MODIFIER		asWeaponModifier[WE_NUMEFFECTS][PROPULSION_TYPE_NUM];
@@ -124,46 +124,43 @@ bool statsAllocConstruct(UDWORD numEntries);
 /*******************************************************************************
 *		Load stats functions
 *******************************************************************************/
-void loadStats(WzConfig &json, BASE_STATS *psStats, int index);
-
-/* Return the number of newlines in a file buffer */
-UDWORD numCR(const char *pFileBuffer, UDWORD fileSize);
+void loadStats(WzConfig &json, BASE_STATS *psStats, size_t index);
 
 /*Load the weapon stats from the file exported from Access*/
-bool loadWeaponStats(const char *pFileName);
+bool loadWeaponStats(WzConfig &ini);
 
 /*Load the body stats from the file exported from Access*/
-bool loadBodyStats(const char *pFileName);
+bool loadBodyStats(WzConfig &ini);
 
 /*Load the brain stats from the file exported from Access*/
-bool loadBrainStats(const char *pFileName);
+bool loadBrainStats(WzConfig &ini);
 
 /*Load the propulsion stats from the file exported from Access*/
-bool loadPropulsionStats(const char *pFileName);
+bool loadPropulsionStats(WzConfig &ini);
 
 /*Load the sensor stats from the file exported from Access*/
-bool loadSensorStats(const char *pFileName);
+bool loadSensorStats(WzConfig &ini);
 
 /*Load the ecm stats from the file exported from Access*/
-bool loadECMStats(const char *fileName);
+bool loadECMStats(WzConfig &ini);
 
 /*Load the repair stats from the file exported from Access*/
-bool loadRepairStats(const char *pFileName);
+bool loadRepairStats(WzConfig &ini);
 
 /*Load the construct stats from the file exported from Access*/
-bool loadConstructStats(const char *pFileName);
+bool loadConstructStats(WzConfig &ini);
 
 /*Load the Propulsion Types from the file exported from Access*/
-bool loadPropulsionTypes(const char *pFileName);
+bool loadPropulsionTypes(WzConfig &ini);
 
 /*Load the propulsion sounds from the file exported from Access*/
 bool loadPropulsionSounds(const char *pFileName);
 
 /*Load the Terrain Table from the file exported from Access*/
-bool loadTerrainTable(const char *pFileName);
+bool loadTerrainTable(WzConfig &ini);
 
 /*Load the Weapon Effect Modifiers from the file exported from Access*/
-bool loadWeaponModifiers(const char *pFileName);
+bool loadWeaponModifiers(WzConfig &ini);
 
 /*******************************************************************************
 *		Generic stats functions
@@ -176,20 +173,20 @@ UDWORD getSpeedFactor(UDWORD terrainType, UDWORD propulsionType);
 
 /// Get the component index for a component based on the name, verifying with type.
 /// It is currently identical to getCompFromID, but may not be in the future.
-int getCompFromName(COMPONENT_TYPE compType, const QString &name);
+int getCompFromName(COMPONENT_TYPE compType, const WzString &name);
 
 /// This function only allows you to use the old, deprecated ID name.
-int getCompFromID(COMPONENT_TYPE compType, const QString &name);
+int getCompFromID(COMPONENT_TYPE compType, const WzString &name);
 
 /// Get the component pointer for a component based on the name
-COMPONENT_STATS *getCompStatsFromName(const QString &name);
+COMPONENT_STATS *getCompStatsFromName(const WzString &name);
 
 /*returns the weapon sub class based on the string name passed in */
 bool getWeaponSubClass(const char *subClass, WEAPON_SUBCLASS *wclass);
 const char *getWeaponSubClass(WEAPON_SUBCLASS wclass);
 /*sets the store to the body size based on the name passed in - returns false
 if doesn't compare with any*/
-bool getBodySize(const char *pSize, BODY_SIZE *pStore);
+bool getBodySize(const WzString &size, BODY_SIZE *pStore);
 
 /**
  * Determines the propulsion type indicated by the @c typeName string passed
@@ -258,8 +255,8 @@ WZ_DECL_PURE bool objHasWeapon(const BASE_OBJECT *psObj);
 
 void statsInitVars();
 
-bool getWeaponEffect(const char *weaponEffect, WEAPON_EFFECT *effect);
-bool getWeaponClass(const QString& weaponClassStr, WEAPON_CLASS *weaponClass);
+bool getWeaponEffect(const WzString& weaponEffect, WEAPON_EFFECT *effect);
+bool getWeaponClass(const WzString& weaponClassStr, WEAPON_CLASS *weaponClass);
 
 /* Wrappers */
 

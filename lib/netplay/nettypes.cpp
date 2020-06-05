@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2007-2017  Warzone 2100 Project
+	Copyright (C) 2007-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -26,7 +26,6 @@
 #include "lib/framework/wzglobal.h"
 #include "lib/framework/string_ext.h"
 #include <string.h>
-#include <QtCore/QStringList>
 
 #ifndef WZ_OS_WIN
 #include <arpa/inet.h>
@@ -185,12 +184,21 @@ static void queue(const Q &q, int32_t &v)
 	// Example: int32_t -5 -4 -3 -2 -1  0  1  2  3  4  5
 	// becomes uint32_t  9  7  5  3  1  0  2  4  6  8 10
 
+#if defined( _MSC_VER )
+	#pragma warning( push )
+	#pragma warning( disable : 4146 ) // warning C4146: unary minus operator applied to unsigned type, result still unsigned
+#endif
+
 	uint32_t b = (uint32_t)v << 1 ^ (-((uint32_t)v >> 31));
 	queue(q, b);
 	if (Q::Direction == Q::Read)
 	{
 		v = b >> 1 ^ -(b & 1);
 	}
+
+#if defined( _MSC_VER )
+	#pragma warning( pop )
+#endif
 
 	STATIC_ASSERT(sizeof(b) == sizeof(v));
 }
@@ -418,11 +426,13 @@ void NETdeleteQueue(void)
 	for (int i = 0; i < MAX_PLAYERS; ++i)
 	{
 		delete pairQueue(NETnetQueue(i));
+		pairQueue(NETnetQueue(i)) = nullptr;
 		delete gameQueues[i];
+		gameQueues[i] = nullptr;
 	}
 
 	delete broadcastQueue;
-
+	broadcastQueue = nullptr;
 }
 
 void NETsetNoSendOverNetwork(NETQUEUE queue)
@@ -466,6 +476,10 @@ bool NETend()
 	{
 		// Push the message onto the list.
 		NetQueue *queue = sendQueue(queueInfo);
+		if (queue == nullptr) {
+			debug(LOG_WARNING, "Sending %s to null queue, type %d.", messageTypeToString(message.type), queueInfo.queueType);
+			return true;
+		}
 		queue->pushMessage(message);
 		NETlogPacket(message.type, message.data.size(), false);
 
@@ -642,7 +656,7 @@ void NETstring(char *str, uint16_t maxlen)
 	 * unsigned 16-bit integer, not including \0 termination.
 	 */
 
-	uint16_t len = NETgetPacketDir() == PACKET_ENCODE ? strnlen1(str, maxlen) - 1 : 0;
+	uint16_t len = (NETgetPacketDir() == PACKET_ENCODE) ? ((uint16_t)strnlen1(str, maxlen)) - 1 : 0;
 	queueAuto(len);
 
 	// Truncate length if necessary
@@ -664,28 +678,42 @@ void NETstring(char *str, uint16_t maxlen)
 	}
 }
 
-void NETqstring(QString &str)
+void NETwzstring(WzString &str)
 {
-	uint32_t len = str.size();
+	// NOTE: To be backwards-compatible with the old NETqstring (QString-based) function,
+	// this uses UTF-16 encoding.
+
+	std::vector<uint16_t> u16_characters;
+	uint32_t len = 0;
+	if (NETgetPacketDir() == PACKET_ENCODE)
+	{
+		u16_characters = str.toUtf16();
+		len = u16_characters.size();
+	}
 
 	queueAuto(len);
 
 	if (NETgetPacketDir() == PACKET_DECODE)
 	{
-		str.resize(len);
+		u16_characters.resize(len);
 	}
 	for (unsigned i = 0; i < len; ++i)
 	{
-		uint16_t c;
+		uint16_t c = 0;
 		if (NETgetPacketDir() == PACKET_ENCODE)
 		{
-			c = str[i].unicode();
+			c = u16_characters[i];
 		}
 		queueAuto(c);
 		if (NETgetPacketDir() == PACKET_DECODE)
 		{
-			str[i] = QChar(c);
+			u16_characters[i] = c;
 		}
+	}
+
+	if (NETgetPacketDir() == PACKET_DECODE)
+	{
+		str = WzString::fromUtf16(u16_characters);
 	}
 }
 

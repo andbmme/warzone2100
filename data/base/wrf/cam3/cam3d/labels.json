@@ -35,6 +35,22 @@
 		"label": "gammaBasePos",
 		"pos": [1600, 23488]
 	},
+	"position_9": {
+		"label": "NxVtolAssembly",
+		"pos": [832, 30272]
+	},
+	"position_10": {
+		"label": "NxHeavyAssembly",
+		"pos": [5696, 30144]
+	},
+	"position_11": {
+		"label": "NXcyborgFac1Assembly",
+		"pos": [6208, 31040]
+	},
+	"position_12": {
+		"label": "NXcyborgFac2Assembly",
+		"pos": [5568, 31040]
+	},
 
 	"area_0": {
 		"label": "landingZone",
@@ -77,6 +93,11 @@
 		"label": "missileSilos",
 		"pos1": [5248, 31232],
 		"pos2": [6016, 31488]
+	},
+	"area_8": {
+		"label": "NXlandingZone",
+		"pos1": [896, 6656],
+		"pos2": [1152, 6912]
 	},
 
 	"object_0": {

@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2013-2017  Warzone 2100 Project
+	Copyright (C) 2011-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -22,6 +22,11 @@
  * icon data
  */
 /* GIMP RGBA C-Source image dump (wz2100icon.c) */
+
+#if defined( _MSC_VER )
+	#pragma warning( push )
+	#pragma warning( disable : 4125 ) // warning C4125: decimal digit terminates octal escape sequence
+#endif
 
 static const struct
 {
@@ -192,3 +197,6 @@ static const struct
 	"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
 };
 
+#if defined( _MSC_VER )
+	#pragma warning( pop )
+#endif

@@ -8,7 +8,7 @@ subdir = po
 #top_builddir = ..
 
 # These options get passed to xgettext.
-XGETTEXT_OPTIONS = --from-code=UTF-8 --no-wrap --width=1 --keyword=_ --keyword=N_ --keyword=P_:1c,2 --keyword=NP_:1c,2
+XGETTEXT_OPTIONS = --language=C++ --from-code=UTF-8 --no-wrap --width=1 --keyword=_ --keyword=N_ --keyword=P_:1c,2 --keyword=NP_:1c,2
 # --nowrap and --width=1 are needed so that msges are not broken up,
 #   but there is only one source reference on each line (while gettext would have more on one for greater widths)
 
@@ -22,7 +22,7 @@ MSGMERGE_OPTIONS = --no-wrap --width=1
 # or entity, or to disclaim their copyright.  The empty string stands for
 # the public domain; in this case the translators are expected to disclaim
 # their copyright.
-COPYRIGHT_HOLDER = Warzone Resurrection Project
+COPYRIGHT_HOLDER = Warzone 2100 Project
 
 # This is the email address or URL to which the translators shall report
 # bugs in the untranslated strings:

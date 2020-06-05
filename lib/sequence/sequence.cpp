@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2008-2017  Warzone 2100 Project
+	Copyright (C) 2008-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -66,6 +66,9 @@
 #include "lib/sound/audio.h"
 #include "lib/sound/openal_error.h"
 #include "lib/sound/mixer.h"
+#ifndef GLM_ENABLE_EXPERIMENTAL
+	#define GLM_ENABLE_EXPERIMENTAL
+#endif
 #include <glm/gtx/transform.hpp>
 #include "lib/ivis_opengl/pieclip.h"
 
@@ -73,11 +76,9 @@
 #include <physfs.h>
 
 #include <vorbis/codec.h>
-#if defined(WZ_OS_MAC)
-#include <OpenAL/al.h>
-#else
 #include <AL/al.h>
-#endif
+
+#include "lib/framework/physfs_ext.h"
 
 // stick this in sequence.h perhaps?
 struct AudioData
@@ -150,13 +151,11 @@ static int dropped = 0;
 // Screen dimensions
 #define NUM_VERTICES 4
 static GFX *videoGfx = nullptr;
-static GLfloat vertices[NUM_VERTICES][2];
-static GLfloat Scrnvidpos[3];
+static gfx_api::gfxFloat vertices[NUM_VERTICES][2];
+static gfx_api::gfxFloat Scrnvidpos[3];
 
 static SCANLINE_MODE use_scanlines;
-
-//HACK: This is used to play a sequence where audio/video is not synced fast enough.
-static int playAttempts = 0;
+static bool scanlinesDisabled = false;
 
 // Helper; just grab some more compressed bitstream and sync it for page extraction
 static int buffer_data(PHYSFS_file *in, ogg_sync_state *oy)
@@ -164,7 +163,7 @@ static int buffer_data(PHYSFS_file *in, ogg_sync_state *oy)
 	// read in 256K chunks
 	const int size = 262144;
 	char *buffer = ogg_sync_buffer(oy, size);
-	int bytes = PHYSFS_read(in, buffer, 1, size);
+	int bytes = WZ_PHYSFS_readBytes(in, buffer, size);
 
 	ogg_sync_wrote(oy, bytes);
 	return (bytes);
@@ -260,15 +259,15 @@ static double getRelativeTime(void)
 	return ((getTimeNow() - basetime) * .001);
 }
 
-const GLfloat texture_width = 1024.0f;
-const GLfloat texture_height = 1024.0f;
+const gfx_api::gfxFloat texture_width = 1024.0f;
+const gfx_api::gfxFloat texture_height = 1024.0f;
 
 /** Allocates memory to hold the decoded video frame
  */
 static void Allocate_videoFrame(void)
 {
 	int size = videodata.ti.frame_width * videodata.ti.frame_height * 4;
-	if (use_scanlines)
+	if (!seq_getScanlinesDisabled() && seq_getScanlineMode())
 	{
 		size *= 2;
 	}
@@ -308,8 +307,9 @@ static void video_write(bool update)
 	unsigned int x = 0, y = 0;
 	const int video_width = videodata.ti.frame_width;
 	const int video_height = videodata.ti.frame_height;
+	SCANLINE_MODE scanMode = seq_getScanlinesDisabled() ? SCANLINES_OFF : seq_getScanlineMode();
 	// when using scanlines we need to double the height
-	const int height_factor = (use_scanlines ? 2 : 1);
+	const int height_factor = (scanMode ? 2 : 1);
 	yuv_buffer yuv;
 
 	if (update)
@@ -343,12 +343,12 @@ static void video_write(bool update)
 				uint32_t rgba = (R << Rshift) | (G << Gshift) | (B << Bshift) | (0xFF << Ashift);
 
 				RGBAframe[rgb_offset] = rgba;
-				if (use_scanlines == SCANLINES_50)
+				if (scanMode == SCANLINES_50)
 				{
 					// halve the rgb values for a dimmed scanline
 					RGBAframe[rgb_offset + video_width] = (rgba >> 1 & RGBmask) | Amask;
 				}
-				else if (use_scanlines == SCANLINES_BLACK)
+				else if (scanMode == SCANLINES_BLACK)
 				{
 					RGBAframe[rgb_offset + video_width] = Amask;
 				}
@@ -364,18 +364,18 @@ static void video_write(bool update)
 
 				rgba = (R << Rshift) | (G << Gshift) | (B << Bshift) | (0xFF << Ashift);
 				RGBAframe[rgb_offset] = rgba;
-				if (use_scanlines == SCANLINES_50)
+				if (scanMode == SCANLINES_50)
 				{
 					// halve the rgb values for a dimmed scanline
 					RGBAframe[rgb_offset + video_width] = (rgba >> 1 & RGBmask) | Amask;
 				}
-				else if (use_scanlines == SCANLINES_BLACK)
+				else if (scanMode == SCANLINES_BLACK)
 				{
 					RGBAframe[rgb_offset + video_width] = Amask;
 				}
 				rgb_offset++;
 			}
-			if (use_scanlines)
+			if (scanMode)
 			{
 				rgb_offset += video_width;
 			}
@@ -459,6 +459,7 @@ static void seq_InitOgg(void)
 	vorbis_p = 0;
 
 	videoplaying = false;
+	seq_setScanlinesDisabled(false);
 
 	/* single frame video buffering */
 	videobuf_ready = false;
@@ -696,10 +697,10 @@ bool seq_Play(const char *filename)
 		}
 		char *blackframe = (char *)calloc(1, texture_width * texture_height * 4);
 
-		// disable scanlines if the video is too large for the texture or shown too small
+		// disable scanlines temporarily if the video is too large for the texture or shown too small
 		if (videodata.ti.frame_height * 2 > texture_height || vertices[3][1] < videodata.ti.frame_height * 2)
 		{
-			use_scanlines = SCANLINES_OFF;
+			seq_setScanlinesDisabled(true);
 		}
 
 		Allocate_videoFrame();
@@ -707,10 +708,10 @@ bool seq_Play(const char *filename)
 		free(blackframe);
 
 		// when using scanlines we need to double the height
-		const int height_factor = (use_scanlines ? 2 : 1);
-		const GLfloat vtwidth = (float)videodata.ti.frame_width / texture_width;
-		const GLfloat vtheight = (float)videodata.ti.frame_height * height_factor / texture_height;
-		GLfloat texcoords[NUM_VERTICES * 2] = { 0.0f, 0.0f, vtwidth, 0.0f, 0.0f, vtheight, vtwidth, vtheight };
+		const int height_factor = ((!seq_getScanlinesDisabled() && seq_getScanlineMode()) ? 2 : 1);
+		const gfx_api::gfxFloat vtwidth = (float)videodata.ti.frame_width / texture_width;
+		const gfx_api::gfxFloat vtheight = (float)videodata.ti.frame_height * height_factor / texture_height;
+		gfx_api::gfxFloat texcoords[NUM_VERTICES * 2] = { 0.0f, 0.0f, vtwidth, 0.0f, 0.0f, vtheight, vtwidth, vtheight };
 		videoGfx->buffers(NUM_VERTICES, vertices, texcoords);
 	}
 
@@ -809,7 +810,6 @@ bool seq_Update()
 			else
 			{
 				/* we need more data; break out to suck in another page */
-				playAttempts += 1;
 				break;
 			}
 		}
@@ -850,11 +850,9 @@ bool seq_Update()
 	alGetSourcei(audiodata.source, AL_SOURCE_STATE, &sourcestate);
 
 	if (PHYSFS_eof(fpInfile)
-		&& playAttempts > 2
 		&& !videobuf_ready
 		&& ((!audiobuf_ready && (audiodata.audiobuf_fill == 0)) || audio_Disabled())
-		&& sourcestate != AL_PLAYING
-	)
+		&& sourcestate != AL_PLAYING)
 	{
 		video_write(false);
 		seq_Shutdown();
@@ -956,7 +954,7 @@ void seq_Shutdown()
 	}
 
 	videoplaying = false;
-	playAttempts = 0;
+	seq_setScanlinesDisabled(false);
 	Timer_stop();
 
 	audioTime = 0;
@@ -1013,6 +1011,16 @@ void seq_SetDisplaySize(int sizeX, int sizeY, int posX, int posY)
 	Scrnvidpos[0] = posX;
 	Scrnvidpos[1] = posY;
 	Scrnvidpos[2] = 0.0f;
+}
+
+void seq_setScanlinesDisabled(bool flag)
+{
+	scanlinesDisabled = flag;
+}
+
+bool seq_getScanlinesDisabled()
+{
+	return scanlinesDisabled;
 }
 
 void seq_setScanlineMode(SCANLINE_MODE mode)

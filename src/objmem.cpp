@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -33,10 +33,6 @@
 #include "map.h"
 #include "power.h"
 #include "objects.h"
-#include "lib/script/script.h"
-#include "scriptvals.h"
-#include "scripttabs.h"
-#include "scriptcb.h"
 #include "mission.h"
 #include "structuredef.h"
 #include "structure.h"
@@ -142,25 +138,25 @@ static bool objmemDestroy(BASE_OBJECT *psObj)
 	switch (psObj->type)
 	{
 	case OBJ_DROID:
-		debug(LOG_MEMORY, "freeing droid at %p", psObj);
+		debug(LOG_MEMORY, "freeing droid at %p", static_cast<void *>(psObj));
 		break;
 
 	case OBJ_STRUCTURE:
-		debug(LOG_MEMORY, "freeing structure at %p", psObj);
+		debug(LOG_MEMORY, "freeing structure at %p", static_cast<void *>(psObj));
 		break;
 
 	case OBJ_FEATURE:
-		debug(LOG_MEMORY, "freeing feature at %p", psObj);
+		debug(LOG_MEMORY, "freeing feature at %p", static_cast<void *>(psObj));
 		break;
 
 	default:
-		ASSERT(!"unknown object type", "unknown object type in destroyed list at 0x%p", psObj);
+		ASSERT(!"unknown object type", "unknown object type in destroyed list at 0x%p", static_cast<void *>(psObj));
 	}
 	if (!checkReferences(psObj))
 	{
 		return false;
 	}
-	debug(LOG_MEMORY, "BASE_OBJECT* 0x%p is freed.", psObj);
+	debug(LOG_MEMORY, "BASE_OBJECT* 0x%p is freed.", static_cast<void *>(psObj));
 	delete psObj;
 	return true;
 }
@@ -174,12 +170,6 @@ void objmemUpdate()
 	// do a general validity check first
 	objListIntegCheck();
 #endif
-
-	// tell the script system about any destroyed objects
-	if (psDestroyedObj != nullptr)
-	{
-		scrvUpdateBasePointers();
-	}
 
 	/* Go through the destroyed objects list looking for objects that
 	   were destroyed before this turn */
@@ -207,25 +197,7 @@ void objmemUpdate()
 		else
 		{
 			// do the object died callback
-			psCBObjDestroyed = psCurr;
-			eventFireCallbackTrigger((TRIGGER_TYPE)CALL_OBJ_DESTROYED);
-			switch (psCurr->type)
-			{
-			case OBJ_DROID:
-				eventFireCallbackTrigger((TRIGGER_TYPE)CALL_DROID_DESTROYED);
-				break;
-			case OBJ_STRUCTURE:
-				eventFireCallbackTrigger((TRIGGER_TYPE)CALL_STRUCT_DESTROYED);
-				break;
-			case OBJ_FEATURE:
-				eventFireCallbackTrigger((TRIGGER_TYPE)CALL_FEATURE_DESTROYED);
-				break;
-			default:
-				break;
-			}
-			psCBObjDestroyed = nullptr;
 			triggerEventDestroyed(psCurr);
-
 			psPrev = psCurr;
 		}
 	}
@@ -265,7 +237,7 @@ template <typename OBJECT>
 static inline void addObjectToFuncList(OBJECT *list[], OBJECT *object, int player)
 {
 	ASSERT_OR_RETURN(, object != nullptr, "Invalid pointer");
-	ASSERT_OR_RETURN(, static_cast<OBJECT *>(object->psNextFunc) == nullptr, "%s(%p) is already in a function list!", objInfo(object), object);
+	ASSERT_OR_RETURN(, static_cast<OBJECT *>(object->psNextFunc) == nullptr, "%s(%p) is already in a function list!", objInfo(object), static_cast<void *>(object));
 
 	// Prepend the object to the top of the list
 	object->psNextFunc = list[player];
@@ -342,7 +314,7 @@ static inline void removeObjectFromList(OBJECT *list[], OBJECT *object, int play
 		psPrev = psCurr;
 	}
 
-	ASSERT_OR_RETURN(, psCurr != nullptr, "Object %p not found in list", object);
+	ASSERT_OR_RETURN(, psCurr != nullptr, "Object %p not found in list", static_cast<void *>(object));
 
 	// Modify the "next" pointer of the previous item to
 	// point to the "next" item of the item to delete.
@@ -374,7 +346,7 @@ static inline void removeObjectFromFuncList(OBJECT *list[], OBJECT *object, int 
 		psPrev = psCurr;
 	}
 
-	ASSERT_OR_RETURN(, psCurr != nullptr, "Object %p not found in list", object);
+	ASSERT_OR_RETURN(, psCurr != nullptr, "Object %p not found in list", static_cast<void *>(object));
 
 	// Modify the "next" pointer of the previous item to
 	// point to the "next" item of the item to delete.

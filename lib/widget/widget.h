@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -33,6 +33,7 @@
 #include "lib/framework/frame.h"
 #include "lib/ivis_opengl/piepalette.h"
 #include "widgbase.h"
+#include <string>
 
 /***********************************************************************************
  *
@@ -101,6 +102,10 @@ enum WzTextAlignment
 
 /***********************************************************************************/
 
+/* An optional function that is used to initialize the pUserData pointer per widget instance */
+/* (Useful if re-using a W_*INIT structure for multiple widget instances) */
+typedef std::function<void* ()> WIDGET_INITIALIZE_PUSERDATA_FUNC;
+
 /** The basic initialisation structure */
 struct W_INIT
 {
@@ -116,6 +121,10 @@ struct W_INIT
 	WIDGET_CALLBACK         pCallback;              ///< Optional callback function
 	void                   *pUserData;              ///< Optional user data pointer
 	UDWORD                  UserData;               ///< User data (if any)
+	WIDGET_CALCLAYOUT_FUNC  calcLayout;				///< Optional calculate layout callback function
+	WIDGET_ONDELETE_FUNC	onDelete;				///< Optional callback called when the Widget is about to be deleted
+	WIDGET_HITTEST_FUNC		customHitTest;			///< Optional custom hit-testing function
+	WIDGET_INITIALIZE_PUSERDATA_FUNC initPUserDataFunc;	///< (Optional) Used to initialize the pUserData pointer per widget instance
 };
 
 /** Form initialisation structure */
@@ -124,7 +133,7 @@ struct W_FORMINIT : public W_INIT
 	W_FORMINIT();
 
 	bool                    disableChildren;
-	QString	                pTip;			///< Tool tip for the form itself
+	std::string	            pTip;			///< Tool tip for the form itself
 };
 
 /** Label initialisation structure */
@@ -132,8 +141,8 @@ struct W_LABINIT : public W_INIT
 {
 	W_LABINIT();
 
-	QString	                pText;			///< label text
-	QString	                pTip;			///< Tool tip for the label.
+	WzString	            pText;			///< label text
+	std::string	            pTip;			///< Tool tip for the label.
 	enum iV_fonts           FontID;			///< ID of the IVIS font to use for this widget.
 };
 
@@ -143,7 +152,7 @@ struct W_BUTINIT : public W_INIT
 	W_BUTINIT();
 
 	const char *pText;	///< Button text
-	QString pTip;		///< Tool tip text
+	std::string pTip;	///< Tool tip text
 	enum iV_fonts FontID;	//< ID of the IVIS font to use for this widget.
 };
 
@@ -179,7 +188,7 @@ struct W_BARINIT : public W_INIT
 	int             precision;              ///< Number of places after the decimal point to display, 0 by default.
 	PIELIGHT	sCol;			///< Bar colour
 	PIELIGHT	sMinorCol;		///< Minor bar colour
-	QString         pTip;			///< Tool tip text
+	std::string      pTip;			///< Tool tip text
 };
 
 
@@ -201,7 +210,7 @@ struct W_SLDINIT : public W_INIT
 	UWORD		numStops;		///< Number of stops on the slider
 	UWORD		barSize;		///< Size of the bar
 	UWORD		pos;			///< Initial position of the slider bar
-	QString         pTip;			///< Tip string
+	std::string pTip;			///< Tip string
 };
 
 /***********************************************************************************/
@@ -217,6 +226,11 @@ void widgReset();
 
 /** Shut down the widget module */
 void widgShutDown();
+
+/** Used by the notifications system to register forms that are "over the top", and may consume click / mouse-over events */
+void widgRegisterOverlayScreen(W_SCREEN* psScreen, uint16_t zOrder);
+void widgRemoveOverlayScreen(W_SCREEN* psScreen);
+bool isMouseOverScreenOverlayChild(int mx, int my); // global mouse coordinates - i.e. those returned from mouseX()/mouseY()
 
 /** Add a form to the widget screen */
 WZ_DECL_NONNULL(1, 2) W_FORM *widgAddForm(W_SCREEN *psScreen, const W_FORMINIT *psInit);
@@ -250,6 +264,11 @@ WZ_DECL_NONNULL(1) void widgReveal(W_SCREEN *psScreen, UDWORD id);
  * NOTE: The string must be copied out of the buffer
  */
 WZ_DECL_NONNULL(1) const char *widgGetString(W_SCREEN *psScreen, UDWORD id);
+
+/** Return the current string of a widget, if any.
+ * This will always return a string. If the widget doesn't have a string, it will return an empty WzString.
+ */
+WZ_DECL_NONNULL(1) const WzString& widgGetWzString(W_SCREEN *psScreen, UDWORD id);
 
 /** Set the text in a widget */
 WZ_DECL_NONNULL(1) void widgSetString(W_SCREEN *psScreen, UDWORD id, const char *pText);
@@ -288,7 +307,7 @@ WZ_DECL_NONNULL(1) void widgSetUserData2(W_SCREEN *psScreen, UDWORD id, UDWORD U
 WZ_DECL_NONNULL(1) WIDGET *widgGetFromID(W_SCREEN *psScreen, UDWORD id);
 
 /** Set tip string for a widget */
-WZ_DECL_NONNULL(1) void widgSetTip(W_SCREEN *psScreen, UDWORD id, QString pTip);
+WZ_DECL_NONNULL(1) void widgSetTip(W_SCREEN *psScreen, UDWORD id, std::string pTip);
 
 /** Colour numbers */
 enum _w_colour
@@ -307,18 +326,6 @@ enum _w_colour
 
 /** Set the global toop tip text colour. */
 void widgSetTipColour(PIELIGHT colour);
-
-// Possible states for a button or clickform.
-enum ButtonState
-{
-	WBUT_DISABLE   = 0x01,  ///< Disable (grey out) a button.
-	WBUT_LOCK      = 0x02,  ///< Fix a button down.
-	WBUT_CLICKLOCK = 0x04,  ///< Fix a button down but it is still clickable.
-	WBUT_FLASH     = 0x08,  ///< Make a button flash.
-	WBUT_DOWN      = 0x10,  ///< Button is down.
-	WBUT_HIGHLIGHT = 0x20,  ///< Button is highlighted.
-};
-
 
 WZ_DECL_NONNULL(1) void widgSetButtonFlash(W_SCREEN *psScreen, UDWORD id);
 WZ_DECL_NONNULL(1) void widgClearButtonFlash(W_SCREEN *psScreen, UDWORD id);

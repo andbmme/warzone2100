@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 
 #include "ivisdef.h"
 #include "pietypes.h"
+#include "lib/framework/wzstring.h"
 
 static inline WZ_DECL_PURE unsigned short iV_GetImageWidth(const IMAGEFILE *ImageFile, const unsigned short ID)
 {
@@ -50,7 +51,7 @@ static inline WZ_DECL_PURE short iV_GetImageYOffset(const IMAGEFILE *ImageFile, 
 	return Image(ImageFile, ID).yOffset();
 }
 
-ImageDef *iV_GetImage(const QString &filename);
+ImageDef *iV_GetImage(const WzString &filename);
 IMAGEFILE *iV_LoadImageFile(const char *FileData);
 void iV_FreeImageFile(IMAGEFILE *ImageFile);
 

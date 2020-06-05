@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@ struct WavecastTile
 {
 	int16_t dx, dy;            ///< Tile coordinates.
 	int32_t invRadius;         ///< Arbitrary constant divided by radius.
-	int16_t angBegin, angEnd;  ///< Start and finish angles for obstruction of view. Non-linear units, for comparison purposes only.
+	size_t angBegin, angEnd;  ///< Start and finish angles for obstruction of view. Non-linear units, for comparison purposes only.
 };
 
 

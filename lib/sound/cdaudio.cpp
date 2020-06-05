@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -18,11 +18,12 @@
 	Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA
 */
 
-#include <string.h>
-#include <physfs.h>
-
 #include "lib/framework/frame.h"
 #include "lib/framework/math_ext.h"
+
+#include <string.h>
+#include <physfs.h>
+#include "lib/framework/physfs_ext.h"
 
 #include "audio.h"
 #include "track.h"
@@ -67,7 +68,7 @@ void cdAudio_Close(void)
 	stopping = true;
 }
 
-static void cdAudio_TrackFinished(void *);
+static void cdAudio_TrackFinished(const void *);
 
 static bool cdAudio_OpenTrack(const char *filename)
 {
@@ -86,11 +87,11 @@ static bool cdAudio_OpenTrack(const char *filename)
 		debug(LOG_WZ, "Reading...[directory: %s] %s", PHYSFS_getRealDir(filename), filename);
 		if (music_file == nullptr)
 		{
-			debug(LOG_ERROR, "Failed opening file [directory: %s] %s, with error %s", PHYSFS_getRealDir(filename), filename, PHYSFS_getLastError());
+			debug(LOG_ERROR, "Failed opening file [directory: %s] %s, with error %s", PHYSFS_getRealDir(filename), filename, WZ_PHYSFS_getLastError());
 			return false;
 		}
 
-		cdStream = sound_PlayStreamWithBuf(music_file, music_volume, cdAudio_TrackFinished, (char *)filename, bufferSize, buffer_count);
+		cdStream = sound_PlayStreamWithBuf(music_file, music_volume, cdAudio_TrackFinished, filename, bufferSize, buffer_count);
 		if (cdStream == nullptr)
 		{
 			PHYSFS_close(music_file);
@@ -106,7 +107,7 @@ static bool cdAudio_OpenTrack(const char *filename)
 	return false; // unhandled
 }
 
-static void cdAudio_TrackFinished(void *user_data)
+static void cdAudio_TrackFinished(const void *user_data)
 {
 	const char *filename = PlayList_NextSong();
 
@@ -115,13 +116,13 @@ static void cdAudio_TrackFinished(void *user_data)
 
 	if (filename == nullptr)
 	{
-		debug(LOG_ERROR, "Out of playlist?! was playing %s", (char *)user_data);
+		debug(LOG_ERROR, "Out of playlist?! was playing %s", (const char *)user_data);
 		return;
 	}
 
 	if (!stopping && cdAudio_OpenTrack(filename))
 	{
-		debug(LOG_SOUND, "Now playing %s (was playing %s)", filename, (char *)user_data);
+		debug(LOG_SOUND, "Now playing %s (was playing %s)", filename, (const char *)user_data);
 	}
 }
 
@@ -155,7 +156,7 @@ bool cdAudio_PlayTrack(SONG_CONTEXT context)
 void cdAudio_Stop()
 {
 	stopping = true;
-	debug(LOG_SOUND, "called, cdStream=%p", cdStream);
+	debug(LOG_SOUND, "called, cdStream=%p", static_cast<void *>(cdStream));
 
 	if (cdStream)
 	{

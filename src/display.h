@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -26,17 +26,21 @@
 
 #include "basedef.h"
 #include "structure.h"
+#include <glm/fwd.hpp>
 
 /* Initialise the display system */
 bool dispInitialise();
+
+/* Initialize fade-in transition */
+bool transitionInit();
 
 void ProcessRadarInput();
 
 void processInput();
 /*don't want to do any of these whilst in the Intelligence Screen*/
-CURSOR processMouseClickInput();
+void processMouseClickInput();
 
-CURSOR scroll();
+void scroll();
 void resetScroll();
 void setMouseScroll(bool);
 
@@ -63,19 +67,13 @@ bool	getMiddleClickRotate();
 void	setDrawShadows(bool val);
 bool	getDrawShadows();
 
-bool	getRadarJumpStatus();
-void	setRadarJump(bool val);
-
+bool	getCameraAccel();
+void	setCameraAccel(bool val);
 
 /* Do the 3D display */
 void displayWorld();
 
 // Illumination value for standard light level "as the artist drew it" ... not darker, not lighter
-
-#define MAX_SCROLL_SPEED (800+scroll_speed_accel)	// make max speed dependant on accel chosen.
-
-extern UDWORD scroll_speed_accel;			// now user modifyable.
-
 
 #define DRAG_INACTIVE 0
 #define DRAG_DRAGGING 1
@@ -90,9 +88,8 @@ struct	_dragBox
 	int y1;
 	int x2;
 	int y2;
-	UDWORD	status;
-	UDWORD	lastTime;
-	UDWORD	pulse;
+	UDWORD status;
+	float pulse = 0;
 };
 
 extern struct	_dragBox dragBox3D, wallDrag;
@@ -195,12 +192,13 @@ SDWORD	getDesiredPitch();
 void	setDesiredPitch(SDWORD pitch);
 
 #define MAX_PLAYER_X_ANGLE	(-1)
-#define MIN_PLAYER_X_ANGLE	(-60)
+#define MIN_PLAYER_X_ANGLE	(-90)
 
 #define MAXDISTANCE	(5000)
-#define MINDISTANCE	(500)
-#define START_DISTANCE	(2000)
-#define START_HEIGHT (1500)
+#define MINDISTANCE	(0)
+#define MINDISTANCE_CONFIG (1600)
+#define STARTDISTANCE	(2500)
+#define OLD_START_HEIGHT (1500) // only used in savegames <= 10
 
 #define CAMERA_PIVOT_HEIGHT (500)
 
@@ -220,9 +218,11 @@ bool ctrlShiftDown();
 
 UDWORD getTargetType();
 
+#define	DEFAULT_ZOOM_SPEED (5000)
+
 void setZoom(float zoomSpeed, float zoomTarget);
-float getZoom();
-float getZoomSpeed();
 void zoom();
+bool clipXYZ(int x, int y, int z, const glm::mat4 &viewMatrix);
+bool clipXYZNormalized(const Vector3i &normalizedPosition, const glm::mat4 &viewMatrix);
 
 #endif // __INCLUDED_SRC_DISPLAY_H__

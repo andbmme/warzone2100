@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -61,12 +61,13 @@ enum STRUCTURE_TYPE
 	REF_MISSILE_SILO,
 	REF_SAT_UPLINK,         //added for updates - AB 8/6/99
 	REF_GATE,
+	REF_LASSAT,
 	NUM_DIFF_BUILDINGS,		//need to keep a count of how many types for IMD loading
 };
 
 struct FLAG_POSITION : public OBJECT_POSITION
 {
-	Vector3i coords;               //the world coords of the Position
+	Vector3i coords = Vector3i(0, 0, 0); //the world coords of the Position
 	UBYTE    factoryInc;           //indicates whether the first, second etc factory
 	UBYTE    factoryType;          //indicates whether standard, cyborg or vtol factory
 	FLAG_POSITION *psNext;
@@ -100,7 +101,11 @@ enum STRUCT_ANIM_STATES
 //this structure is used to hold the permanent stats for each type of building
 struct STRUCTURE_STATS : public BASE_STATS
 {
-	STRUCTURE_STATS() : pBaseIMD(nullptr), pECM(nullptr), pSensor(nullptr) {};
+	STRUCTURE_STATS() : pBaseIMD(nullptr), pECM(nullptr), pSensor(nullptr)
+	{
+		memset(curCount, 0, sizeof(curCount));
+		memset(upgrade, 0, sizeof(upgrade));
+	}
 
 	STRUCTURE_TYPE type;            /* the type of structure */
 	STRUCT_STRENGTH strength;       /* strength against the weapon effects */
@@ -118,6 +123,10 @@ struct STRUCTURE_STATS : public BASE_STATS
 	struct WEAPON_STATS *psWeapStat[MAX_WEAPONS];
 	uint64_t flags;
 
+	unsigned minLimit;		///< lowest value user can set limit to (currently unused)
+	unsigned maxLimit;		///< highest value user can set limit to, LOTS_OF = no limit
+	unsigned curCount[MAX_PLAYERS];	///< current number of instances of this type
+
 	struct
 	{
 		unsigned research;
@@ -132,7 +141,19 @@ struct STRUCTURE_STATS : public BASE_STATS
 		unsigned thermal;
 		unsigned hitpoints;
 		unsigned resistance;	// resist enemy takeover; 0 = immune
+		unsigned limit;		// current max limit for this type, LOTS_OF = no limit
 	} upgrade[MAX_PLAYERS], base;
+	bool isFavorite;		///< on Favorites list
+
+	inline Vector2i size(uint16_t direction) const
+	{
+		Vector2i size(baseWidth, baseBreadth);
+		if (((direction + 0x2000) & 0x4000) != 0) // if building is rotated left or right by 90°, swap width and height
+		{
+			std::swap(size.x, size.y);
+		}
+		return size;
+	}
 };
 
 enum STRUCT_STATES
@@ -256,16 +277,11 @@ struct STRUCTURE : public BASE_OBJECT
 	STRUCT_ANIM_STATES	state;
 	UDWORD lastStateTime;
 	iIMDShape *prebuiltImd;
+
+	inline Vector2i size() const { return pStructureType->size(rot.direction); }
 };
 
 #define LOTS_OF 0xFFFFFFFF  // highest number the limit can be set to
-struct STRUCTURE_LIMITS
-{
-	uint32_t        limit;                  // the number allowed to be built
-	uint32_t        currentQuantity;        // the number of the type currently built per player
-	uint32_t        globalLimit;            // multiplayer only. sets the max value selectable (limits changed by player)
-};
-
 
 //the three different types of factory (currently) - FACTORY, CYBORG_FACTORY, VTOL_FACTORY
 // added repair facilities as they need an assembly point as well

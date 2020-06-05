@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -155,23 +155,23 @@ struct QueuedDroidInfo
 		return 0;
 	}
 
-	uint8_t     player;
-	uint32_t    droidId;
-	SubType     subType;
+	uint8_t     player = 0;
+	uint32_t    droidId = 0;
+	SubType     subType = ObjOrder;
 	// subType == ObjOrder || subType == LocOrder
-	DROID_ORDER order;
-	uint32_t    destId;     // if (subType == ObjOrder)
-	OBJECT_TYPE destType;   // if (subType == ObjOrder)
-	Vector2i    pos;        // if (subType == LocOrder)
-	uint32_t    y;          // if (subType == LocOrder)
-	uint32_t    structRef;  // if (order == DORDER_BUILD || order == DORDER_LINEBUILD)
-	uint16_t    direction;  // if (order == DORDER_BUILD || order == DORDER_LINEBUILD)
-	uint32_t    index;      // if (order == DORDER_BUILDMODULE)
-	Vector2i    pos2;       // if (order == DORDER_LINEBUILD)
-	bool        add;
+	DROID_ORDER order = DORDER_NONE;
+	uint32_t    destId = 0;     // if (subType == ObjOrder)
+	OBJECT_TYPE destType = OBJ_DROID;   // if (subType == ObjOrder)
+	Vector2i    pos = Vector2i(0, 0);            // if (subType == LocOrder)
+	uint32_t    y = 0;          // if (subType == LocOrder)
+	uint32_t    structRef = 0;  // if (order == DORDER_BUILD || order == DORDER_LINEBUILD)
+	uint16_t    direction = 0;  // if (order == DORDER_BUILD || order == DORDER_LINEBUILD)
+	uint32_t    index = 0;      // if (order == DORDER_BUILDMODULE)
+	Vector2i    pos2 = Vector2i(0, 0);           // if (order == DORDER_LINEBUILD)
+	bool        add = false;
 	// subType == SecondaryOrder
-	SECONDARY_ORDER secOrder;
-	SECONDARY_STATE secState;
+	SECONDARY_ORDER secOrder = DSO_UNUSED;
+	SECONDARY_STATE secState = DSS_NONE;
 };
 
 static std::vector<QueuedDroidInfo> queuedOrders;
@@ -202,7 +202,6 @@ bool sendDroidSecondary(const DROID *psDroid, SECONDARY_ORDER sec, SECONDARY_STA
 	}
 
 	QueuedDroidInfo info;
-	memset(&info, 0x00, sizeof(info));  // Suppress uninitialised warnings. (The uninitialised values in the queue would be ignored when reading the queue.)
 
 	info.player = psDroid->player;
 	info.droidId = psDroid->id;
@@ -337,7 +336,8 @@ bool SendDroid(DROID_TEMPLATE *pTemplate, uint32_t x, uint32_t y, uint8_t player
 		NETuint8_t(&player);
 		NETuint32_t(&id);
 		NETPosition(&pos);
-		NETqstring(pTemplate->name);
+		WzString name = pTemplate->name;
+		NETwzstring(name);
 		NETint32_t(&droidType);
 		NETuint8_t(&pTemplate->asParts[COMP_BODY]);
 		NETuint8_t(&pTemplate->asParts[COMP_BRAIN]);
@@ -349,7 +349,7 @@ bool SendDroid(DROID_TEMPLATE *pTemplate, uint32_t x, uint32_t y, uint8_t player
 		NETint8_t(&pTemplate->numWeaps);
 		for (int i = 0; i < pTemplate->numWeaps; i++)
 		{
-			NETuint8_t(&pTemplate->asWeaps[i]);
+			NETuint32_t(&pTemplate->asWeaps[i]);
 		}
 		NETbool(&haveInitialOrders);
 		if (haveInitialOrders)
@@ -384,7 +384,9 @@ bool recvDroid(NETQUEUE queue)
 		NETuint8_t(&player);
 		NETuint32_t(&id);
 		NETPosition(&pos);
-		NETqstring(pT->name);
+		WzString name;
+		NETwzstring(name);
+		pT->name = name;
 		pT->id = pT->name;
 		NETint32_t(&droidType);
 		NETuint8_t(&pT->asParts[COMP_BODY]);
@@ -398,7 +400,7 @@ bool recvDroid(NETQUEUE queue)
 		ASSERT_OR_RETURN(false, pT->numWeaps >= 0 && pT->numWeaps <= ARRAY_SIZE(pT->asWeaps), "Bad numWeaps %d", pT->numWeaps);
 		for (int i = 0; i < pT->numWeaps; i++)
 		{
-			NETuint8_t(&pT->asWeaps[i]);
+			NETuint32_t(&pT->asWeaps[i]);
 		}
 		NETbool(&haveInitialOrders);
 		if (haveInitialOrders)
@@ -452,7 +454,7 @@ bool recvDroid(NETQUEUE queue)
 		debug(LOG_ERROR, "Packet from %d cannot create droid for p%d (%s)!", queue.index,
 		      player, isHumanPlayer(player) ? "Human" : "AI");
 #ifdef DEBUG
-		CONPRINTF(ConsoleString, (ConsoleString, "MULTIPLAYER: Couldn't build a remote droid, relying on checking to resync"));
+		CONPRINTF("MULTIPLAYER: Couldn't build a remote droid, relying on checking to resync");
 #endif
 		return false;
 	}
@@ -563,7 +565,6 @@ void sendDroidInfo(DROID *psDroid, DroidOrder const &order, bool add)
 	}
 
 	QueuedDroidInfo info;
-	memset(&info, 0x00, sizeof(info));  // Suppress uninitialised warnings. (The uninitialised values in the queue would be ignored when reading the queue.)
 
 	info.player = psDroid->player;
 	info.droidId = psDroid->id;
@@ -617,7 +618,6 @@ bool recvDroidInfo(NETQUEUE queue)
 	NETbeginDecode(queue, GAME_DROIDINFO);
 	{
 		QueuedDroidInfo info;
-		memset(&info, 0x00, sizeof(info));
 		NETQueuedDroidInfo(&info);
 
 		STRUCTURE_STATS *psStats = nullptr;

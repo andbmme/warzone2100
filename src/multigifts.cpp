@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -34,18 +34,15 @@
 #include "group.h"
 #include "hci.h"
 #include "order.h"
-#include "scriptfuncs.h"		// for objectinrange.
 #include "lib/gamelib/gtime.h"
 #include "effects.h"
 #include "lib/sound/audio.h"
 #include "lib/sound/audio_id.h"			// for samples.
 #include "wrappers.h"			// for gameover..
-#include "lib/script/script.h"
-#include "scripttabs.h"
-#include "scriptcb.h"
 #include "loop.h"
 #include "transporter.h"
 #include "mission.h" // for INVALID_XY
+#include "qtscript.h"
 
 #include "lib/netplay/netplay.h"
 #include "multiplay.h"
@@ -121,8 +118,8 @@ bool recvGift(NETQUEUE queue)
 		break;
 	}
 
-	// If we are on the receiving end play an audio alert
-	if (to == selectedPlayer)
+	// If we are on the receiving end play an audio alert.
+	if (bMultiPlayer && to == selectedPlayer)
 	{
 		audio_QueueTrack(audioTrack);
 	}
@@ -191,7 +188,7 @@ static void giftAutoGame(uint8_t from, uint8_t to, bool send)
 		if (to == selectedPlayer)
 		{
 			NetPlay.players[from].autoGame = !NetPlay.players[from].autoGame ;
-			CONPRINTF(ConsoleString, (ConsoleString, "%s has %s the autoGame command", getPlayerName(from), NetPlay.players[from].autoGame ? "Enabled" : "Disabled"));
+			CONPRINTF("%s has %s the autoGame command", getPlayerName(from), NetPlay.players[from].autoGame ? "Enabled" : "Disabled");
 			debug(LOG_SYNC, "We (%d) are being told that %d has %s autogame", selectedPlayer, from, NetPlay.players[from].autoGame ? "Enabled" : "Disabled");
 		}
 	}
@@ -221,7 +218,7 @@ void giftRadar(uint8_t from, uint8_t to, bool send)
 		hqReward(from, to);
 		if (to == selectedPlayer)
 		{
-			CONPRINTF(ConsoleString, (ConsoleString, _("%s Gives You A Visibility Report"), getPlayerName(from)));
+			CONPRINTF(_("%s Gives You A Visibility Report"), getPlayerName(from));
 		}
 	}
 }
@@ -237,7 +234,7 @@ static void recvGiftStruct(uint8_t from, uint8_t to, uint32_t structID)
 		syncDebugStructure(psStruct, '>');
 		if (to == selectedPlayer)
 		{
-			CONPRINTF(ConsoleString, (ConsoleString, _("%s Gives you a %s"), getPlayerName(from), objInfo(psStruct)));
+			CONPRINTF(_("%s Gives you a %s"), getPlayerName(from), objInfo(psStruct));
 		}
 	}
 	else
@@ -263,7 +260,7 @@ static void recvGiftDroids(uint8_t from, uint8_t to, uint32_t droidID)
 		syncDebugDroid(psDroid, '>');
 		if (to == selectedPlayer)
 		{
-			CONPRINTF(ConsoleString, (ConsoleString, _("%s Gives you a %s"), getPlayerName(from), psDroid->aName));
+			CONPRINTF(_("%s Gives you a %s"), getPlayerName(from), psDroid->aName);
 		}
 	}
 	else
@@ -313,7 +310,7 @@ static void sendGiftDroids(uint8_t from, uint8_t to)
 		if (isTransporter(psD)
 		    && !transporterIsEmpty(psD))
 		{
-			CONPRINTF(ConsoleString, (ConsoleString, _("Tried to give away a non-empty %s - but this is not allowed."), psD->aName));
+			CONPRINTF(_("Tried to give away a non-empty %s - but this is not allowed."), psD->aName);
 			continue;
 		}
 		if (psD->selected)
@@ -337,7 +334,6 @@ static void sendGiftDroids(uint8_t from, uint8_t to)
 // give technologies.
 static void giftResearch(uint8_t from, uint8_t to, bool send)
 {
-	int		i;
 	uint32_t	dummy = 0;
 
 	if (send)
@@ -355,10 +351,10 @@ static void giftResearch(uint8_t from, uint8_t to, bool send)
 	{
 		if (to == selectedPlayer)
 		{
-			CONPRINTF(ConsoleString, (ConsoleString, _("%s Gives You Technology Documents"), getPlayerName(from)));
+			CONPRINTF(_("%s Gives You Technology Documents"), getPlayerName(from));
 		}
 		// For each topic
-		for (i = 0; i < asResearch.size(); i++)
+		for (size_t i = 0; i < asResearch.size(); i++)
 		{
 			// If they have it and we don't research it
 			if (IsResearchCompleted(&asPlayerResList[from][i])
@@ -414,7 +410,7 @@ void giftPower(uint8_t from, uint8_t to, uint32_t amount, bool send)
 		}
 		if (from != ANYPLAYER && to == selectedPlayer)
 		{
-			CONPRINTF(ConsoleString, (ConsoleString, _("%s Gives You %d Power"), getPlayerName(from), value));
+			CONPRINTF(_("%s Gives You %d Power"), getPlayerName(from), value);
 		}
 	}
 }
@@ -436,13 +432,11 @@ void requestAlliance(uint8_t from, uint8_t to, bool prop, bool allowAudio)
 	alliances[to][from] = ALLIANCE_INVITATION;	// They've been invited
 
 
-	CBallFrom = from;
-	CBallTo = to;
-	eventFireCallbackTrigger((TRIGGER_TYPE) CALL_ALLIANCEOFFER);
+	triggerEventAllianceOffer(from, to);
 
 	if (to == selectedPlayer)
 	{
-		CONPRINTF(ConsoleString, (ConsoleString, _("%s Requests An Alliance With You"), getPlayerName(from)));
+		CONPRINTF(_("%s Requests An Alliance With You"), getPlayerName(from));
 
 		if (allowAudio)
 		{
@@ -451,7 +445,7 @@ void requestAlliance(uint8_t from, uint8_t to, bool prop, bool allowAudio)
 	}
 	else if (from == selectedPlayer)
 	{
-		CONPRINTF(ConsoleString, (ConsoleString, _("You Invite %s To Form An Alliance"), getPlayerName(to)));
+		CONPRINTF(_("You Invite %s To Form An Alliance"), getPlayerName(to));
 		if (allowAudio)
 		{
 			audio_QueueTrack(ID_ALLIANCE_OFF);
@@ -472,7 +466,7 @@ void breakAlliance(uint8_t p1, uint8_t p2, bool prop, bool allowAudio)
 	if (alliances[p1][p2] == ALLIANCE_FORMED)
 	{
 		sstrcpy(tm1, getPlayerName(p1));
-		CONPRINTF(ConsoleString, (ConsoleString, _("%s Breaks The Alliance With %s"), tm1, getPlayerName(p2)));
+		CONPRINTF(_("%s Breaks The Alliance With %s"), tm1, getPlayerName(p2));
 
 		if (allowAudio && (p1 == selectedPlayer || p2 == selectedPlayer))
 		{
@@ -481,6 +475,7 @@ void breakAlliance(uint8_t p1, uint8_t p2, bool prop, bool allowAudio)
 	}
 
 	syncDebug("Break alliance %d %d", p1, p2);
+	triggerEventAllianceBroken(p1, p2);
 	alliances[p1][p2] = ALLIANCE_BROKEN;
 	alliances[p2][p1] = ALLIANCE_BROKEN;
 	alliancebits[p1] &= ~(1 << p2);
@@ -502,10 +497,11 @@ void formAlliance(uint8_t p1, uint8_t p2, bool prop, bool allowAudio, bool allow
 	if (bMultiPlayer && alliances[p1][p2] != ALLIANCE_FORMED && allowNotification)
 	{
 		sstrcpy(tm1, getPlayerName(p1));
-		CONPRINTF(ConsoleString, (ConsoleString, _("%s Forms An Alliance With %s"), tm1, getPlayerName(p2)));
+		CONPRINTF(_("%s Forms An Alliance With %s"), tm1, getPlayerName(p2));
 	}
 
 	syncDebug("Form alliance %d %d", p1, p2);
+	triggerEventAllianceAccepted(p1, p2);
 	alliances[p1][p2] = ALLIANCE_FORMED;
 	alliances[p2][p1] = ALLIANCE_FORMED;
 	if (bMultiPlayer && alliancesSharedVision(game.alliance))	// this is for shared vision only
@@ -707,7 +703,7 @@ bool pickupArtefact(int toPlayer, int fromPlayer)
 					MakeResearchPossible(&asPlayerResList[toPlayer][topic]);
 					if (toPlayer == selectedPlayer)
 					{
-						CONPRINTF(ConsoleString, (ConsoleString, _("You Discover Blueprints For %s"), getName(&asResearch[topic])));
+						CONPRINTF(_("You Discover Blueprints For %s"), getName(&asResearch[topic]));
 					}
 					break;
 				}

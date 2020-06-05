@@ -1,4 +1,6 @@
-#version 120
+// Version directive is set by Warzone when loading the shader
+// (This shader supports GLSL 1.20 - 1.50 core.)
+
 //#pragma debug(on)
 
 uniform sampler2D Texture; // diffuse
@@ -24,9 +26,21 @@ uniform float fogEnd;
 uniform float fogStart;
 uniform vec4 fogColor;
 
+#if (!defined(GL_ES) && (__VERSION__ >= 130)) || (defined(GL_ES) && (__VERSION__ >= 300))
+in float vertexDistance;
+in vec3 normal, lightDir, eyeVec;
+in vec2 texCoord;
+#else
 varying float vertexDistance;
 varying vec3 normal, lightDir, eyeVec;
 varying vec2 texCoord;
+#endif
+
+#if (!defined(GL_ES) && (__VERSION__ >= 130)) || (defined(GL_ES) && (__VERSION__ >= 300))
+out vec4 FragColor;
+#else
+// Uses gl_FragColor
+#endif
 
 void main()
 {
@@ -44,13 +58,21 @@ void main()
 	}
 
 	// Get color from texture unit 0, merge with lighting
+	#if (!defined(GL_ES) && (__VERSION__ >= 130)) || (defined(GL_ES) && (__VERSION__ >= 300))
+	vec4 texColour = texture(Texture, texCoord) * light;
+	#else
 	vec4 texColour = texture2D(Texture, texCoord) * light;
+	#endif
 
 	vec4 fragColour;
 	if (tcmask == 1)
 	{
 		// Get tcmask information from texture unit 1
+		#if (!defined(GL_ES) && (__VERSION__ >= 130)) || (defined(GL_ES) && (__VERSION__ >= 300))
+		vec4 mask = texture(TextureTcmask, texCoord);
+		#else
 		vec4 mask = texture2D(TextureTcmask, texCoord);
+		#endif
 
 		// Apply color using grain merge with tcmask
 		fragColour = (texColour + (teamcolour - 0.5) * mask.a) * colour;
@@ -62,7 +84,7 @@ void main()
 
 	if (ecmEffect)
 	{
-		fragColour.a = 0.45 + 0.225 * graphicsCycle;
+		fragColour.a = 0.66 + 0.66 * graphicsCycle;
 	}
 
 	if (fogEnabled > 0)
@@ -80,5 +102,9 @@ void main()
 		discard;
 	}
 
+	#if (!defined(GL_ES) && (__VERSION__ >= 130)) || (defined(GL_ES) && (__VERSION__ >= 300))
+	FragColor = fragColour;
+	#else
 	gl_FragColor = fragColour;
+	#endif
 }

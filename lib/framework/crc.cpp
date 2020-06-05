@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <algorithm>
 
 //================================================================================
 // MARK: - CRC
@@ -78,23 +79,23 @@ uint32_t crcSumVector2i(uint32_t crc, const Vector2i *data, size_t dataLen)
 // MARK: - SHA256
 //================================================================================
 
-#include <sha2/sha2.h>
+#include <sodium.h>
 Sha256 sha256Sum(void const *data, size_t dataLen)
 {
-	static_assert(Sha256::Bytes == SHA256_DIGEST_SIZE, "Size mismatch.");
+	static_assert(Sha256::Bytes == crypto_hash_sha256_BYTES, "Size mismatch.");
 
 	Sha256 ret;
-	if (dataLen > std::numeric_limits<unsigned long>::max())
+	if (dataLen > std::numeric_limits<unsigned long long>::max())
 	{
-		debug(LOG_FATAL, "Attempting to calculate SHA256 on data length exceeding std::numeric_limits<unsigned long>::max()=(%lu)", std::numeric_limits<unsigned long>::max());
+		debug(LOG_FATAL, "Attempting to calculate SHA256 on data length exceeding std::numeric_limits<unsigned long long>::max()=(%llu)", std::numeric_limits<unsigned long long>::max());
 		ret.setZero();
 		return ret;
 	}
 
-	sha256_ctx ctx[1];
-	sha256_begin(ctx);
-	sha256_hash((const unsigned char *)data, dataLen, ctx);
-	sha256_end(ret.bytes, ctx);
+	crypto_hash_sha256_state state;
+	crypto_hash_sha256_init(&state);
+	crypto_hash_sha256_update(&state, (const unsigned char *)data, dataLen);
+	crypto_hash_sha256_final(&state, ret.bytes);
 	return ret;
 }
 
@@ -206,6 +207,7 @@ const uint8_t wz_secp_privateKey_format::secp256r1::numPublicKeyBytes = 65;
 
 // The curves currently supported by the code
 enum CurveID: int {
+	invalid_curve = 0,
 	secp224r1 = 224,
 	secp256r1 = 256
 };
@@ -230,15 +232,15 @@ private:
 	}
 
 	struct ecCurveData {
-		CurveID curveID;
-		const uint8_t* prelude;
-		size_t prelude_len;
-		uint8_t numPrivateKeyBytes;
-		const uint8_t* ecDomainParameters;
-		size_t ecDomainParameters_len;
-		const uint8_t* publicKeyPrelude;
-		size_t publicKeyPrelude_len;
-		uint8_t numPublicKeyBytes;
+		CurveID curveID = invalid_curve;
+		const uint8_t* prelude = nullptr;
+		size_t prelude_len = 0;
+		uint8_t numPrivateKeyBytes = 0;
+		const uint8_t* ecDomainParameters = nullptr;
+		size_t ecDomainParameters_len = 0;
+		const uint8_t* publicKeyPrelude = nullptr;
+		size_t publicKeyPrelude_len = 0;
+		uint8_t numPublicKeyBytes = 0;
 
 		size_t totalSize() const
 		{
@@ -264,6 +266,35 @@ private:
 		{
 			return bytesBeforePublicKeyPrelude() + publicKeyPrelude_len;
 		}
+
+		static ecCurveData get_secp224r1()
+		{
+			ecCurveData data;
+			data.curveID = secp224r1;
+			data.prelude = wz_secp_privateKey_format::secp224r1::prelude;
+			data.prelude_len = sizeof(wz_secp_privateKey_format::secp224r1::prelude);
+			data.numPrivateKeyBytes = wz_secp_privateKey_format::secp224r1::numPrivateKeyBytes;
+			data.ecDomainParameters = wz_secp_privateKey_format::secp224r1::ecDomainParameters;
+			data.ecDomainParameters_len = sizeof(wz_secp_privateKey_format::secp224r1::ecDomainParameters);
+			data.publicKeyPrelude = wz_secp_privateKey_format::secp224r1::publicKeyPrelude;
+			data.publicKeyPrelude_len = sizeof(wz_secp_privateKey_format::secp224r1::publicKeyPrelude);
+			data.numPublicKeyBytes = wz_secp_privateKey_format::secp224r1::numPublicKeyBytes;
+			return data;
+		}
+		static ecCurveData get_secp256r1()
+		{
+			ecCurveData data;
+			data.curveID = secp256r1;
+			data.prelude = wz_secp_privateKey_format::secp256r1::prelude;
+			data.prelude_len = sizeof(wz_secp_privateKey_format::secp256r1::prelude);
+			data.numPrivateKeyBytes = wz_secp_privateKey_format::secp256r1::numPrivateKeyBytes;
+			data.ecDomainParameters = wz_secp_privateKey_format::secp256r1::ecDomainParameters;
+			data.ecDomainParameters_len = sizeof(wz_secp_privateKey_format::secp256r1::ecDomainParameters);
+			data.publicKeyPrelude = wz_secp_privateKey_format::secp256r1::publicKeyPrelude;
+			data.publicKeyPrelude_len = sizeof(wz_secp_privateKey_format::secp256r1::publicKeyPrelude);
+			data.numPublicKeyBytes = wz_secp_privateKey_format::secp256r1::numPublicKeyBytes;
+			return data;
+		}
 	};
 public:
 	static std::shared_ptr<ecPrivateKeyDERExternalRepresentation> createFromRawKeyBytes(CurveID curve, const std::vector<uint8_t> &privateKeyBytes, const std::vector<uint8_t>& publicKeyBytes)
@@ -279,11 +310,11 @@ public:
 		std::shared_ptr<ecPrivateKeyDERExternalRepresentation> result(nullptr);
 
 		// secp224r1
-		result = _fromExternalRepresentation(curveData_secp224r1(), derECPrivateKey);
+		result = _fromExternalRepresentation(ecCurveData::get_secp224r1(), derECPrivateKey);
 		if (result) return result;
 
 		// secp256r1
-		result = _fromExternalRepresentation(curveData_secp256r1(), derECPrivateKey);
+		result = _fromExternalRepresentation(ecCurveData::get_secp256r1(), derECPrivateKey);
 
 		return result;
 	}
@@ -323,41 +354,13 @@ private:
 		switch (curve)
 		{
 			case secp224r1:
-				return curveData_secp224r1();
+				return ecCurveData::get_secp224r1();
 			case secp256r1:
-				return curveData_secp256r1();
+				return ecCurveData::get_secp256r1();
 			default:
 				debug(LOG_FATAL, "Unimplemented curve ID");
-				return ecCurveData { };
+				return ecCurveData();
 		}
-	}
-	static ecCurveData curveData_secp224r1()
-	{
-		ecCurveData data = { };
-		data.curveID = secp224r1;
-		data.prelude = wz_secp_privateKey_format::secp224r1::prelude;
-		data.prelude_len = sizeof(wz_secp_privateKey_format::secp224r1::prelude);
-		data.numPrivateKeyBytes = wz_secp_privateKey_format::secp224r1::numPrivateKeyBytes;
-		data.ecDomainParameters = wz_secp_privateKey_format::secp224r1::ecDomainParameters;
-		data.ecDomainParameters_len = sizeof(wz_secp_privateKey_format::secp224r1::ecDomainParameters);
-		data.publicKeyPrelude = wz_secp_privateKey_format::secp224r1::publicKeyPrelude;
-		data.publicKeyPrelude_len = sizeof(wz_secp_privateKey_format::secp224r1::publicKeyPrelude);
-		data.numPublicKeyBytes = wz_secp_privateKey_format::secp224r1::numPublicKeyBytes;
-		return data;
-	}
-	static ecCurveData curveData_secp256r1()
-	{
-		ecCurveData data = { };
-		data.curveID = secp256r1;
-		data.prelude = wz_secp_privateKey_format::secp256r1::prelude;
-		data.prelude_len = sizeof(wz_secp_privateKey_format::secp256r1::prelude);
-		data.numPrivateKeyBytes = wz_secp_privateKey_format::secp256r1::numPrivateKeyBytes;
-		data.ecDomainParameters = wz_secp_privateKey_format::secp256r1::ecDomainParameters;
-		data.ecDomainParameters_len = sizeof(wz_secp_privateKey_format::secp256r1::ecDomainParameters);
-		data.publicKeyPrelude = wz_secp_privateKey_format::secp256r1::publicKeyPrelude;
-		data.publicKeyPrelude_len = sizeof(wz_secp_privateKey_format::secp256r1::publicKeyPrelude);
-		data.numPublicKeyBytes = wz_secp_privateKey_format::secp256r1::numPublicKeyBytes;
-		return data;
 	}
 
 	static std::shared_ptr<ecPrivateKeyDERExternalRepresentation> _makeExternalRepresentation(const ecCurveData& curve, const std::vector<uint8_t>& privateKeyBytes, const std::vector<uint8_t>& publicKeyBytes)
@@ -780,6 +783,7 @@ EcKey EcKey::generate()
 	{
 		// uECC_make_key failed
 		debug(LOG_ERROR, "Failed to generate key pair");
+		delete key;
 		return EcKey();
 	}
 	assert(genResult == 1);
@@ -833,9 +837,9 @@ std::vector<uint8_t> base64Decode(std::string const &str)
 			               0;
 			block |= val << (6 * (3 - i));
 		}
-		bytes[0 + n * 3] = block >> 16;
-		bytes[1 + n * 3] = block >> 8;
-		bytes[2 + n * 3] = block;
+		bytes[0 + n * 3] = static_cast<uint8_t>(block >> 16);
+		bytes[1 + n * 3] = static_cast<uint8_t>(block >> 8);
+		bytes[2 + n * 3] = static_cast<uint8_t>(block);
 	}
 	if (str.size() >= 4)
 	{

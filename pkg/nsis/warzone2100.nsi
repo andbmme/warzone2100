@@ -1,5 +1,5 @@
 ;  This file is part of Warzone 2100.
-;  Copyright (C) 2006-2013  Warzone 2100 Project
+;  Copyright (C) 2006-2020  Warzone 2100 Project
 ;  Copyright (C) 2006       Dennis Schridde
 ;
 ;  Warzone 2100 is free software; you can redistribute it and/or modify
@@ -27,9 +27,11 @@
   !include "FileFunc.nsh"
   !include "LogicLib.nsh"
 
+  !include "scripts\LangFileSpecific.nsh"
+
 ;--------------------------------
 ;General
-  CRCCheck on   ;make sure this isn't corrupted
+  CRCCheck on  ;make sure this isn't corrupted
 
   ;Name and file
   Name "${PACKAGE_NAME}"
@@ -45,27 +47,31 @@
 !else
   RequestExecutionLevel user
 !endif
+
 ;--------------------------------
 ;Versioninfo
 
 VIProductVersion "${VERSIONNUM}"
-VIAddVersionKey "CompanyName"	"Warzone 2100 Project"
-VIAddVersionKey "FileDescription"	"${PACKAGE_NAME} Installer"
-VIAddVersionKey "FileVersion"		"${PACKAGE_VERSION}"
-VIAddVersionKey "InternalName"	"${PACKAGE_NAME}"
-VIAddVersionKey "LegalCopyright"	"Copyright (c) 2006-2013 Warzone 2100 Project"
-VIAddVersionKey "OriginalFilename"	"${PACKAGE}-${PACKAGE_VERSION}.exe"
-VIAddVersionKey "ProductName"	"${PACKAGE_NAME}"
-VIAddVersionKey "ProductVersion"	"${PACKAGE_VERSION}"
+VIAddVersionKey "CompanyName"      "Warzone 2100 Project"
+VIAddVersionKey "FileDescription"  "${PACKAGE_NAME} Installer"
+VIAddVersionKey "FileVersion"      "${PACKAGE_VERSION}"
+VIAddVersionKey "InternalName"     "${PACKAGE_NAME}"
+VIAddVersionKey "LegalCopyright"   "Copyright (c) 2006-2020 Warzone 2100 Project"
+VIAddVersionKey "OriginalFilename" "${PACKAGE}-${PACKAGE_VERSION}.exe"
+VIAddVersionKey "ProductName"      "${PACKAGE_NAME}"
+VIAddVersionKey "ProductVersion"   "${PACKAGE_VERSION}"
 
-!ifndef PORTABLE
 ;--------------------------------
 ;Variables
+
+!ifndef PORTABLE
   Var MUI_TEMP
   Var STARTMENU_FOLDER
-;--------------------------------
 !endif
+
+;--------------------------------
 ;Interface Settings
+
 !ifndef PORTABLE
   !define MUI_HEADERIMAGE
   !define MUI_HEADERIMAGE_BITMAP "${TOP_SRCDIR}\icons\wz2100header.bmp"
@@ -125,10 +131,19 @@ VIAddVersionKey "ProductVersion"	"${PACKAGE_VERSION}"
 ;--------------------------------
 ;Languages
 
+  !addincludedir "i18n"
+
+  !define WZ_LANGFILE_FALLBACK "win_installer_base.nsh"
+
   !insertmacro MUI_LANGUAGE "English" # first language is the default language
+  !insertmacro LANGFILE_SPECIFIC_INCLUDE "English" "win_installer_base.nsh"
+
   !insertmacro MUI_LANGUAGE "Dutch"
+  !insertmacro LANGFILE_SPECIFIC_INCLUDE_WITHDEFAULT "Dutch" "win_installer-nl_NL.nsh" ${WZ_LANGFILE_FALLBACK}
   !insertmacro MUI_LANGUAGE "German"
+  !insertmacro LANGFILE_SPECIFIC_INCLUDE_WITHDEFAULT "German" "win_installer-de_DE.nsh" ${WZ_LANGFILE_FALLBACK}
   !insertmacro MUI_LANGUAGE "Russian"
+  !insertmacro LANGFILE_SPECIFIC_INCLUDE_WITHDEFAULT "Russian" "win_installer-ru_RU.nsh" ${WZ_LANGFILE_FALLBACK}
 
 ;--------------------------------
 ;Reserve Files
@@ -158,8 +173,8 @@ Function WelcomePageSetupLinkShow
   CreateFont $1 "$(^Font)" "$(^FontSize)" "400" /UNDERLINE
   SendMessage $0 ${WM_SETFONT} $1 1
   Pop $0
-
 FunctionEnd
+
 ;--------------------------------
 ;Installer Sections
 
@@ -173,14 +188,10 @@ Section $(TEXT_SecBase) SecBase
   ; Main executable
   File "${TOP_BUILDDIR}\src\${PACKAGE}.exe"
 
-  ; Windows dbghelp library
-  File "${EXTDIR}\bin\dbghelp.dll.license.txt"
-  File "${EXTDIR}\bin\dbghelp.dll"
+  !ifdef PORTABLE
+    File "/oname=.portable" "${TOP_SRCDIR}\pkg\portable.in"
+  !endif
 
-!ifdef PORTABLE
-; openAL installer
-  File "${EXTDIR}\bin\oalinst.exe"
-!endif
 !ifdef INSTALLVIDS
 ; sequences.wz
   File "${EXTDIR}\opt\sequences.wz"
@@ -220,12 +231,6 @@ Section $(TEXT_SecBase) SecBase
   Push "README.md.txt"
   Call unix2dos
 
-; Create mod directories
-  CreateDirectory "$INSTDIR\mods\campaign"
-  CreateDirectory "$INSTDIR\mods\music"
-  CreateDirectory "$INSTDIR\mods\global"
-  CreateDirectory "$INSTDIR\mods\multiplay"
-
   SetOutPath "$INSTDIR\doc"
   File "${TOP_SRCDIR}\doc\quickstartguide.html"
   File "${TOP_SRCDIR}\doc\quickstartguide.pdf"
@@ -242,11 +247,13 @@ Section $(TEXT_SecBase) SecBase
   File "${TOP_SRCDIR}\data\music\music.wpl"
 
   SetOutPath "$INSTDIR\fonts"
-  File "/oname=fonts.conf" "${EXTDIR}\etc\fonts\fonts.conf.wd_disable"
-  File "${EXTDIR}\etc\fonts\DejaVuSans.ttf"
-  File "${EXTDIR}\etc\fonts\DejaVuSans-Bold.ttf"
+  File "/oname=fonts.conf" "${TOP_SRCDIR}\win32\fontconfig\fonts.conf.wd_disable"
+  File "${TOP_SRCDIR}\3rdparty\fonts\DejaVu\DejaVuSans.ttf"
+  File "${TOP_SRCDIR}\3rdparty\fonts\DejaVu\DejaVuSans-Bold.ttf"
+  File "/oname=DejaVu.LICENSE.txt" "${TOP_SRCDIR}\3rdparty\fonts\DejaVu\LICENSE"
 
 !ifndef PORTABLE
+
   ;Store installation folder
   WriteRegStr HKLM "Software\${PACKAGE_NAME}-${PACKAGE_VERSION}" "" $INSTDIR
 
@@ -277,25 +284,16 @@ Section $(TEXT_SecBase) SecBase
 
   SetOutPath "$INSTDIR"
   CreateShortCut "$DESKTOP\${PACKAGE_NAME}-${PACKAGE_VERSION}.lnk" "$INSTDIR\${PACKAGE}.exe"
-!endif #PORTABLE
+!endif
 SectionEnd
 
 ; NOTE: you need upgraded security privs to install shortcut on desktop for portable.
 
-; Installs OpenAL runtime libraries, using Creative's installer
-!ifndef PORTABLE
-Section $(TEXT_SecOpenAL) SecOpenAL
-  SetOutPath "$INSTDIR"
-  File "${EXTDIR}\bin\oalinst.exe"
-  ExecWait '"$INSTDIR\oalinst.exe" --silent'
-SectionEnd
-!endif
-
-
 !ifndef INSTALLVIDS
 SectionGroup $(TEXT_SecFMVs) SecFMVs
-Section /o $(TEXT_SecFMVs_EngHi) SecFMVs_EngHi
 
+Section /o $(TEXT_SecFMVs_EngHi) SecFMVs_EngHi
+  SetOutPath "$INSTDIR"
   IfFileExists "sequences.wz" +5
     NSISdl::download "http://downloads.sourceforge.net/project/warzone2100/warzone2100/Videos/high-quality-en/sequences.wz"               "sequences.wz"
     Pop $R0 ; Get the return value
@@ -304,6 +302,7 @@ Section /o $(TEXT_SecFMVs_EngHi) SecFMVs_EngHi
 SectionEnd
 
 Section /o $(TEXT_SecFMVs_Eng) SecFMVs_Eng
+  SetOutPath "$INSTDIR"
   IfFileExists "sequences.wz" +5
     NSISdl::download "http://downloads.sourceforge.net/project/warzone2100/warzone2100/Videos/standard-quality-en/sequences.wz"               "sequences.wz"
     Pop $R0 ; Get the return value
@@ -312,6 +311,7 @@ Section /o $(TEXT_SecFMVs_Eng) SecFMVs_Eng
 SectionEnd
 
 Section /o $(TEXT_SecFMVs_EngLo) SecFMVs_EngLo
+  SetOutPath "$INSTDIR"
   IfFileExists "sequences.wz" +5
     NSISdl::download "http://downloads.sourceforge.net/project/warzone2100/warzone2100/Videos/low-quality-en/sequences.wz"               "sequences.wz"
     Pop $R0 ; Get the return value
@@ -320,7 +320,7 @@ Section /o $(TEXT_SecFMVs_EngLo) SecFMVs_EngLo
 SectionEnd
 
 ;Section /o $(TEXT_SecFMVs_Ger) SecFMVs_Ger
-;
+;  SetOutPath "$INSTDIR"
 ;  IfFileExists "sequences.wz" +5
 ;    NSISdl::download "http://download.gna.org/warzone/videos/2.2/warzone2100-sequences-ger-hi-2.2.wz"               "sequences.wz"
 ;    Pop $R0 ; Get the return value
@@ -434,7 +434,7 @@ SectionEnd
 Section /o $(TEXT_SecNLS_WinFonts) SecNLS_WinFonts
   SetOutPath "$INSTDIR\fonts"
   Delete "$INSTDIR\fonts\fonts.conf"
-  File "/oname=fonts.conf" "${EXTDIR}\etc\fonts\fonts.conf.wd_enable"
+  File "/oname=fonts.conf" "${TOP_SRCDIR}\win32\fontconfig\fonts.conf.wd_enable"
 SectionEnd
 
 SectionGroupEnd
@@ -489,12 +489,12 @@ ${If} ${SectionIsSelected} ${SecFMVs_Eng}
 ${OrIf} ${SectionIsSelected} ${SecFMVs_EngHi}
 ${OrIf} ${SectionIsSelected} ${SecFMVs_EngLo}
 ;${OrIf} ${SectionIsSelected} ${SecFMVs_Ger}
-	!insertmacro StartRadioButtons $5
-		!insertmacro RadioButton ${SecFMVs_EngHi}
-		!insertmacro RadioButton ${SecFMVs_Eng}
-		!insertmacro RadioButton ${SecFMVs_EngLo}
-;		!insertmacro RadioButton ${SecFMVs_Ger}
-	!insertmacro EndRadioButtons
+  !insertmacro StartRadioButtons $5
+    !insertmacro RadioButton ${SecFMVs_EngHi}
+    !insertmacro RadioButton ${SecFMVs_Eng}
+    !insertmacro RadioButton ${SecFMVs_EngLo}
+;   !insertmacro RadioButton ${SecFMVs_Ger}
+  !insertmacro EndRadioButtons
 ${EndIf}
 FunctionEnd
 !endif
@@ -503,213 +503,52 @@ Function unix2dos
     ; strips all CRs and then converts all LFs into CRLFs
     ; (this is roughly equivalent to "cat file | dos2unix | unix2dos")
     ; beware that this function destroys $0 $1 $2
-	;
+    ;
     ; usage:
     ;    Push "infile"
     ;    Push "outfile"
     ;    Call unix2dos
     ClearErrors
     Pop $2
-    FileOpen $1 $2 w			;$1 = file output (opened for writing)
+    FileOpen $1 $2 w      ;$1 = file output (opened for writing)
     Pop $2
-    FileOpen $0 $2 r			;$0 = file input (opened for reading)
-    Push $2						;save name for deleting
+    FileOpen $0 $2 r      ;$0 = file input (opened for reading)
+    Push $2               ;save name for deleting
     IfErrors unix2dos_done
 
 unix2dos_loop:
-    FileReadByte $0 $2			; read a byte (stored in $2)
-    IfErrors unix2dos_done		; EOL
-    StrCmp $2 13 unix2dos_loop	; skip CR
-    StrCmp $2 10 unix2dos_cr unix2dos_write	; if LF write an extra CR
+    FileReadByte $0 $2  ; read a byte (stored in $2)
+    IfErrors unix2dos_done  ; EOL
+    StrCmp $2 13 unix2dos_loop  ; skip CR
+    StrCmp $2 10 unix2dos_cr unix2dos_write  ; if LF write an extra CR
 
 unix2dos_cr:
     FileWriteByte $1 13
 
 unix2dos_write:
-    FileWriteByte $1 $2			; write byte
-    Goto unix2dos_loop			; read next byte
+    FileWriteByte $1 $2  ; write byte
+    Goto unix2dos_loop   ; read next byte
 
 unix2dos_done:
-    FileClose $0				; close files
+    FileClose $0         ; close files
     FileClose $1
     Pop $0
-    Delete $0					; delete original
+    Delete $0            ; delete original
 
 FunctionEnd
 
 ;--------------------------------
 ;Descriptions
 
-!ifndef PORTABLE
-  ;English
-  LangString WZWelcomeText ${LANG_ENGLISH} "Welcome to the Warzone 2100 installer!\r\n\r\nThis wizard will guide you through the installation of Warzone 2100.\r\n\r\nIt is recommended that you close all other applications before continuing this installation. This will make it possible to update relevant system files without having to reboot your computer.\r\n\r\nWarzone 2100 is 100% free, fully open sourced program\r\n\r\nClick Next to continue."
-!else
-  LangString WZWelcomeText ${LANG_ENGLISH} "Welcome to the Warzone 2100 portable installer!\r\n\r\nThis wizard will guide you through the installation of the portable version of Warzone 2100.\r\n\r\nThis install is fully self-contained and you can uninstall the program at any time by deleting the directory.\r\n\r\nWarzone 2100 is 100% free, fully open sourced program! \r\n\r\nClick Next to continue."
-!endif
-  LangString WZ_GPL_NEXT ${LANG_ENGLISH} "Next"
-
-
-  LangString TEXT_SecBase ${LANG_ENGLISH} "Core files"
-  LangString DESC_SecBase ${LANG_ENGLISH} "The core files required to run Warzone 2100."
-
-  LangString TEXT_SecOpenAL ${LANG_ENGLISH} "OpenAL libraries"
-  LangString DESC_SecOpenAL ${LANG_ENGLISH} "Runtime libraries for OpenAL, a free Audio interface. Implementation by Creative Labs."
-
-;  LangString TEXT_SecMods ${LANG_ENGLISH} "Mods"
-;  LangString DESC_SecMods ${LANG_ENGLISH} "Various mods for Warzone 2100."
-
-  LangString TEXT_SecFMVs ${LANG_ENGLISH} "Videos"
-  LangString DESC_SecFMVs ${LANG_ENGLISH} "Download and install in-game cutscenes."
-
-  LangString TEXT_SecFMVs_EngHi ${LANG_ENGLISH} "English (HQ)"
-  LangString DESC_SecFMVs_EngHi ${LANG_ENGLISH} "Download and install higher-quality English in-game cutscenes (920 MB)."
-
-  LangString TEXT_SecFMVs_Eng ${LANG_ENGLISH} "English"
-  LangString DESC_SecFMVs_Eng ${LANG_ENGLISH} "Download and install English in-game cutscenes (545 MB)."
-
-  LangString TEXT_SecFMVs_EngLo ${LANG_ENGLISH} "English (LQ)"
-  LangString DESC_SecFMVs_EngLo ${LANG_ENGLISH} "Download and install a low-quality version of English in-game cutscenes (162 MB)."
-
-  LangString TEXT_SecFMVs_Ger ${LANG_ENGLISH} "German"
-  LangString DESC_SecFMVs_Ger ${LANG_ENGLISH} "Download and install German in-game cutscenes (460 MB)."
-
-  LangString TEXT_SecNLS ${LANG_ENGLISH} "Language files"
-  LangString DESC_SecNLS ${LANG_ENGLISH} "Support for languages other than English."
-
-  LangString TEXT_SecNLS_WinFonts ${LANG_ENGLISH} "WinFonts"
-  LangString DESC_SecNLS_WinFonts ${LANG_ENGLISH} "Include Windows Fonts folder into the search path. Enable this if you want to use custom fonts in config file or having troubles with standard font. Can be slow on Vista and later!"
-
-;  LangString TEXT_SecOriginalMod ${LANG_ENGLISH} "1.10 balance"
-;  LangString DESC_SecOriginalMod ${LANG_ENGLISH} "Play the game as it was back in the 1.10 days."
-
-  ;Dutch
-  LangString WZWelcomeText ${LANG_DUTCH} "Deze installatiewizard leidt u door het installatieproces van Warzone 2100.\r\n\r\nHet is aangeraden om alle andere applicaties te sluiten alvorens verder te gaan met deze installatie. Dit maakt het mogelijk om de betreffende systeembestanden te vervangen zonder uw computer opnieuw op te starten"
-  LangString WZ_GPL_NEXT ${LANG_DUTCH} "volgende"
-
-
-  LangString TEXT_SecBase ${LANG_DUTCH} "Core files"
-  LangString DESC_SecBase ${LANG_DUTCH} "The core files required to run Warzone 2100."
-
-  LangString TEXT_SecOpenAL ${LANG_DUTCH} "OpenAL bibliotheken"
-  LangString DESC_SecOpenAL ${LANG_DUTCH} "Vereiste bibliotheken voor OpenAL, een opensource/vrije Audio Bibliotheek."
-
-;  LangString TEXT_SecMods ${LANG_DUTCH} "Mods"
-;  LangString DESC_SecMods ${LANG_DUTCH} "Verschillende mods."
-
-  LangString TEXT_SecFMVs ${LANG_DUTCH} "Videos"
-  LangString DESC_SecFMVs ${LANG_DUTCH} "Download and install in-game cutscenes."
-
-  LangString TEXT_SecFMVs_EngHi ${LANG_DUTCH} "English (HQ)"
-  LangString DESC_SecFMVs_EngHi ${LANG_DUTCH} "Download and install higher-quality English in-game cutscenes (920 MB)."
-
-  LangString TEXT_SecFMVs_Eng ${LANG_DUTCH} "English"
-  LangString DESC_SecFMVs_Eng ${LANG_DUTCH} "Download and install English in-game cutscenes (545 MB)."
-
-  LangString TEXT_SecFMVs_EngLo ${LANG_DUTCH} "English (LQ)"
-  LangString DESC_SecFMVs_EngLo ${LANG_DUTCH} "Download and install a low-quality version of English in-game cutscenes (162 MB)."
-
-  LangString TEXT_SecFMVs_Ger ${LANG_DUTCH} "German"
-  LangString DESC_SecFMVs_Ger ${LANG_DUTCH} "Download and install German in-game cutscenes (460 MB)."
-
-  LangString TEXT_SecNLS ${LANG_DUTCH} "Language files"
-  LangString DESC_SecNLS ${LANG_DUTCH} "Ondersteuning voor andere talen dan Engels (Nederlands inbegrepen)."
-
-  LangString TEXT_SecNLS_WinFonts ${LANG_DUTCH} "WinFonts"
-  LangString DESC_SecNLS_WinFonts ${LANG_DUTCH} "Include Windows Fonts folder into the search path. Enable this if you want to use custom fonts in config file or having troubles with standard font. Can be slow on Vista and later!"
-
-;  LangString TEXT_SecOriginalMod ${LANG_DUTCH} "1.10 balance"
-;  LangString DESC_SecOriginalMod ${LANG_DUTCH} "Speel het spel met de originele 1.10 versie balans stats."
-
-  ;German
-  LangString WZWelcomeText ${LANG_GERMAN} "Dieser Wizard wird Sie durch die Warzone-2100-Installation fьhren.\r\n\r\nEs wird empfohlen sдmtliche anderen Anwendungen zu schlieЯen, bevor Sie das Setup starten. Dies ermцglicht es relevante Systemdateien zu aktualisieren, ohne neustarten zu mьssen.\r\n\r\nWarzone 2100 ist zu 100% kostenlos, falls Sie dafьr gezahlt haben, lassen Sie es uns wissen!\r\n\r\nKlicken Sie auf Weiter, um fortzufahren."
-  LangString WZ_GPL_NEXT ${LANG_GERMAN} "nдchste"
-
-
-  LangString TEXT_SecBase ${LANG_GERMAN} "Core files"
-  LangString DESC_SecBase ${LANG_GERMAN} "Die Kerndateien, die fьr Warzone 2100 benцtigt werden."
-
-  LangString TEXT_SecOpenAL ${LANG_GERMAN} "OpenAL Bibliotheken"
-  LangString DESC_SecOpenAL ${LANG_GERMAN} "Bibliotheken fьr OpenAL, ein freies Audio Interface. Implementation von Creative Labs."
-
-;  LangString TEXT_SecMods ${LANG_GERMAN} "Mods"
-;  LangString DESC_SecMods ${LANG_GERMAN} "Verschiedene Mods."
-
-  LangString TEXT_SecFMVs ${LANG_GERMAN} "Videos"
-  LangString DESC_SecFMVs ${LANG_GERMAN} "Videos herunterladen und installieren."
-
-  LangString TEXT_SecFMVs_EngHi ${LANG_GERMAN} "English (HQ)"
-  LangString DESC_SecFMVs_EngHi ${LANG_GERMAN} "Videos in besserer Qualitдt und auf Englisch herunterladen und installieren (920 MiB)."
-
-  LangString TEXT_SecFMVs_Eng ${LANG_GERMAN} "English"
-  LangString DESC_SecFMVs_Eng ${LANG_GERMAN} "Die englischen Videos herunterladen und installieren (545 MiB)."
-
-  LangString TEXT_SecFMVs_EngLo ${LANG_GERMAN} "English (LQ)"
-  LangString DESC_SecFMVs_EngLo ${LANG_GERMAN} "Die englischen Videos in geringer Qualitдt herunterladen und installieren (162 MiB)."
-
-  LangString TEXT_SecFMVs_Ger ${LANG_GERMAN} "German"
-  LangString DESC_SecFMVs_Ger ${LANG_GERMAN} "Die deutschen Videos herunterladen und installieren (460 MiB)."
-
-  LangString TEXT_SecNLS ${LANG_GERMAN} "Language files"
-  LangString DESC_SecNLS ${LANG_GERMAN} "Unterstьtzung fьr Sprachen auЯer Englisch (Deutsch inbegriffen)."
-
-  LangString TEXT_SecNLS_WinFonts ${LANG_GERMAN} "WinFonts"
-  LangString DESC_SecNLS_WinFonts ${LANG_GERMAN} "Den Windows-Schriftarten-Ordner in den Suchpfad aufnehmen. Nutzen Sie dies, falls Sie spдter eigene Schriftarten in der Konfigurationsdatei eingeben wollen oder es zu Problemen mit der Standardschriftart kommt. Kann unter Vista und spдter langsam sein!"
-
-  LangString TEXT_SecOriginalMod ${LANG_GERMAN} "1.10 balance"
-  LangString DESC_SecOriginalMod ${LANG_GERMAN} "Spielen Sie das Spiel mit dem Balancing aus der Originalversion 1.10."
-
-  ;Russian
-  LangString WZWelcomeText ${LANG_RUSSIAN} "Этот помощник установки поможет вам установить Warzone2100.\r\n\r\nПеред началом рекомендуем закрыть все другие приложения. Это позволит обновить соответствующие системные файлы без перезагрузки системы.\r\n\r\nWarzone2100 100% бесплатный, если вы за него заплатили сообщите нам!\r\n\r\nНажмите Далее для продолжения."
-  LangString WZ_GPL_NEXT ${LANG_RUSSIAN} "Согласен"
-
-
-  LangString TEXT_SecBase ${LANG_RUSSIAN} "Базовые файлы"
-  LangString DESC_SecBase ${LANG_RUSSIAN} "Файлы требуемые для запуска Warzone 2100."
-
-  LangString TEXT_SecOpenAL ${LANG_RUSSIAN} "Библиотека OpenAL"
-  LangString DESC_SecOpenAL ${LANG_RUSSIAN} "Свободно распространяемый аппаратно- программный интерфейс (API) для работы с аудиоданными. Версия от Creative Labs."
-
-;  LangString TEXT_SecMods ${LANG_RUSSIAN} "Модификации"
-;  LangString DESC_SecMods ${LANG_RUSSIAN} "Различные модификации для Warzone 2100."
-
-  LangString TEXT_SecFMVs ${LANG_RUSSIAN} "Видео"
-  LangString DESC_SecFMVs ${LANG_RUSSIAN} "Скачать и установить внутриигровые ролики."
-
-  LangString TEXT_SecFMVs_EngHi ${LANG_RUSSIAN} "Английские (HQ)"
-  LangString DESC_SecFMVs_EngHi ${LANG_RUSSIAN} "Download and install higher-quality English in-game cutscenes (920 MB)."
-
-  LangString TEXT_SecFMVs_Eng ${LANG_RUSSIAN} "Английские"
-  LangString DESC_SecFMVs_Eng ${LANG_RUSSIAN} "Скачать и установить внутриигровые ролики на английском языке (545 MB)."
-
-  LangString TEXT_SecFMVs_EngLo ${LANG_RUSSIAN} "Английские (LQ)"
-  LangString DESC_SecFMVs_EngLo ${LANG_RUSSIAN} "Скачать и установить внутриигровые ролики (низкого качества) на английском языке (162 MB)."
-
-  LangString TEXT_SecFMVs_Ger ${LANG_RUSSIAN} "Немецкие"
-  LangString DESC_SecFMVs_Ger ${LANG_RUSSIAN} "Скачать и установить внутриигровые ролики на немецком языке (460 MB)."
-
-  LangString TEXT_SecNLS ${LANG_RUSSIAN} "Языковые файлы"
-  LangString DESC_SecNLS ${LANG_RUSSIAN} "Поддержка Русского и других языков."
-
-  LangString TEXT_SecNLS_WinFonts ${LANG_RUSSIAN} "WinШрифты"
-  LangString DESC_SecNLS_WinFonts ${LANG_RUSSIAN} "Задействовать папку шрифтов Windows при поиске. Помогает если есть проблемы с поставляемыми шрифтами. На Висте возможно замедление при загрузке!"
-
-  LangString TEXT_SecOriginalMod ${LANG_RUSSIAN} "Баланс 1.10"
-  LangString DESC_SecOriginalMod ${LANG_RUSSIAN} "Играть в игру с балансом от оригинальной версии 1.10."
-
   ;Assign language strings to sections
   !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
     !insertmacro MUI_DESCRIPTION_TEXT ${SecBase} $(DESC_SecBase)
 
-    !insertmacro MUI_DESCRIPTION_TEXT ${SecOpenAL} $(DESC_SecOpenAL)
-
-;    !insertmacro MUI_DESCRIPTION_TEXT ${SecMods} $(DESC_SecMods)
-;    !insertmacro MUI_DESCRIPTION_TEXT ${SecOriginalMod} $(DESC_SecOriginalMod)
-
     !insertmacro MUI_DESCRIPTION_TEXT ${SecFMVs} $(DESC_SecFMVs)
-	!insertmacro MUI_DESCRIPTION_TEXT ${SecFMVs_Eng} $(DESC_SecFMVs_Eng)
-	!insertmacro MUI_DESCRIPTION_TEXT ${SecFMVs_EngHi} $(DESC_SecFMVs_EngHi)
-	!insertmacro MUI_DESCRIPTION_TEXT ${SecFMVs_EngLo} $(DESC_SecFMVs_EngLo)
-;	!insertmacro MUI_DESCRIPTION_TEXT ${SecFMVs_Ger} $(DESC_SecFMVs_Ger)
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecFMVs_Eng} "$(DESC_SecFMVs_Eng) (545 MB)"
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecFMVs_EngHi} "$(DESC_SecFMVs_EngHi) (920 MB)"
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecFMVs_EngLo} "$(DESC_SecFMVs_EngLo) (162 MB)"
+;    !insertmacro MUI_DESCRIPTION_TEXT ${SecFMVs_Ger} "$(DESC_SecFMVs_Ger) (460 MB)"
 
     !insertmacro MUI_DESCRIPTION_TEXT ${SecNLS} $(DESC_SecNLS)
     !insertmacro MUI_DESCRIPTION_TEXT ${SecNLS_WinFonts} $(DESC_SecNLS_WinFonts)
@@ -725,11 +564,6 @@ Section "Uninstall"
 
   Delete "$INSTDIR\${PACKAGE}.exe"
 
-  Delete "$INSTDIR\oalinst.exe"
-
-  Delete "$INSTDIR\dbghelp.dll.license.txt"
-  Delete "$INSTDIR\dbghelp.dll"
-
   Delete "$INSTDIR\base.wz"
   Delete "$INSTDIR\mp.wz"
   Delete "$INSTDIR\sequences.wz"
@@ -737,6 +571,7 @@ Section "Uninstall"
   Delete "$INSTDIR\stderr.txt"
   Delete "$INSTDIR\stdout.txt"
 
+  Delete "$INSTDIR\README.md.txt"
   Delete "$INSTDIR\COPYING.NONGPL.txt"
   Delete "$INSTDIR\COPYING.README.txt"
   Delete "$INSTDIR\COPYING.txt"
@@ -765,18 +600,6 @@ Section "Uninstall"
   Delete "$INSTDIR\fonts\DejaVuSans.ttf"
   Delete "$INSTDIR\fonts\DejaVuSans-Bold.ttf"
   RMDir "$INSTDIR\fonts"
-
-  Delete "$INSTDIR\mods\music\music_1.0.AUTHORS.txt"
-  Delete "$INSTDIR\mods\music\music_1.0.wz"
-
-  Delete "$INSTDIR\mods\multiplay\old-1.10-balance.wz"
-
-  RMDir "$INSTDIR\mods\multiplay"
-  RMDir "$INSTDIR\mods\music"
-  RMDir "$INSTDIR\mods\campaign"
-  RMDir "$INSTDIR\mods\global"
-
-  RMDir "$INSTDIR\mods"
 
 ; remove all the locales
 
@@ -919,15 +742,14 @@ Section "Uninstall"
 
   Delete "$SMPROGRAMS\$MUI_TEMP-${PACKAGE_VERSION}\Uninstall.lnk"
   Delete "$SMPROGRAMS\$MUI_TEMP-${PACKAGE_VERSION}\${PACKAGE_NAME}.lnk"
-  Delete "$SMPROGRAMS\$MUI_TEMP-${PACKAGE_VERSION}\${PACKAGE_NAME}- Old 1.10 Balance.lnk"
   Delete "$SMPROGRAMS\$MUI_TEMP-${PACKAGE_VERSION}\Quick Start Guide (html).lnk"
   Delete "$SMPROGRAMS\$MUI_TEMP-${PACKAGE_VERSION}\Quick Start Guide (pdf).lnk"
 
-  ;Delete empty start menu parent diretories
+  ;Delete empty start menu parent directories
   StrCpy $MUI_TEMP "$SMPROGRAMS\$MUI_TEMP-${PACKAGE_VERSION}"
 
   startMenuDeleteLoop:
-	ClearErrors
+    ClearErrors
     RMDir $MUI_TEMP
     GetFullPathName $MUI_TEMP "$MUI_TEMP\.."
 
@@ -945,12 +767,14 @@ Section "Uninstall"
 
 SectionEnd
 !endif
+
 ;--------------------------------
 ;Uninstaller Functions
 
+!ifndef PORTABLE
 Function un.onInit
-
+  !verbose push
+  !verbose push
   !insertmacro MUI_UNGETLANGUAGE
-
 FunctionEnd
-
+!endif

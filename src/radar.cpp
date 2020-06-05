@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -35,6 +35,7 @@
 #include "display3d.h"
 #include "map.h"
 #include "component.h"
+#include "console.h"
 #include "radar.h"
 #include "mapdisplay.h"
 #include "hci.h"
@@ -47,6 +48,10 @@
 #include "multiplay.h"
 #include "intdisplay.h"
 #include "texture.h"
+#include "warzoneconfig.h"
+#ifndef GLM_ENABLE_EXPERIMENTAL
+	#define GLM_ENABLE_EXPERIMENTAL
+#endif
 #include <glm/gtx/transform.hpp>
 
 #define HIT_NOTIFICATION	(GAME_TICKS_PER_SEC * 2)
@@ -55,11 +60,12 @@
 bool bEnemyAllyRadarColor = false;     			/**< Enemy/ally radar color. */
 RADAR_DRAW_MODE	radarDrawMode = RADAR_MODE_DEFAULT;	/**< Current mini-map mode. */
 bool rotateRadar; ///< Rotate the radar?
+bool radarRotationArrow; ///< display arrow when radar rotation enabled?
 
 static PIELIGHT		colRadarAlly, colRadarMe, colRadarEnemy;
 static PIELIGHT		tileColours[MAX_TILES];
 static UDWORD		*radarBuffer = nullptr;
-static Vector3i		playerpos;
+static Vector3i		playerpos = {0, 0, 0};
 
 PIELIGHT clanColours[] =
 {
@@ -138,10 +144,11 @@ void radarInitVars()
 {
 	radarTexWidth = 0;
 	radarTexHeight = 0;
-	RadarZoom = DEFAULT_RADARZOOM;
+	RadarZoom = war_GetRadarZoom();
 	debug(LOG_WZ, "Resetting radar zoom to %u", RadarZoom);
 	radarSize(RadarZoom);
 	playerpos = Vector3i(-1, -1, -1);
+	frameSkip = 0;
 }
 
 bool InitRadar()
@@ -150,10 +157,6 @@ bool InitRadar()
 	colRadarAlly = WZCOL_YELLOW;
 	colRadarEnemy = WZCOL_RED;
 	colRadarMe = WZCOL_WHITE;
-	if (mapWidth < 150)	// too small!
-	{
-		RadarZoom = pie_GetVideoBufferWidth() <= 640 ? 14 : DEFAULT_RADARZOOM * 2;
-	}
 	return true;
 }
 
@@ -168,6 +171,7 @@ bool resizeRadar()
 	radarBufferSize = radarTexWidth * radarTexHeight * sizeof(UDWORD);
 	radarBuffer = (uint32_t *)malloc(radarBufferSize);
 	memset(radarBuffer, 0, radarBufferSize);
+	frameSkip = 0;
 	if (rotateRadar)
 	{
 		RadarZoomMultiplier = (float)std::max(RADWIDTH, RADHEIGHT) / std::max({radarTexWidth, radarTexHeight, 1});
@@ -178,8 +182,7 @@ bool resizeRadar()
 	}
 	debug(LOG_WZ, "Setting radar zoom to %u", RadarZoom);
 	radarSize(RadarZoom);
-	pie_SetRadar(-radarWidth / 2.0 - 1, -radarHeight / 2.0 - 1, radarWidth, radarHeight,
-	             radarTexWidth, radarTexHeight, rotateRadar || (RadarZoom % 16 != 0));
+	pie_SetRadar(-radarWidth / 2.0 - 1, -radarHeight / 2.0 - 1, radarWidth, radarHeight, radarTexWidth, radarTexHeight);
 	setViewingWindow();
 
 	return true;
@@ -189,15 +192,12 @@ bool ShutdownRadar()
 {
 	free(radarBuffer);
 	radarBuffer = nullptr;
+	frameSkip = 0;
 	return true;
 }
 
 void SetRadarZoom(uint8_t ZoomLevel)
 {
-	if (ZoomLevel < 4) // old savegame format didn't save zoom levels very well
-	{
-		ZoomLevel = DEFAULT_RADARZOOM;
-	}
 	if (ZoomLevel > MAX_RADARZOOM)
 	{
 		ZoomLevel = MAX_RADARZOOM;
@@ -253,8 +253,8 @@ void CalcRadarPosition(int mX, int mY, int *PosX, int *PosY)
 #endif
 
 	// old safety code -- still necessary?
-	sPosX = clip(sPosX, scrollMinX, scrollMaxX);
-	sPosY = clip(sPosY, scrollMinY, scrollMaxY);
+	sPosX = clip(sPosX, scrollMinX, scrollMaxX -1);
+	sPosY = clip(sPosY, scrollMinY, scrollMaxY -1);
 
 	*PosX = sPosX;
 	*PosY = sPosY;
@@ -280,17 +280,20 @@ void drawRadar()
 	}
 	frameSkip--;
 	pie_SetRendMode(REND_ALPHA);
-	glm::mat4 radarMatrix = glm::translate(radarCenterX, radarCenterY, 0);
+	glm::mat4 radarMatrix = glm::translate(glm::vec3(radarCenterX, radarCenterY, 0));
 	glm::mat4 orthoMatrix = glm::ortho(0.f, static_cast<float>(pie_GetVideoBufferWidth()), static_cast<float>(pie_GetVideoBufferHeight()), 0.f);
 	if (rotateRadar)
 	{
 		// rotate the map
 		radarMatrix *= glm::rotate(UNDEG(player.r.y), glm::vec3(0.f, 0.f, 1.f));
-		DrawNorth(orthoMatrix * radarMatrix);
+		if (radarRotationArrow)
+		{
+			DrawNorth(orthoMatrix * radarMatrix);
+		}
 	}
 
 	pie_RenderRadar(orthoMatrix * radarMatrix);
-	DrawRadarExtras(orthoMatrix * radarMatrix * glm::translate(-radarWidth / 2.f - 1.f, -radarHeight / 2.f - 1.f, 0.f));
+	DrawRadarExtras(orthoMatrix * radarMatrix * glm::translate(glm::vec3(-radarWidth / 2.f - 1.f, -radarHeight / 2.f - 1.f, 0.f)));
 	drawRadarBlips(-radarWidth / 2.0 - 1, -radarHeight / 2.0 - 1, pixSizeH, pixSizeV, orthoMatrix * radarMatrix);
 }
 
@@ -306,7 +309,7 @@ static PIELIGHT appliedRadarColour(RADAR_DRAW_MODE radarDrawMode, MAPTILE *WTile
 	// draw radar on/off feature
 	if (!getRevealStatus() && !TEST_TILE_VISIBLE(selectedPlayer, WTile))
 	{
-		return WZCOL_RADAR_BACKGROUND;
+		return WZCOL_TRANSPARENT_BOX;
 	}
 
 	switch (radarDrawMode)
@@ -463,7 +466,7 @@ static void DrawRadarObjects()
 				size_t	pos = (x - scrollMinX) + (y - scrollMinY) * radarTexWidth;
 
 				ASSERT(pos * sizeof(*radarBuffer) < radarBufferSize, "Buffer overrun");
-				if (clan == selectedPlayer && gameTime - psDroid->timeLastHit < HIT_NOTIFICATION)
+				if (clan == selectedPlayer && gameTime > HIT_NOTIFICATION && gameTime - psDroid->timeLastHit < HIT_NOTIFICATION)
 				{
 					radarBuffer[pos] = flashCol.rgba;
 				}
@@ -515,7 +518,7 @@ static void DrawRadarObjects()
 			    || (bMultiPlayer && alliancesSharedVision(game.alliance)
 			        && aiCheckAlliances(selectedPlayer, psStruct->player)))
 			{
-				if (clan == selectedPlayer && gameTime - psStruct->timeLastHit < HIT_NOTIFICATION)
+				if (clan == selectedPlayer && gameTime > HIT_NOTIFICATION && gameTime - psStruct->timeLastHit < HIT_NOTIFICATION)
 				{
 					radarBuffer[pos] = flashCol.rgba;
 				}
@@ -582,7 +585,7 @@ static SDWORD getLengthAdjust()
 static void setViewingWindow()
 {
 	float pixSizeH, pixSizeV;
-	Vector3i v[4], tv[4], centre;
+	Vector3i v[4] = {{0, 0, 0}}, tv[4] = {{0, 0, 0}}, centre = {0, 0, 0};
 	int	shortX, longX, yDrop, yDropVar;
 	int	dif = getDistanceAdjust();
 	int	dif2 = getLengthAdjust();

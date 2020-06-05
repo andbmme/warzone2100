@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -27,8 +27,11 @@
 #include "lib/framework/frame.h"
 #include "lib/ivis_opengl/piedef.h"
 #include "lib/ivis_opengl/textdraw.h"
-#include <QtCore/QRect>
-#include <QtCore/QObject>
+#include <vector>
+#include <functional>
+#include <string>
+#include "lib/framework/geometry.h"
+#include "lib/framework/wzstring.h"
 
 
 /* Forward definitions */
@@ -51,6 +54,20 @@ typedef void (*WIDGET_DISPLAY)(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 /* The optional user callback function */
 typedef void (*WIDGET_CALLBACK)(WIDGET *psWidget, W_CONTEXT *psContext);
 typedef void (*WIDGET_AUDIOCALLBACK)(int AudioID);
+
+/* The optional "calc layout" callback function, to support runtime layout recalculation */
+typedef std::function<void (WIDGET *psWidget, unsigned int oldScreenWidth, unsigned int oldScreenHeight, unsigned int newScreenWidth, unsigned int newScreenHeight)> WIDGET_CALCLAYOUT_FUNC;
+
+// To avoid typing, use the following define to construct a lambda for WIDGET_CALCLAYOUT_FUNC
+// psWidget is the widget
+// The { } are still required (for clarity).
+#define LAMBDA_CALCLAYOUT_SIMPLE(x) [](WIDGET *psWidget, unsigned int, unsigned int, unsigned int, unsigned int) x
+
+/* The optional "onDelete" callback function */
+typedef std::function<void (WIDGET *psWidget)> WIDGET_ONDELETE_FUNC;
+
+/* The optional hit-testing function, used for custom hit-testing within the outer bounding rectangle */
+typedef std::function<bool (WIDGET *psWidget, int x, int y)> WIDGET_HITTEST_FUNC;
 
 
 /* The different base types of widget */
@@ -78,10 +95,20 @@ enum
 	WIDG_HIDDEN = 0x8000,  ///< The widget is initially hidden
 };
 
-/* The base widget data type */
-class WIDGET : public QObject
+// Possible states for a button or clickform.
+enum ButtonState
 {
-	Q_OBJECT
+	WBUT_DISABLE   = 0x01,  ///< Disable (grey out) a button.
+	WBUT_LOCK      = 0x02,  ///< Fix a button down.
+	WBUT_CLICKLOCK = 0x04,  ///< Fix a button down but it is still clickable.
+	WBUT_FLASH     = 0x08,  ///< Make a button flash.
+	WBUT_DOWN      = 0x10,  ///< Button is down.
+	WBUT_HIGHLIGHT = 0x20,  ///< Button is highlighted.
+};
+
+/* The base widget data type */
+class WIDGET
+{
 
 public:
 	typedef std::vector<WIDGET *> Children;
@@ -105,13 +132,17 @@ protected:
 	virtual void display(int, int) {}
 	virtual void geometryChanged() {}
 
+	virtual bool hitTest(int x, int y);
+
 public:
 	virtual unsigned getState();
 	virtual void setState(unsigned state);
 	virtual void setFlash(bool enable);
-	virtual QString getString() const;
-	virtual void setString(QString string);
-	virtual void setTip(QString string);
+	virtual WzString getString() const;
+	virtual void setString(WzString string);
+	virtual void setTip(std::string string);
+
+	virtual void screenSizeDidChange(int oldWidth, int oldHeight, int newWidth, int newHeight); // used to handle screen resizing
 
 	void show(bool doShow = true)
 	{
@@ -126,13 +157,9 @@ public:
 		return (style & WIDG_HIDDEN) == 0;
 	}
 
-	void setString(char const *stringUtf8)
-	{
-		setString(QString::fromUtf8(stringUtf8));
-	}
 	void setTip(char const *stringUtf8)
 	{
-		setTip(QString::fromUtf8(stringUtf8));
+		setTip((stringUtf8 != nullptr) ? std::string(stringUtf8) : std::string());
 	}
 
 	WIDGET *parent()
@@ -143,7 +170,7 @@ public:
 	{
 		return childWidgets;
 	}
-	QRect const &geometry() const
+	WzRect const &geometry() const
 	{
 		return dim;
 	}
@@ -165,16 +192,23 @@ public:
 	}
 	void move(int x, int y)
 	{
-		setGeometry(QRect(x, y, width(), height()));
+		setGeometry(WzRect(x, y, width(), height()));
 	}
 	void setGeometry(int x, int y, int w, int h)
 	{
-		setGeometry(QRect(x, y, w, h));
+		setGeometry(WzRect(x, y, w, h));
 	}
-	void setGeometry(QRect const &r);
+	void setGeometry(WzRect const &r);
 
 	void attach(WIDGET *widget);
 	void detach(WIDGET *widget);
+
+	void setCalcLayout(const WIDGET_CALCLAYOUT_FUNC& calcLayoutFunc);
+	void callCalcLayout();
+
+	void setOnDelete(const WIDGET_ONDELETE_FUNC& onDeleteFunc);
+
+	void setCustomHitTest(const WIDGET_HITTEST_FUNC& newCustomHitTestFunc);
 
 	UDWORD                  id;                     ///< The user set ID number for the widget. This is returned when e.g. a button is pressed.
 	WIDGET_TYPE             type;                   ///< The widget type
@@ -186,9 +220,12 @@ public:
 	W_SCREEN               *screenPointer;          ///< Pointer to screen the widget is on (if attached).
 
 private:
+	WIDGET_CALCLAYOUT_FUNC  calcLayout;				///< Optional calc layout callback
+	WIDGET_ONDELETE_FUNC	onDelete;				///< Optional callback called when the Widget is about to be deleted
+	WIDGET_HITTEST_FUNC		customHitTest;			///< Optional hit-testing custom function
 	void setScreenPointer(W_SCREEN *screen);        ///< Set screen pointer for us and all children.
 public:
-	void processClickRecursive(W_CONTEXT *psContext, WIDGET_KEY key, bool wasPressed);
+	bool processClickRecursive(W_CONTEXT *psContext, WIDGET_KEY key, bool wasPressed);
 	void runRecursive(W_CONTEXT *psContext);
 	void processCallbacksRecursive(W_CONTEXT *psContext);
 	void displayRecursive(int xOffset, int yOffset);  ///< Display this widget, and all visible children.
@@ -197,13 +234,15 @@ private:
 	WIDGET                 *parentWidget;           ///< Parent widget.
 	std::vector<WIDGET *>   childWidgets;           ///< Child widgets. Will be deleted if we are deleted.
 
-	QRect                   dim;
+	WzRect                  dim;
 
 	WIDGET(WIDGET const &) = delete;
 	WIDGET &operator =(WIDGET const &) = delete;
 
 public:
 	bool dirty; ///< Whether widget is changed and needs to be redrawn
+public:
+	friend bool isMouseOverScreenOverlayChild(int mx, int my);
 };
 
 
@@ -221,6 +260,7 @@ struct W_SCREEN
 
 	void setFocus(WIDGET *widget);  ///< Sets psFocus, notifying the old widget, if any.
 	void setReturn(WIDGET *psWidget);  ///< Adds psWidget to retWidgets.
+	void screenSizeDidChange(unsigned int oldWidth, unsigned int oldHeight, unsigned int newWidth, unsigned int newHeight); // used to handle screen resizing
 
 	W_FORM          *psForm;        ///< The root form of the screen
 	WIDGET          *psFocus;       ///< The widget that has keyboard focus

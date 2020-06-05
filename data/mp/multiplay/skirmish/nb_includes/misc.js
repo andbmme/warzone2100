@@ -4,6 +4,7 @@
  *
  */
 
+const gateways = enumGateways();
 var baseLocation = startPositions[me];
 
 function distanceToBase(loc) {
@@ -53,4 +54,13 @@ function enumTrucks() {
 
 function goEasy() {
 	personality = randomItem(subpersonalities);
+}
+
+function areThereGW() {
+	function uncached() {	//should only need to be evaluated once at the start
+		if(gateways.length > 0)
+			return true;
+		return false;
+	}
+	return cached(uncached, Infinity);
 }

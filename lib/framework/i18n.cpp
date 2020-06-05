@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -18,8 +18,11 @@
 */
 #include "frame.h"
 
+#include <sstream>
+
 #include <locale.h>
 #include <physfs.h>
+#include "wzpaths.h"
 
 #ifdef WZ_OS_MAC
 # include <CoreFoundation/CoreFoundation.h>
@@ -51,7 +54,7 @@
 #define LANG_NAME_DANISH "Dansk"
 #define LANG_NAME_DUTCH "Nederlands"
 #define LANG_NAME_ENGLISH "English"
-#define LANG_NAME_ENGLISH_UK "English (United Kingdom)"
+#define LANG_NAME_ENGLISH_UK "British English"
 #define LANG_NAME_ESTONIAN "Eesti Keel"
 #define LANG_NAME_FINNISH "suomi"
 #define LANG_NAME_FRENCH "Français"
@@ -208,6 +211,7 @@ static const struct
 
 static unsigned int selectedLanguage = 0;
 
+static char *compileDate = nullptr;
 
 /*!
  * Return the language part of the selected locale
@@ -318,11 +322,43 @@ static bool setLocaleWindows(USHORT usPrimaryLanguage, USHORT usSubLanguage)
  */
 static bool setLocaleUnix(const char *locale)
 {
+#ifdef WZ_OS_MAC
+	// Set the appropriate language environment variable *before* the call to libintl's `setlocale`.
+
+	// First, check if LC_ALL or LC_MESSAGES is set, as these may override LANG
+	const char *pEnvLang = getenv("LC_ALL");
+	if ((pEnvLang != nullptr) && (pEnvLang[0] != '\0'))
+	{
+		debug(LOG_WARNING, "Environment variable \"LC_ALL\" is set, and may override runtime language changes.");
+	}
+	pEnvLang = getenv("LC_MESSAGES");
+	if ((pEnvLang != nullptr) && (pEnvLang[0] != '\0'))
+	{
+		debug(LOG_WARNING, "Environment variable \"LC_MESSAGES\" is set, and may override runtime language changes.");
+	}
+
+	// Set the LANG env-var (temporarily saving the old value)
+	pEnvLang = getenv("LANG");
+	std::string prior_LANG((pEnvLang != nullptr) ? pEnvLang : "");
+#  if defined HAVE_SETENV
+	setenv("LANG", locale, 1);
+#  else
+	# warning "No supported method to set environment variables"
+#  endif
+#endif // (ifdef WZ_OS_MAC)
+
 	const char *actualLocale = setlocale(LC_ALL, locale);
 
 	if (actualLocale == NULL)
 	{
 		info("Failed to set locale to \"%s\"", locale);
+#ifdef WZ_OS_MAC
+#  if defined HAVE_SETENV
+		setenv("LANG", prior_LANG.c_str(), 1);
+#  else
+		# warning "No supported method to set environment variables"
+#  endif
+#endif
 	}
 	else
 	{
@@ -332,7 +368,8 @@ static bool setLocaleUnix(const char *locale)
 		}
 	}
 
-	setlocale(LC_NUMERIC, "C"); // set radix character to the period (".")
+	const char * numericLocale = setlocale(LC_NUMERIC, "C"); // set radix character to the period (".")
+	debug(LOG_WZ, "LC_NUMERIC: \"%s\"", (numericLocale != nullptr) ? numericLocale : "<null>");
 
 	return (actualLocale != NULL);
 }
@@ -389,17 +426,6 @@ void initI18n()
 		// no system default?
 		debug(LOG_ERROR, "initI18n: No system language found");
 	}
-#if defined(WZ_OS_WIN)
-	{
-		// Retrieve an absolute path to the locale directory
-		char localeDir[PATH_MAX];
-		sstrcpy(localeDir, PHYSFS_getBaseDir());
-		sstrcat(localeDir, "\\" LOCALEDIR);
-
-		// Set locale directory and translation domain name
-		textdomainDirectory = bindtextdomain(PACKAGE, localeDir);
-	}
-#else
 #ifdef WZ_OS_MAC
 	{
 		char resourcePath[PATH_MAX];
@@ -422,9 +448,23 @@ void initI18n()
 		debug(LOG_INFO, "resourcePath is %s", resourcePath);
 	}
 #else
+# ifdef WZ_LOCALEDIR
+	// New locale-dir setup (CMake)
+	#ifndef WZ_LOCALEDIR_ISABSOLUTE
+	// Treat WZ_LOCALEDIR as a relative path - append to the install PREFIX
+	const std::string prefixDir = getWZInstallPrefix();
+	const std::string dirSeparator(PHYSFS_getDirSeparator());
+	std::string localeDir = prefixDir + dirSeparator + WZ_LOCALEDIR;
+	textdomainDirectory = bindtextdomain(PACKAGE, localeDir.c_str());
+	#else
+	// Treat WZ_LOCALEDIR as an absolute path, and use directly
+	textdomainDirectory = bindtextdomain(PACKAGE, WZ_LOCALEDIR);
+	#endif
+# else
+	// Old locale-dir setup (autotools)
 	textdomainDirectory = bindtextdomain(PACKAGE, LOCALEDIR);
-#endif
-#endif
+# endif
+#endif // ifdef WZ_OS_MAC
 	if (!textdomainDirectory)
 	{
 		debug(LOG_ERROR, "initI18n: bindtextdomain failed!");
@@ -432,4 +472,32 @@ void initI18n()
 
 	(void)bind_textdomain_codeset(PACKAGE, "UTF-8");
 	(void)textdomain(PACKAGE);
+}
+
+// convert macro __DATE__ to ISO 8601 format
+const char *getCompileDate()
+{
+	if (compileDate == nullptr)
+	{
+		std::istringstream date(__DATE__);
+		std::string monthName;
+		int day = 0, month = 0, year = 0;
+		date >> monthName >> day >> year;
+
+		std::string monthNames[] = {
+						"Jan", "Feb", "Mar", "Apr",
+						"May", "Jun", "Jul", "Aug",
+						"Sep", "Oct", "Nov", "Dec"
+		                           };
+		for (int i = 0; i < 12; i++)
+		{
+			if (monthNames[i] == monthName)
+			{
+				month = i + 1;
+				break;
+			}
+		}
+		asprintfNull(&compileDate, "%04d-%02d-%02d", year, month, day);
+	}
+	return compileDate;
 }

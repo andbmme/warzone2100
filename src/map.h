@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -51,9 +51,12 @@ enum TYPE_OF_TERRAIN
 	TER_MAX,
 };
 
-#define TILESET_ARIZONA 0
-#define TILESET_URBAN	1
-#define TILESET_ROCKIES 2
+enum MAP_TILESET_TYPE
+{
+	TILESET_ARIZONA = 0,
+	TILESET_URBAN = 1,
+	TILESET_ROCKIES = 2
+};
 
 #define TALLOBJECT_YMAX		(200)
 #define TALLOBJECT_ADJUST	(300)
@@ -76,11 +79,11 @@ static inline unsigned short TileNumber_texture(unsigned short tilenumber)
 	return tilenumber & ~TILE_NUMMASK;
 }
 
-#define BITS_MARKED		0x01	///< Is this tile marked?
-#define BITS_DECAL		0x02	///< Does this tile has a decal? If so, the tile from "texture" is drawn on top of the terrain.
-#define BITS_FPATHBLOCK		0x10	///< Bit set temporarily by find path to mark a blocking tile
+#define BITS_MARKED             0x01    ///< Is this tile marked?
+#define BITS_DECAL              0x02    ///< Does this tile has a decal? If so, the tile from "texture" is drawn on top of the terrain.
+#define BITS_FPATHBLOCK         0x10    ///< Bit set temporarily by find path to mark a blocking tile
 #define BITS_ON_FIRE            0x20    ///< Whether tile is burning
-#define BITS_GATEWAY		0x40	///< Bit set to show a gateway on the tile
+#define BITS_GATEWAY            0x40    ///< Bit set to show a gateway on the tile
 
 struct GROUND_TYPE
 {
@@ -91,24 +94,24 @@ struct GROUND_TYPE
 /* Information stored with each tile */
 struct MAPTILE
 {
-	uint8_t			tileInfoBits;
-	PlayerMask              tileExploredBits;
-	PlayerMask              sensorBits;             ///< bit per player, who can see tile with sensor
-	uint8_t			illumination;	// How bright is this tile?
-	uint8_t			watchers[MAX_PLAYERS];		// player sees through fog of war here with this many objects
-	uint16_t		texture;		// Which graphics texture is on this tile
-	int32_t                 height;                 ///< The height at the top left of the tile
-	float                   level;                  ///< The visibility level of the top left of the tile, for this client.
-	BASE_OBJECT		*psObject;		// Any object sitting on the location (e.g. building)
-	PIELIGHT		colour;
-	uint16_t		limitedContinent;	///< For land or sea limited propulsion types
-	uint16_t		hoverContinent;		///< For hover type propulsions
-	uint8_t			ground;			///< The ground type used for the terrain renderer
-	uint16_t                fireEndTime;            ///< The (uint16_t)(gameTime / GAME_TICKS_PER_UPDATE) that BITS_ON_FIRE should be cleared.
-	int32_t                 waterLevel;             ///< At what height is the water for this tile
-	PlayerMask		jammerBits;             ///< bit per player, who is jamming tile
-	uint8_t                 sensors[MAX_PLAYERS];   ///< player sees this tile with this many radar sensors
-	uint8_t                 jammers[MAX_PLAYERS];   ///< player jams the tile with this many objects
+	uint8_t         tileInfoBits;
+	PlayerMask      tileExploredBits;
+	PlayerMask      sensorBits;             ///< bit per player, who can see tile with sensor
+	uint8_t         illumination;           // How bright is this tile?
+	uint8_t         watchers[MAX_PLAYERS];  // player sees through fog of war here with this many objects
+	uint16_t        texture;                // Which graphics texture is on this tile
+	int32_t         height;                 ///< The height at the top left of the tile
+	float           level;                  ///< The visibility level of the top left of the tile, for this client.
+	BASE_OBJECT *   psObject;               // Any object sitting on the location (e.g. building)
+	PIELIGHT        colour;
+	uint16_t        limitedContinent;       ///< For land or sea limited propulsion types
+	uint16_t        hoverContinent;         ///< For hover type propulsions
+	uint8_t         ground;                 ///< The ground type used for the terrain renderer
+	uint16_t        fireEndTime;            ///< The (uint16_t)(gameTime / GAME_TICKS_PER_UPDATE) that BITS_ON_FIRE should be cleared.
+	int32_t         waterLevel;             ///< At what height is the water for this tile
+	PlayerMask      jammerBits;             ///< bit per player, who is jamming tile
+	uint8_t         sensors[MAX_PLAYERS];   ///< player sees this tile with this many radar sensors
+	uint8_t         jammers[MAX_PLAYERS];   ///< player jams the tile with this many objects
 };
 
 /* The size and contents of the map */

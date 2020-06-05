@@ -3,9 +3,12 @@
 # We need to be in the working copy's root directory
 cd "`dirname "$0"`/.."
 
+export LC_ALL=C
+export LC_COLLATE=C
+
 find data -name '*.json' -type f '-!' -path 'data/mp/multiplay/maps/*' -exec \
 	python3 po/parseJson.py '{}' ';' |
-	sort | uniq > po/custom/fromJson.txt
+	python3 po/aggregateParsedJson.py > po/custom/fromJson.txt
 
 # Add the comment to the top of the file
 cat > po/POTFILES.in << EOF

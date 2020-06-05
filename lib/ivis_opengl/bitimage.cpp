@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -27,11 +27,11 @@
 
 #include <set>
 #include <algorithm>
-#include <QtCore/QHash>
-#include <QtCore/QString>
+#include <unordered_map>
+#include <vector>
 
-static QHash<QString, ImageDef *> images;
-static QList<IMAGEFILE *> files;
+static std::unordered_map<WzString, ImageDef *> images;
+static std::vector<IMAGEFILE *> files;
 
 struct ImageMergeRectangle
 {
@@ -50,7 +50,7 @@ struct ImageMergeRectangle
 
 	int index;  // Index in ImageDefs array.
 	int page;   // Texture page index.
-	Vector2i loc, siz;
+	Vector2i loc = Vector2i(0, 0), siz = Vector2i(0, 0);
 	iV_Image *data;
 };
 
@@ -64,14 +64,32 @@ struct ImageMerge
 	std::vector<int> pages;  // List of page sizes, normally all pageSize, unless an image is too large for a normal page.
 };
 
-ImageDef *iV_GetImage(const QString &filename)
+ImageDef *iV_GetImage(const WzString &filename)
 {
-	if (!images.contains(filename))
+	auto it = images.find(filename);
+	if (it == images.end())
 	{
-		debug(LOG_ERROR, "%s not found in image list!", filename.toUtf8().constData());
+		debug(LOG_ERROR, "%s not found in image list!", filename.toUtf8().c_str());
 		return nullptr;
 	}
-	return images.value(filename);
+	return it->second;
+}
+
+// Used to provide empty space between sprites arranged on the page, to avoid display glitches when scaling + drawing
+#define SPRITE_BUFFER_PIXELS 1
+
+void checkRect(const ImageMergeRectangle& rect, const int pageSize)
+{
+	if ((rect.loc.x + rect.siz.x) > pageSize)
+	{
+		debug(LOG_ERROR, "Merge rectangle bounds extend outside of pageSize bounds: %d > %d", (rect.loc.x + rect.siz.x), pageSize);
+	}
+	if ((rect.loc.y + rect.siz.y) > pageSize)
+	{
+		debug(LOG_ERROR, "Merge rectangle bounds extend outside of pageSize bounds: %d > %d", (rect.loc.y + rect.siz.y), pageSize);
+	}
+	assert(rect.loc.x >= 0);
+	assert(rect.loc.y >= 0);
 }
 
 inline void ImageMerge::arrange()
@@ -112,10 +130,10 @@ inline void ImageMerge::arrange()
 		ImageMergeRectangle spDown;
 		spRight.page = f->page;
 		spDown.page  = f->page;
-		spRight.loc = f->loc + Vector2i(r->siz.x, 0);
-		spDown.loc  = f->loc + Vector2i(0, r->siz.y);
-		spRight.siz = Vector2i(f->siz.x - r->siz.x, r->siz.y);
-		spDown.siz  = Vector2i(r->siz.x, f->siz.y - r->siz.y);
+		spRight.loc = f->loc + Vector2i(r->siz.x + SPRITE_BUFFER_PIXELS, 0);
+		spDown.loc  = f->loc + Vector2i(0, r->siz.y + SPRITE_BUFFER_PIXELS);
+		spRight.siz = Vector2i(f->siz.x - (r->siz.x + SPRITE_BUFFER_PIXELS), r->siz.y);
+		spDown.siz  = Vector2i(r->siz.x, f->siz.y - (r->siz.y + SPRITE_BUFFER_PIXELS));
 		if (spRight.siz.x <= spDown.siz.y)
 		{
 			// Split horizontally.
@@ -126,6 +144,8 @@ inline void ImageMerge::arrange()
 			// Split vertically.
 			spRight.siz.y = f->siz.y;
 		}
+		checkRect(spDown, pages.at(spDown.page));
+		checkRect(spRight, pages.at(spRight.page));
 		if (spRight.siz.x > 0 && spRight.siz.y > 0)
 		{
 			freeSpace.insert(spRight);
@@ -183,6 +203,7 @@ IMAGEFILE *iV_LoadImageFile(const char *fileName)
 		{
 			debug(LOG_ERROR, "Bad line in \"%s\".", fileName);
 			delete imageFile;
+			free(pFileData);
 			return nullptr;
 		}
 		imageFile->imageNames[numImages].first = tmpName;
@@ -196,6 +217,7 @@ IMAGEFILE *iV_LoadImageFile(const char *fileName)
 		{
 			debug(LOG_ERROR, "Failed to find image \"%s\" listed in \"%s\".", spriteName.c_str(), fileName);
 			delete imageFile;
+			free(pFileData);
 			return nullptr;
 		}
 		imageRect->siz = Vector2i(imageRect->data->width, imageRect->data->height);
@@ -203,7 +225,7 @@ IMAGEFILE *iV_LoadImageFile(const char *fileName)
 		ptr += temp;
 		while (ptr < pFileData + pFileSize && *ptr++ != '\n') {} // skip rest of line
 
-		images.insert(tmpName, ImageDef);
+		images.insert(std::make_pair(WzString::fromUtf8(tmpName), ImageDef));
 	}
 	free(pFileData);
 
@@ -288,7 +310,7 @@ IMAGEFILE *iV_LoadImageFile(const char *fileName)
 		imageFile->imageDefs[i].invTextureSize = 1.f / imageFile->pages[imageFile->imageDefs[i].TPageID].size;
 	}
 
-	files.append(imageFile);
+	files.push_back(imageFile);
 
 	return imageFile;
 }
@@ -304,7 +326,7 @@ void iV_FreeImageFile(IMAGEFILE *imageFile)
 Image IMAGEFILE::find(std::string const &name)
 {
 	std::pair<std::string, int> val(name, 0);
-	std::vector<std::pair<std::string, int> >::const_iterator i = std::lower_bound(imageNames.begin(), imageNames.end(), val);
+	std::vector<std::pair<std::string, int>>::const_iterator i = std::lower_bound(imageNames.begin(), imageNames.end(), val);
 	if (i != imageNames.end() && i->first == name)
 	{
 		return Image(this, i->second);

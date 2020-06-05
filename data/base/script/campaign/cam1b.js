@@ -2,12 +2,12 @@
 include("script/campaign/libcampaign.js");
 include("script/campaign/templates.js");
 
-var NPScout; // Sensor scout (initialized when droid is created)
+var NPScout; // Sensor scout
 
 camAreaEvent("AttackArea1", function(droid)
 {
-	queue("camCallOnce", 2000, "doNPRetreat");
-	camManageGroup(camMakeGroup("enemy1Force1", 6), CAM_ORDER_ATTACK, {
+	queue("camCallOnce", camSecondsToMilliseconds(2), "doNPRetreat");
+	camManageGroup(camMakeGroup("enemy1Force1", SCAV_6), CAM_ORDER_ATTACK, {
 		pos: camMakePos("enemy1Force1Pos"),
 		fallback: camMakePos("enemy1Force1Fallback"),
 		morale: 50
@@ -15,14 +15,14 @@ camAreaEvent("AttackArea1", function(droid)
 	// pink factory
 	camEnableFactory("base1factory");
 	// sic! hill factory
-	with (camTemplates) camSetFactoryData("base2factory", {
+	camSetFactoryData("base2factory", {
  		assembly: "assembly2",
 		order: CAM_ORDER_ATTACK,  // changes
 		data: { pos: "playerBase" }, // changes
 		groupSize: 10, // changes
 		maxSize: 10,
-		throttle: camChangeOnDiff(40000),
-		templates: [ trike, bloke, buggy, bloke, ] // changes
+		throttle: camChangeOnDiff(camSecondsToMilliseconds(25)),
+		templates: [ cTempl.trike, cTempl.bloke, cTempl.buggy, cTempl.bloke, ] // changes
 	});
 	camEnableFactory("base2factory"); // re-enable
 });
@@ -75,13 +75,10 @@ function eventStartLevel()
 	centreView(startpos.x, startpos.y);
 	setNoGoArea(lz.x, lz.y, lz.x2, lz.y2, CAM_HUMAN_PLAYER);
 
-	setMissionTime(camChangeOnDiff(3600));
-	setAlliance(NEW_PARADIGM, 6, true);
-	setAlliance(NEW_PARADIGM, 7, true);
-	setAlliance(6, 7, true);
-
-	setPower(AI_POWER, 6);
-	setPower(AI_POWER, 7);
+	setMissionTime(camChangeOnDiff(camHoursToSeconds(1)));
+	setAlliance(NEW_PARADIGM, SCAV_6, true);
+	setAlliance(NEW_PARADIGM, SCAV_7, true);
+	setAlliance(SCAV_6, SCAV_7, true);
 
 	camSetArtifacts({
 		"base1factory": { tech: "R-Wpn-Flamer-Damage01" },
@@ -120,28 +117,28 @@ function eventStartLevel()
 	camPlayVideos("MB1B_MSG");
 	camDetectEnemyBase("base4group"); // power surge detected
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"base1factory": {
 			assembly: "assembly1",
 			order: CAM_ORDER_ATTACK,
 			data: { pos: "playerBase" },
 			groupSize: 6,
 			maxSize: 6,
-			throttle: camChangeOnDiff(40000),
-			templates: [ trike, bloke, buggy, bloke ]
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(25)),
+			templates: [ cTempl.trike, cTempl.bloke, cTempl.buggy, cTempl.bloke ]
 		},
 		"base2factory": { // the hill harass factory
 			assembly: "assembly2",
 			order: CAM_ORDER_PATROL, // will override later
 			data: { // will override later
 				pos: [ "patrol1", "patrol2", "patrol3", "patrol4" ],
-				interval: 20000
+				interval: camSecondsToMilliseconds(20)
 			},
 			group: camMakeGroup("hillForce"), // will override later
 			groupSize: 4, // will override later
 			maxSize: 10,
-			throttle: camChangeOnDiff(40000),
-			templates: [ bloke ] // will override later
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(25)),
+			templates: [ cTempl.bloke ] // will override later
 		},
 		"base4factory": {
 			assembly: "assembly4",
@@ -149,19 +146,18 @@ function eventStartLevel()
 			data: { pos: "playerBase" },
  			groupSize: 8,
 			maxSize: 8,
-			throttle: camChangeOnDiff(40000),
-			templates: [ trike, bloke, buggy, bjeep ]
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(25)),
+			templates: [ cTempl.trike, cTempl.bloke, cTempl.buggy, cTempl.bjeep ]
 		},
 	});
 	camEnableFactory("base2factory");
 
 	//Timed attacks if player dawdles
-	queue("eventAreaAttackArea2", camChangeOnDiff(360000));
+	queue("eventAreaAttackArea2", camChangeOnDiff(camMinutesToMilliseconds(6)));
 
-	// New Paradigm sensor scout
-	var pos = getObject("NPSensorAppear");
-	NPScout = addDroid(NEW_PARADIGM, pos.x, pos.y, "Scout",
-	                   "Body4ABT", "wheeled01", 0, 0, "SensorTurret1Mk1");
-	pos = getObject("NPSensorWatch");
+	// New Paradigm sensor scout. Now comes with the map!
+	NPScout = getObject("npscout");
+	camNeverGroupDroid(NPScout);
+	var pos = getObject("NPSensorWatch");
 	orderDroidLoc(NPScout, DORDER_MOVE, pos.x, pos.y);
 }

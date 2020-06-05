@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
 #define __INCLUDED_SRC_FEATURE_H__
 
 #include "objectdef.h"
+#include "lib/framework/wzconfig.h"
 
 /* The statistics for the features */
 extern FEATURE_STATS	*asFeatureStats;
@@ -34,7 +35,7 @@ extern UDWORD			numFeatureStats;
 extern FEATURE_STATS *oilResFeature;
 
 /* Load the feature stats */
-bool loadFeatureStats(const char *pFileName);
+bool loadFeatureStats(WzConfig &ini);
 
 /* Release the feature stats memory */
 void featureStatsShutDown();
@@ -52,13 +53,12 @@ bool removeFeature(FEATURE *psDel);
 bool destroyFeature(FEATURE *psDel, unsigned impactTime);
 
 /* get a feature stat id from its name */
-SDWORD getFeatureStatFromName(const char *pName);
+SDWORD getFeatureStatFromName(const WzString &name);
 
 int32_t featureDamage(FEATURE *psFeature, unsigned damage, WEAPON_CLASS weaponClass, WEAPON_SUBCLASS weaponSubClass, unsigned impactTime, bool isDamagePerSecond, int minDamage);
 
 void featureInitVars();
 
-Vector2i getFeatureStatsSize(FEATURE_STATS const *pStructureType);
 StructureBounds getStructureBounds(FEATURE const *object);
 StructureBounds getStructureBounds(FEATURE_STATS const *stats, Vector2i pos);
 

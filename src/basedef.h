@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -87,12 +87,12 @@ struct SIMPLE_OBJECT
 	virtual ~SIMPLE_OBJECT();
 
 	const OBJECT_TYPE type;                         ///< The type of object
-	UDWORD          id;                             ///< ID number of the object
-	Position        pos;                            ///< Position of the object
+	uint32_t        id;                             ///< ID number of the object
+	Position        pos = Position(0, 0, 0);        ///< Position of the object
 	Rotation        rot;                            ///< Object's yaw +ve rotation around up-axis
-	UBYTE           player;                         ///< Which player the object belongs to
-	UDWORD          born;                           ///< Time the game object was born
-	UDWORD          died;                           ///< When an object was destroyed, if 0 still alive
+	uint8_t         player;                         ///< Which player the object belongs to
+	uint32_t        born;                           ///< Time the game object was born
+	uint32_t        died;                           ///< When an object was destroyed, if 0 still alive
 	uint32_t        time;                           ///< Game time of given space-time position.
 };
 
@@ -113,9 +113,8 @@ struct BASE_OBJECT : public SIMPLE_OBJECT
 	~BASE_OBJECT();
 
 	SCREEN_DISP_DATA    sDisplay;                   ///< screen coordinate details
-	UBYTE               group;                      ///< Which group selection is the droid currently in?
+	UBYTE               group = 0;                  ///< Which group selection is the droid currently in?
 	UBYTE               selected;                   ///< Whether the object is selected (might want this elsewhere)
-	UBYTE               cluster;                    ///< Which cluster the object is a member of
 	UBYTE               visible[MAX_PLAYERS];       ///< Whether object is visible to specific player
 	UBYTE               seenThisTick[MAX_PLAYERS];  ///< Whether object has been seen this tick by the specific player.
 	UWORD               numWatchedTiles;            ///< Number of watched tiles, zero for features
@@ -142,13 +141,12 @@ struct BASE_OBJECT : public SIMPLE_OBJECT
 /// Space-time coordinate, including orientation.
 struct Spacetime
 {
-	Spacetime() : time(0), pos(0, 0, 0), rot(0, 0, 0) {}
+	Spacetime() {}
 	Spacetime(Position pos_, Rotation rot_, uint32_t time_) : time(time_), pos(pos_), rot(rot_) {}
 
-	uint32_t  time;        ///< Game time
-
-	Position  pos;         ///< Position of the object
-	Rotation  rot;         ///< Rotation of the object
+	uint32_t time = 0;                  ///< Game time
+	Position pos = Position(0, 0, 0);   ///< Position of the object
+	Rotation rot;                       ///< Rotation of the object
 };
 
 static inline Spacetime getSpacetime(SIMPLE_OBJECT const *psObj)
@@ -170,8 +168,8 @@ static inline bool isDead(const BASE_OBJECT *psObj)
 
 static inline int objPosDiffSq(Position pos1, Position pos2)
 {
-	const Vector2i diff = (pos1 - pos2).xy;
-	return diff * diff;
+	const Vector2i diff = (pos1 - pos2).xy();
+	return dot(diff, diff);
 }
 
 static inline int objPosDiffSq(SIMPLE_OBJECT const *pos1, SIMPLE_OBJECT const *pos2)

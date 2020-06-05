@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -33,6 +33,11 @@
 #include "loop.h"
 #include "map.h"
 #include "miscimd.h"
+
+#ifndef GLM_ENABLE_EXPERIMENTAL
+	#define GLM_ENABLE_EXPERIMENTAL
+#endif
+#include <glm/gtx/transform.hpp>
 
 // -----------------------------------------------------------------------------
 // -----------------------------------------------------------------------------
@@ -305,8 +310,8 @@ void atmosDrawParticles(const glm::mat4 &viewMatrix)
 		/* Don't bother unless it's active */
 		if (asAtmosParts[i].status == APS_ACTIVE)
 		{
-			/* Is it on the grid */
-			if (clipXY(asAtmosParts[i].position.x, asAtmosParts[i].position.z))
+			/* Is it visible on the screen? */
+			if (clipXYZ(asAtmosParts[i].position.x, asAtmosParts[i].position.z, asAtmosParts[i].position.y, viewMatrix))
 			{
 				renderParticle(&asAtmosParts[i], viewMatrix);
 			}
@@ -324,10 +329,10 @@ void renderParticle(ATPART *psPart, const glm::mat4 &viewMatrix)
 	dv.z = -(psPart->position.z - player.p.z);
 	/* Make it face camera */
 	/* Scale it... */
-	const glm::mat4 modelMatrix = glm::translate(dv) *
+	const glm::mat4 modelMatrix = glm::translate(glm::vec3(dv)) *
 		glm::rotate(UNDEG(-player.r.y), glm::vec3(0.f, 1.f, 0.f)) *
 		glm::rotate(UNDEG(-player.r.x), glm::vec3(0.f, 1.f, 0.f)) *
-		glm::scale(psPart->size / 100.f, psPart->size / 100.f, psPart->size / 100.f);
+		glm::scale(glm::vec3(psPart->size / 100.f));
 	pie_Draw3DShape(psPart->imd, 0, 0, WZCOL_WHITE, 0, 0, viewMatrix * modelMatrix);
 	/* Draw it... */
 }

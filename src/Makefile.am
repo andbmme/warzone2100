@@ -1,6 +1,6 @@
-AM_CPPFLAGS = -DYY_NO_INPUT $(SDL_CFLAGS) $(PHYSFS_CFLAGS) $(PNG_CFLAGS) $(VORBISFILE_CFLAGS) $(VORBIS_CFLAGS) $(OPENAL_CFLAGS) $(FONT_CFLAGS) $(OPENGL_CFLAGS) $(WZ_CPPFLAGS) $(GLEW_CFLAGS)
+AM_CPPFLAGS = -DYY_NO_INPUT $(SDL_CFLAGS) $(PHYSFS_CFLAGS) $(PNG_CFLAGS) $(VORBISFILE_CFLAGS) $(VORBIS_CFLAGS) $(OPENAL_CFLAGS) $(FONT_CFLAGS) $(OPENGL_CFLAGS) $(WZ_CPPFLAGS) $(GLEW_CFLAGS) $(LIBCURL_CPPFLAGS) $(LIBSODIUM_CFLAGS)
 AM_CFLAGS = $(WZ_CFLAGS)
-AM_CXXFLAGS = $(WZ_CXXFLAGS) $(QT5_CFLAGS)
+AM_CXXFLAGS = $(WZ_CXXFLAGS) $(QT5_CFLAGS) $(LIBSODIUM_CFLAGS)
 
 # Here, we need to set "plugins" for Qt5 to be static
 # FIXME: At a future date, we should check if they want static builds, but, since we only support those for now...
@@ -11,7 +11,6 @@ AM_CXXFLAGS += -DQT_STATICPLUGIN
 endif
 
 MOCHEADER = \
-	multiint.h \
 	qtscriptdebug.h
 MOCEDFILES = $(MOCHEADER:%.h=%_moc.cpp)
 
@@ -43,8 +42,10 @@ bin_PROGRAMS = warzone2100
 endif
 
 noinst_HEADERS = \
+	3rdparty/propertymatcher.h \
 	action.h \
 	actiondef.h \
+	activity.h \
 	advvis.h \
 	ai.h \
 	astar.h \
@@ -55,7 +56,6 @@ noinst_HEADERS = \
 	cheat.h \
 	challenge.h \
 	clparse.h \
-	cluster.h \
 	cmddroiddef.h \
 	cmddroid.h \
 	combat.h \
@@ -119,6 +119,8 @@ noinst_HEADERS = \
 	multiplay.h \
 	multirecv.h \
 	multistat.h \
+	nethelpers.h \
+	notifications.h \
 	objectdef.h \
 	objects.h \
 	objmem.h \
@@ -138,14 +140,6 @@ noinst_HEADERS = \
 	researchdef.h \
 	research.h \
 	scores.h \
-	scriptai.h \
-	scriptcb.h \
-	scriptextern.h \
-	scriptfuncs.h \
-	scriptobj.h \
-	scripttabs.h \
-	scriptvals.h \
-	scriptvals_parser.h \
 	selection.h \
 	seqdisp.h \
 	statsdef.h \
@@ -157,7 +151,11 @@ noinst_HEADERS = \
 	terrain.h \
 	text.h \
 	texture.h \
+	titleui/titleui.h \
 	transporter.h \
+	updatemanager.h \
+	urlhelpers.h \
+	urlrequest.h \
 	visibility.h \
 	version.h \
 	warcam.h \
@@ -165,14 +163,16 @@ noinst_HEADERS = \
 	wavecast.h \
 	weapondef.h \
 	wrappers.h \
+	wzpropertyproviders.h \
 	$(MOCHEADER)
 
 nodist_COMMONSOURCES = \
-	multiint_moc.cpp \
 	qtscriptdebug_moc.cpp
 
 COMMONSOURCES = \
+	3rdparty/propertymatcher.cpp \
 	action.cpp \
+	activity.cpp \
 	advvis.cpp \
 	ai.cpp \
 	astar.cpp \
@@ -183,7 +183,6 @@ COMMONSOURCES = \
 	challenge.cpp \
 	cheat.cpp \
 	clparse.cpp \
-	cluster.cpp \
 	cmddroid.cpp \
 	combat.cpp \
 	component.cpp \
@@ -240,6 +239,8 @@ COMMONSOURCES = \
 	multistat.cpp \
 	multistruct.cpp \
 	multisync.cpp \
+	nethelpers.cpp \
+	notifications.cpp \
 	objects.cpp \
 	objmem.cpp \
 	oprint.cpp \
@@ -255,15 +256,6 @@ COMMONSOURCES = \
 	raycast.cpp \
 	research.cpp \
 	scores.cpp \
-	scriptai.cpp \
-	scriptcb.cpp \
-	scriptextern.cpp \
-	scriptfuncs.cpp \
-	scriptobj.cpp \
-	scripttabs.cpp \
-	scriptvals.cpp \
-	scriptvals_lexer.cpp \
-	scriptvals_parser.cpp \
 	selection.cpp \
 	seqdisp.cpp \
 	stats.cpp \
@@ -272,13 +264,23 @@ COMMONSOURCES = \
 	terrain.cpp \
 	text.cpp \
 	texture.cpp \
+	titleui/gamefind.cpp \
+	titleui/msgbox.cpp \
+	titleui/old.cpp \
+	titleui/passbox.cpp \
+	titleui/protocol.cpp \
+	titleui/titleui.cpp \
 	transporter.cpp \
+	updatemanager.cpp \
+	urlhelpers.cpp \
+	urlrequest.cpp \
 	version.cpp \
 	visibility.cpp \
 	warcam.cpp \
 	warzoneconfig.cpp \
 	wavecast.cpp \
-	wrappers.cpp
+	wrappers.cpp \
+	wzpropertyproviders.cpp
 
 
 
@@ -286,12 +288,14 @@ COMMONLIBS = \
 	$(top_builddir)/lib/widget/libwidget.a \
 	$(top_builddir)/lib/sequence/libsequence.a \
 	$(top_builddir)/lib/sound/libsound.a \
-	$(top_builddir)/lib/script/libscript.a \
 	$(top_builddir)/lib/netplay/libnetplay.a \
 	$(top_builddir)/lib/ivis_opengl/libivis_opengl.a \
 	$(top_builddir)/lib/gamelib/libgamelib.a \
 	$(top_builddir)/lib/exceptionhandler/libexceptionhandler.a \
-	$(top_builddir)/3rdparty/miniupnpc/libminiupnpc.a
+	$(top_builddir)/3rdparty/miniupnp/libminiupnpc.a \
+	$(top_builddir)/3rdparty/launchinfo/liblaunchinfo.a \
+	$(top_builddir)/3rdparty/EmbeddedJSONSignature/libembeddedjsonsignature.a \
+	$(top_builddir)/3rdparty/re2/obj/libre2.a
 
 if PORTABLE
 warzone2100_portable_SOURCES = $(COMMONSOURCES) $(nodist_COMMONSOURCES)
@@ -301,20 +305,10 @@ warzone2100_SOURCES = $(COMMONSOURCES) $(nodist_COMMONSOURCES)
 warzone2100_LIBS = $(COMMONLIBS)
 endif
 
-if BACKEND_QT
-if PORTABLE
-warzone2100_portable_LIBS += $(top_builddir)/lib/qtgame/libqtgame.a
-else
-warzone2100_LIBS += $(top_builddir)/lib/qtgame/libqtgame.a
-endif
-endif
-
-if BACKEND_SDL
 if PORTABLE
 warzone2100_portable_LIBS += $(top_builddir)/lib/sdl/libsdl.a
 else
 warzone2100_LIBS += $(top_builddir)/lib/sdl/libsdl.a
-endif
 endif
 
 # lib/framework (and dependencies)
@@ -322,30 +316,31 @@ if PORTABLE
 warzone2100_portable_LIBS += \
 	$(top_builddir)/lib/framework/libframework.a \
 	$(top_builddir)/3rdparty/micro-ecc/libmicroecc.a \
-	$(top_builddir)/3rdparty/sha2/libsha2.a
+	$(top_builddir)/3rdparty/utf8proc/libutf8proc.a
 else
 warzone2100_LIBS += \
 	$(top_builddir)/lib/framework/libframework.a \
 	$(top_builddir)/3rdparty/micro-ecc/libmicroecc.a \
-	$(top_builddir)/3rdparty/sha2/libsha2.a
+	$(top_builddir)/3rdparty/utf8proc/libutf8proc.a
 endif
 
 # Here, we need to bring in the "plugins" for Qt5 and they MUST come before the other QT libs.
 # FIXME: At a future date, we should check if they want static builds, but, since we only support those for now...
 if MINGW32
-SQT5_LIBS =  -L$(QT5_PLUGIN)/plugins/platforms -lQt5PlatformSupport -lqwindows
+SQT5_LIBS = -L$(QT5_PLUGIN)/plugins/platforms -lqwindows -lqminimal -lQt5AccessibilitySupport -lQt5ThemeSupport -lQt5FontDatabaseSupport -lQt5EventDispatcherSupport
 else
 SQT5_LIBS =
+SQT5_LIBS2 =
 endif
 
 if PORTABLE
-warzone2100_portable_LDADD = $(warzone2100_portable_LIBS) $(LTLIBINTL) $(SDL_LIBS) $(PHYSFS_LIBS) $(PNG_LIBS) $(VORBISFILE_LIBS) $(VORBIS_LIBS) \
+warzone2100_portable_LDADD = $(warzone2100_portable_LIBS) $(LTLIBINTL) $(SDL_LIBS) $(PHYSFS_LIBS) $(PNG_LIBS) $(VORBISFILE_LIBS) $(VORBIS_LIBS) $(LIBCURL) \
 	$(THEORA_LIBS) $(OPENAL_LIBS) $(FONT_LIBS) $(OPENGL_LIBS) $(SQT5_LIBS) $(QT5_LIBS) $(GLEW_LIBS) \
-	$(X_LIBS) $(X_EXTRA_LIBS) $(LDFLAGS)
+	$(LIBSODIUM_LIBS) $(X_LIBS) $(X_EXTRA_LIBS) $(LDFLAGS)
 else
-warzone2100_LDADD = $(warzone2100_LIBS) $(LTLIBINTL) $(SDL_LIBS) $(PHYSFS_LIBS) $(PNG_LIBS) $(VORBISFILE_LIBS) $(VORBIS_LIBS) \
+warzone2100_LDADD = $(warzone2100_LIBS) $(LTLIBINTL) $(SDL_LIBS) $(PHYSFS_LIBS) $(PNG_LIBS) $(VORBISFILE_LIBS) $(VORBIS_LIBS) $(LIBCURL) \
 	$(THEORA_LIBS) $(OPENAL_LIBS) $(FONT_LIBS) $(OPENGL_LIBS) $(SQT5_LIBS) $(QT5_LIBS) $(GLEW_LIBS) \
-	$(X_LIBS) $(X_EXTRA_LIBS) $(LDFLAGS)
+	$(LIBSODIUM_LIBS) $(X_LIBS) $(X_EXTRA_LIBS) $(LDFLAGS)
 endif
 
 

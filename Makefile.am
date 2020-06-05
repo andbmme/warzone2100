@@ -1,17 +1,14 @@
-if BACKEND_QT
-backend_subdir=lib/qtgame
-else
 backend_subdir=lib/sdl
-endif
+
+UTF8PROC_DEFINES = -DUTF8PROC_STATIC
+AM_MAKEFLAGS = UTF8PROC_DEFINES=$(UTF8PROC_DEFINES)
 
 SUBDIRS = \
 	win32 \
-	3rdparty/miniupnpc \
 	3rdparty/micro-ecc \
-	3rdparty/sha2 \
+	3rdparty \
 	lib/framework \
 	lib/exceptionhandler \
-	lib/script \
 	lib/sequence \
 	lib/ivis_opengl \
 	lib/gamelib \
@@ -25,13 +22,14 @@ SUBDIRS = \
 	po \
 	doc \
 	icons \
-	pkg/nsis \
-	tests
+	pkg/nsis
 
 dist_doc_DATA = \
 	AUTHORS \
 	ChangeLog \
 	README.md \
+	doc/Scripting.md \
+	doc/js-globals.md \
 	COPYING \
 	COPYING.NONGPL \
 	COPYING.README
@@ -48,13 +46,7 @@ EXTRA_DIST= \
 	lib/framework/strres_parser.ypp \
 	lib/gamelib/audp_lexer.lpp \
 	lib/gamelib/audp_parser.ypp \
-	lib/script/chat_lexer.lpp \
-	lib/script/chat_parser.ypp \
-	lib/script/script_lexer.lpp \
-	lib/script/script_parser.ypp \
 	src/level_lexer.lpp \
-	src/scriptvals_lexer.lpp \
-	src/scriptvals_parser.ypp \
 	build_tools/autorevision \
 	autogen.sh \
 	config.rpath \
@@ -69,33 +61,32 @@ EXTRA_DIST= \
 	po/custom/mac-infoplist.txt \
 	po/custom/warzone2100.desktop.txt
 
-# get rid of SVN stuff in the tarball
-dist-hook:
-	rm -rf `find $(distdir) -type d -name .svn`
-
-javascript-doc-base:
-	grep $(top_srcdir)/src/qtscript.cpp -e '//==' | sed 's/\/\/==//' > doc/globals.tex
-	grep $(top_srcdir)/src/qtscriptfuncs.cpp -e '//==' | sed 's/\/\/==//' >> doc/globals.tex
-	grep $(top_srcdir)/src/qtscript.cpp -e '//__' | sed 's/\/\/__//' > doc/events.tex
-	grep $(top_srcdir)/src/qtscript.cpp -e '//--' | sed 's/\/\/--//' > doc/functions.tex
-	grep $(top_srcdir)/src/qtscriptfuncs.cpp -e '//--' | sed 's/\/\/--//' >> doc/functions.tex
-	grep $(top_srcdir)/src/qtscriptfuncs.cpp -e '//;;' | sed 's/\/\/;;//' > doc/objects.tex
-	grep $(top_srcdir)/data/base/script/campaign/libcampaign.js -e '//;;' | sed 's/\/\/;;//' > doc/campaign.tex
-	test $(abs_top_srcdir) = $(abs_top_builddir) || cp $(top_srcdir)/doc/javascript.tex doc/
-
-javascript-doc: javascript-doc-base
-if PDFLATEX
-	(cd doc ; pdflatex javascript.tex)
-else
-	echo "You need pdflatex installed!"
-endif
-
-javascript-doc-html: javascript-doc-base
-if HEVEA
-	(cd doc; hevea javascript.tex; hevea javascript.tex)
-if HACHA
-	(cd doc; hacha -o javascript-index.html javascript.html)
-endif
-else
-	echo "You need hevea installed!"
-endif
+doc/js-globals.md:
+	grep $(top_srcdir)/src/qtscript.cpp -e '//==' | sed 's:.*//== \?::' > $(top_srcdir)/doc/js-globals.md
+	grep $(top_srcdir)/src/qtscriptfuncs.cpp -e '//==' | sed 's:.*//== \?::' >> $(top_srcdir)/doc/js-globals.md
+	grep $(top_srcdir)/src/qtscript.cpp -e '//__' | sed 's:.*//__ \?::' > $(top_srcdir)/doc/js-events.md
+	grep $(top_srcdir)/src/qtscript.cpp -e '//--' | sed 's:.*//-- \?::' > $(top_srcdir)/doc/js-functions.md
+	grep $(top_srcdir)/src/qtscriptfuncs.cpp -e '//--' | sed 's:.*//-- \?::' >> $(top_srcdir)/doc/js-functions.md
+	grep $(top_srcdir)/src/qtscript.cpp -e '//;;' | sed 's:.*//;; \?::' > $(top_srcdir)/doc/js-objects.md
+	grep $(top_srcdir)/src/qtscriptfuncs.cpp -e '//;;' | sed 's:.*//;; \?::' >> $(top_srcdir)/doc/js-objects.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign.js -e '.*//;;' | sed 's://;; \?::' > $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/artifact.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/base.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/debug.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/events.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/group.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/hook.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/misc.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/nexus.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/production.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/reinforcements.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/research.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/tactics.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/time.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/transport.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/truck.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/victory.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/video.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	grep $(top_srcdir)/data/base/script/campaign/libcampaign_includes/vtol.js -e '.*//;;' | sed 's://;; \?::' >> $(top_srcdir)/doc/js-campaign.md
+	test $(abs_top_srcdir) = $(abs_top_builddir) || cp $(top_srcdir)/doc/*.md doc/
+.PHONY: doc/js-globals.md

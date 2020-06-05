@@ -53,13 +53,16 @@ camAreaEvent("WestConvoyTrigger", function(droid)
 	});
 });
 
-function playYouAreInContraventionOfTheNewParadigm()
+function enableNP(args)
 {
-	camPlayVideos("SB1_3_MSG4");
+	camEnableFactory("ScavFactory");
+	camEnableFactory("NPFactory");
+
 	camManageGroup(NPScoutGroup, CAM_ORDER_COMPROMISE, {
 		pos: camMakePos("RTLZ"),
 		repair: 66,
 		regroup: true,
+		removable: false,
 	});
 	camManageGroup(NPDefenseGroup, CAM_ORDER_FOLLOW, {
 		droid: "NPCommander",
@@ -71,20 +74,15 @@ function playYouAreInContraventionOfTheNewParadigm()
 		},
 		repair: 66,
 	});
-}
 
-function enableNP(args)
-{
-	camEnableFactory("ScavFactory");
-	camEnableFactory("NPFactory");
-	playSound("pcv455.ogg");
-	queue("playYouAreInContraventionOfTheNewParadigm", 2000);
+	camPlayVideos(["pcv455.ogg", "SB1_3_MSG4"]);
 }
 
 function sendScouts()
 {
-	camManageGroup(camMakeGroup("ScavScoutForce"), CAM_ORDER_COMPROMISE,
-	               { pos: camMakePos("RTLZ") });
+	camManageGroup(camMakeGroup("ScavScoutForce"), CAM_ORDER_COMPROMISE, {
+		pos: camMakePos("RTLZ")
+	});
 }
 
 camAreaEvent("ScavTrigger", function(droid)
@@ -99,13 +97,15 @@ camAreaEvent("NPTrigger", function(droid)
 
 function eventAttacked(victim, attacker) {
 	if (!camDef(victim) || !victim || victim.player === CAM_HUMAN_PLAYER)
+	{
 		return;
+	}
 	if (victim.player === NEW_PARADIGM)
 	{
 		camCallOnce("enableNP");
 		var commander = getObject("NPCommander");
-		if (camDef(attacker) && attacker && camDef(commander) && commander
-		    && commander.order !== DORDER_SCOUT && commander.order !== DORDER_RTR)
+		if (camDef(attacker) && attacker && camDef(commander) && commander &&
+			commander.order !== DORDER_SCOUT && commander.order !== DORDER_RTR)
 		{
 			orderDroidLoc(commander, DORDER_SCOUT, attacker.x, attacker.y);
 		}
@@ -118,45 +118,45 @@ function enableReinforcements()
 	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "CAM_1C", {
 		area: "RTLZ",
 		message: "C1-3_LZ",
-		reinforcements: 120, // changes!
+		reinforcements: camMinutesToSeconds(2), // changes!
 		annihilate: true
 	});
 }
 
 function camEnemyBaseDetected_ScavBaseGroup()
 {
-	queue("camCallOnce", 1000, "enableReinforcements");
+	queue("camCallOnce", camSecondsToMilliseconds(1), "enableReinforcements");
 }
 
 function camEnemyBaseEliminated_ScavBaseGroup()
 {
 	//make enemy easier to find if all his buildings destroyed
 	camManageGroup(
-		camMakeGroup(enumArea(0, 0, mapWidth, mapHeight, 7, false)),
+		camMakeGroup(enumArea(0, 0, mapWidth, mapHeight, SCAV_7, false)),
 		CAM_ORDER_ATTACK
 	);
 }
 
 function playNPWarningMessage()
 {
-	camPlayVideos("SB1_3_MSG3");
-}
-
-function playNPWarningSound()
-{
-	playSound("pcv455.ogg");
-	queue("playNPWarningMessage", 2000);
+	camPlayVideos(["pcv455.ogg", "SB1_3_MSG3"]);
 }
 
 function eventDroidBuilt(droid, structure)
 {
 	// An example of manually managing factory groups.
 	if (!camDef(structure) || !structure || structure.id !== NPFactory.id)
+	{
 		return;
+	}
 	if (getObject("NPCommander") !== null && groupSize(NPDefenseGroup) < 6) // watch out! commander control limit
+	{
 		groupAdd(NPDefenseGroup, droid);
-	else if (groupSize(NPScoutGroup) < 4 && droid.body !== camTemplates.npsmc.body)
-		groupAdd(NPScoutGroup, droid);// heavy tanks don't go scouting
+	}
+	else if (groupSize(NPScoutGroup) < 4 && droid.body !== cTempl.npsmc.body)
+	{
+		groupAdd(NPScoutGroup, droid); // heavy tanks don't go scouting
+	}
 	// As libcampaign.js pre-hook has already fired,
 	// the droid would remain assigned to the factory's
 	// managed group if not reassigned here,
@@ -181,11 +181,9 @@ function eventStartLevel()
 	startTransporterEntry(tent.x, tent.y, CAM_HUMAN_PLAYER);
 	setTransporterExit(text.x, text.y, CAM_HUMAN_PLAYER);
 
-	setPower(AI_POWER, NEW_PARADIGM);
-	setPower(AI_POWER, 7);
 	camCompleteRequiredResearch(NEW_PARADIGM_RES, NEW_PARADIGM);
-	camCompleteRequiredResearch(SCAVENGER_RES, 7);
-	setAlliance(1, 7, true);
+	camCompleteRequiredResearch(SCAVENGER_RES, SCAV_7);
+	setAlliance(NEW_PARADIGM, SCAV_7, true);
 
 	camSetEnemyBases({
 		"ScavBaseGroup": {
@@ -211,7 +209,7 @@ function eventStartLevel()
 		"NPCRC": { tech: "R-Struc-CommandRelay" },
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"ScavFactory": {
 			assembly: "ScavAssembly",
 			order: CAM_ORDER_COMPROMISE,
@@ -221,8 +219,8 @@ function eventStartLevel()
 			},
 			groupSize: 4,
 			maxSize: 10,
-			throttle: camChangeOnDiff(25000),
-			templates: [ rbuggy, bloke, rbjeep, buggy ]
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(15)),
+			templates: [ cTempl.rbuggy, cTempl.bloke, cTempl.rbjeep, cTempl.buggy ]
 		},
 		"NPFactory": {
 			assembly: "NPAssembly",
@@ -233,8 +231,8 @@ function eventStartLevel()
 			},
 			groupSize: 4, // sic! scouts, at most
 			maxSize: 20,
-			throttle: camChangeOnDiff(40000),
-			templates: [ nppod, nphmg, npsmc, npsmc ]
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
+			templates: [ cTempl.nppod, cTempl.nphmg, cTempl.npsmc, cTempl.npsmc ]
 		},
 	});
 
@@ -242,6 +240,6 @@ function eventStartLevel()
 	NPDefenseGroup = camMakeGroup("NPDefense");
 	NPFactory = getObject("NPFactory");
 
-	queue("playNPWarningSound", 3000);
-	queue("sendScouts", 60000);
+	queue("playNPWarningMessage", camSecondsToMilliseconds(3));
+	queue("sendScouts", camSecondsToMilliseconds(60));
 }

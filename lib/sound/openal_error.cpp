@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 2007  Giel van Schijndel
-	Copyright (C) 2007-2017  Warzone 2100 Project
+	Copyright (C) 2007-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -23,17 +23,12 @@
 
 #include "lib/framework/stdio_ext.h"
 
-#ifdef WZ_OS_MAC
-# include <OpenAL/al.h>
-# include <OpenAL/alc.h>
-#else
-# include <AL/al.h>
-# include <AL/alc.h>
-#endif
+#include <AL/al.h>
+#include <AL/alc.h>
 
 ALenum __sound_GetError(const char *location_description)
 {
-	const char *errorString;
+	const char *errorString = nullptr;
 	ALenum error = alGetError();
 
 	if (error == AL_NO_ERROR)
@@ -64,19 +59,23 @@ ALenum __sound_GetError(const char *location_description)
 		break;
 
 	default:
-		sasprintf((char **)&errorString, "unknown error code (%d); please report this number (along with the "
-		          "fact that it is an \"unknown OpenAL error code\"): 0x%x", (int)error, (unsigned int)error);
+		errorString = nullptr;
+		debug(LOG_SOUND, "OpenAL raised an unknown error code (%d), at %s. Please report this number "
+				  "(along with the fact that it is an \"unknown OpenAL error code\"): 0x%x", (int)error, location_description, (unsigned int)error);
 		break;
 	}
 
-	debug(LOG_SOUND, "OpenAL raised an error: \"%s\"; at %s", errorString, location_description);
+	if (errorString)
+	{
+		debug(LOG_SOUND, "OpenAL raised an error: \"%s\"; at %s", errorString, location_description);
+	}
 
 	return error;
 }
 
 ALenum __sound_GetContextError(ALCdevice *device, const char *location_description)
 {
-	const char *errorString;
+	const char *errorString = nullptr;
 	ALCenum error = alcGetError(device);
 
 	if (error == ALC_NO_ERROR)
@@ -107,12 +106,16 @@ ALenum __sound_GetContextError(ALCdevice *device, const char *location_descripti
 		break;
 
 	default:
-		sasprintf((char **)&errorString, "unknown error code (%d); please report this number (along with the "
-		          "fact that it is an \"unknown OpenAL error code\"): 0x%x", (int)error, (unsigned int)error);
+		errorString = nullptr;
+		debug(LOG_SOUND, "OpenAL raised an unknown context error code (%d), at %s. Please report this number "
+				  "(along with the fact that it is an \"unknown OpenAL error code\"): 0x%x", (int)error, location_description, (unsigned int)error);
 		break;
 	}
 
-	debug(LOG_SOUND, "OpenAL raised a context error: \"%s\"; at %s", errorString, location_description);
+	if (errorString)
+	{
+		debug(LOG_SOUND, "OpenAL raised a context error: \"%s\"; at %s", errorString, location_description);
+	}
 
 	return error;
 }

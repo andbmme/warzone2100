@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -37,6 +37,20 @@
 #ifdef WZ_OS_LINUX
 #include <execinfo.h>  // Nonfatal runtime backtraces.
 #endif //WZ_OS_LINUX
+
+#if defined(WZ_OS_UNIX)
+# include <fcntl.h>
+# ifndef _POSIX_C_SOURCE
+#  define _POSIX_C_SOURCE 1
+# endif
+# ifndef _XOPEN_SOURCE
+#  define _XOPEN_SOURCE
+# endif
+# ifndef _POSIX_SOURCE
+#  define _POSIX_SOURCE
+# endif
+# include <stdio.h>
+#endif
 
 #define MAX_LEN_LOG_LINE 512
 
@@ -91,6 +105,7 @@ static const char *code_part_names[] =
 	"input",
 	"popup",
 	"console",
+	"activity",
 	"last"
 };
 
@@ -196,20 +211,48 @@ char WZ_DBGFile[PATH_MAX] = {0};	//Used to save path of the created log file
  * \param[in,out]	data	In: 	The filename to output to.
  * 							Out:	The filehandle.
  */
-const char *WZDebugfilename;
+WzString WZDebugfilename;
 bool debug_callback_file_init(void **data)
 {
-	WZDebugfilename = (const char *)*data;
+	WzString * pFileName = (WzString *)*data;
+	ASSERT(pFileName, "Debug filename required");
+	WZDebugfilename = *pFileName;
 
-	FILE *const logfile = fopen(WZDebugfilename, "w");
-	if (!logfile)
+#if defined(WZ_OS_WIN)
+	// On Windows, path strings passed to fopen() are interpreted using the ANSI or OEM codepage
+	// (and not as UTF-8). To support Unicode paths, the string must be converted to a wide-char
+	// string and passed to _wfopen.
+	int wstr_len = MultiByteToWideChar(CP_UTF8, 0, WZDebugfilename.toUtf8().c_str(), -1, NULL, 0);
+	if (wstr_len <= 0)
 	{
-		fprintf(stderr, "Could not open %s for appending!\n", WZDebugfilename);
+		fprintf(stderr, "Could not not convert string from UTF-8; MultiByteToWideChar failed with error %d: %s\n", GetLastError(), WZDebugfilename.toUtf8().c_str());
 		return false;
 	}
-	snprintf(WZ_DBGFile, sizeof(WZ_DBGFile), "%s", WZDebugfilename);
+	std::vector<wchar_t> wstr_filename(wstr_len, 0);
+	if (MultiByteToWideChar(CP_UTF8, 0, WZDebugfilename.toUtf8().c_str(), -1, &wstr_filename[0], wstr_len) == 0)
+	{
+		fprintf(stderr, "Could not not convert string from UTF-8; MultiByteToWideChar[2] failed with error %d: %s\n", GetLastError(), WZDebugfilename.toUtf8().c_str());
+		return false;
+	}
+	FILE *const logfile = _wfopen(&wstr_filename[0], L"w");
+#else
+	FILE *const logfile = fopen(WZDebugfilename.toUtf8().c_str(), "w");
+#endif
+	if (!logfile)
+	{
+		fprintf(stderr, "Could not open %s for appending!\n", WZDebugfilename.toUtf8().c_str());
+		return false;
+	}
+#if defined(WZ_OS_UNIX)
+	int fd = fileno(logfile);
+	if (fd != -1)
+	{
+		fcntl(fd, F_SETFD, FD_CLOEXEC);
+	}
+#endif
+	snprintf(WZ_DBGFile, sizeof(WZ_DBGFile), "%s", WZDebugfilename.toUtf8().c_str());
 	setbuf(logfile, nullptr);
-	fprintf(logfile, "--- Starting log [%s]---\n", WZDebugfilename);
+	fprintf(logfile, "--- Starting log [%s]---\n", WZDebugfilename.toUtf8().c_str());
 	*data = logfile;
 
 	return true;
@@ -323,7 +366,7 @@ void debug_register_callback(debug_callback_fn callback, debug_callback_init ini
 	if (tmpCallback->init
 	    && !tmpCallback->init(&tmpCallback->data))
 	{
-		fprintf(stderr, "Failed to initialise debug callback, debugfile set to [%s]!\n", WZDebugfilename);
+		fprintf(stderr, "Failed to initialise debug callback, debugfile set to [%s]!\n", WZDebugfilename.toUtf8().c_str());
 		free(tmpCallback);
 		return;
 	}
@@ -483,7 +526,7 @@ void _debug(int line, code_part part, const char *function, const char *str, ...
 
 		time(&rawtime);
 		timeinfo = localtime(&rawtime);
-		strftime(ourtime, 15, "%I:%M:%S", timeinfo);
+		strftime(ourtime, 15, "%H:%M:%S", timeinfo);
 
 		// Assemble the outputBuffer:
 		ssprintf(outputBuffer, "%-8s|%s: %s", code_part_names[part], ourtime, useInputBuffer1 ? inputBuffer[1] : inputBuffer[0]);
@@ -505,21 +548,23 @@ void _debug(int line, code_part part, const char *function, const char *str, ...
 				wzToggleFullscreen();
 			}
 #if defined(WZ_OS_WIN)
-			char wbuf[512];
+			char wbuf[1024];
 			ssprintf(wbuf, "%s\n\nPlease check the file (%s) in your configuration directory for more details. \
-				\nDo not forget to upload the %s file, WZdebuginfo.txt and the warzone2100.rpt files in your bug reports at http://developer.wz2100.net/newticket!", useInputBuffer1 ? inputBuffer[1] : inputBuffer[0], WZ_DBGFile, WZ_DBGFile);
-			MessageBoxA(NULL, wbuf, "Warzone has terminated unexpectedly", MB_OK | MB_ICONERROR);
+				\nDo not forget to upload the %s file, WZdebuginfo.txt and the warzone2100.rpt files in your bug reports at https://github.com/Warzone2100/warzone2100/issues/new!", useInputBuffer1 ? inputBuffer[1] : inputBuffer[0], WZ_DBGFile, WZ_DBGFile);
+			wzDisplayDialog(Dialog_Error, "Warzone has terminated unexpectedly", wbuf);
 #elif defined(WZ_OS_MAC)
+			char wbuf[1024];
+			ssprintf(wbuf, "%s\n\nPlease check your logs and attach them along with a bug report. Thanks!", useInputBuffer1 ? inputBuffer[1] : inputBuffer[0]);
 			int clickedIndex = \
 			                   cocoaShowAlert("Warzone has quit unexpectedly.",
-			                                  "Please check your logs and attach them along with a bug report. Thanks!",
+			                                  wbuf,
 			                                  2, "Show Log Files & Open Bug Reporter", "Ignore", NULL);
 			if (clickedIndex == 0)
 			{
-				if (!cocoaOpenURL("http://developer.wz2100.net/newticket"))
+				if (!cocoaOpenURL("https://github.com/Warzone2100/warzone2100/issues/new"))
                 {
                     cocoaShowAlert("Failed to open URL",
-                                   "Could not open URL: http://developer.wz2100.net/newticket\nPlease open this URL manually in your web browser.",
+                                   "Could not open URL: https://github.com/Warzone2100/warzone2100/issues/new\nPlease open this URL manually in your web browser.",
                                    2, "Continue", NULL);
                 }
                 if (strnlen(WZ_DBGFile, sizeof(WZ_DBGFile)/sizeof(WZ_DBGFile[0])) <= 0)
@@ -541,7 +586,7 @@ void _debug(int line, code_part part, const char *function, const char *str, ...
 			}
 #else
 			const char *popupBuf = useInputBuffer1 ? inputBuffer[1] : inputBuffer[0];
-			wzFatalDialog(popupBuf);
+			wzDisplayDialog(Dialog_Error, "Warzone has terminated unexpectedly", popupBuf);
 #endif
 		}
 
@@ -549,15 +594,7 @@ void _debug(int line, code_part part, const char *function, const char *str, ...
 		// This is a popup dialog used for times when the error isn't fatal, but we still need to notify user what is going on.
 		if (part == LOG_POPUP)
 		{
-#if defined(WZ_OS_WIN)
-			char wbuf[512];
-			ssprintf(wbuf, "A non fatal error has occurred.\n\n%s\n\n", useInputBuffer1 ? inputBuffer[1] : inputBuffer[0]);
-			MessageBoxA(NULL,
-			            wbuf,
-			            "Warzone has detected a problem.", MB_OK | MB_ICONINFORMATION);
-#elif defined(WZ_OS_MAC)
-			cocoaShowAlert("Warzone has detected a problem.", inputBuffer[useInputBuffer1 ? 1 : 0], 0, "OK", NULL);
-#endif
+			wzDisplayDialog(Dialog_Information, "Warzone has detected a problem.", inputBuffer[useInputBuffer1 ? 1 : 0]);
 		}
 
 	}
@@ -590,3 +627,16 @@ void debugDisableAssert()
 {
 	assertEnabled = false;
 }
+
+#include <sstream>
+
+void _debug_multiline(int line, code_part part, const char *function, const std::string &multilineString)
+{
+	std::stringstream ss(multilineString);
+	std::string to;
+
+	while(std::getline(ss,to,'\n')){
+		_debug(line, part, function, "%s", to.c_str());
+	}
+}
+

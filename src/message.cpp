@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
  *
  */
 
-#include <QtCore/QMap>
+#include <map>
 #include "lib/framework/frame.h"
 #include "lib/framework/wzconfig.h"
 #include "lib/framework/frameresource.h"
@@ -38,7 +38,7 @@
 #include "stats.h"
 #include "text.h"
 
-static QMap<QString, VIEWDATA *> apsViewData;
+static std::map<WzString, VIEWDATA *> apsViewData;
 
 /* The id number for the next message allocated
  * Each message will have a unique id number irrespective of type
@@ -433,10 +433,27 @@ bool initMessage()
 	return true;
 }
 
-/*load the view data for the messages from the file */
-const char *loadViewData(const char *pViewMsgData, UDWORD bufferSize)
+/* Return the number of newlines in a file buffer */
+static unsigned numCR(const char *pFileBuffer, unsigned fileSize)
 {
-	UDWORD			numData, count, dummy;
+	unsigned lines = 0;
+
+	while (fileSize-- > 0)
+	{
+		if (*pFileBuffer++ == '\n')
+		{
+			lines++;
+		}
+	}
+
+	return lines;
+}
+
+/*load the view data for the messages from the file */
+WzString *loadViewData(const char *pViewMsgData, UDWORD bufferSize)
+{
+	UDWORD			numData, count;
+	int				dummy;
 	VIEW_RESEARCH		*psViewRes;
 	VIEW_REPLAY			*psViewReplay;
 	char				name[MAX_STR_LENGTH], imdName[MAX_STR_LENGTH],
@@ -446,7 +463,7 @@ const char *loadViewData(const char *pViewMsgData, UDWORD bufferSize)
 	SDWORD				LocX, LocY, LocZ, audioID;
 	PROX_TYPE	proxType;
 	int cnt;
-	const char *filename = strdup(GetLastResourceFilename());
+	WzString *filename = new WzString(GetLastResourceFilename());
 
 	numData = numCR(pViewMsgData, bufferSize);
 	for (unsigned i = 0; i < numData; i++)
@@ -457,16 +474,16 @@ const char *loadViewData(const char *pViewMsgData, UDWORD bufferSize)
 
 		psViewData->pData = nullptr;
 		psViewData->type = VIEW_SIZE;
-		psViewData->fileName = filename;
+		psViewData->fileName = *filename;
 		name[0] = '\0';
 
 		//read the data into the storage - the data is delimited using comma's
-		sscanf(pViewMsgData, "%255[^,'\r\n],%d%n", name, &numText, &cnt);
+		sscanf(pViewMsgData, "%255[^,'\r\n],%u%n", name, &numText, &cnt);
 		pViewMsgData += cnt;
 
 		//allocate storage for the name
 		psViewData->name = name;
-		debug(LOG_MSG, "Loaded %s", psViewData->name.toUtf8().constData());
+		debug(LOG_MSG, "Loaded %s", psViewData->name.toUtf8().c_str());
 
 		//read in the data for the text strings
 		for (unsigned dataInc = 0; dataInc < numText; dataInc++)
@@ -478,8 +495,8 @@ const char *loadViewData(const char *pViewMsgData, UDWORD bufferSize)
 			// Get the string from the ID string
 			const char *str = strresGetString(psStringRes, name);
 			ASSERT(str, "Cannot find the view data string with id \"%s\"", name);
-			QString qstr = QString::fromUtf8(str);
-			psViewData->textMsg.push_back(qstr);
+			WzString wstr = WzString::fromUtf8(str);
+			psViewData->textMsg.push_back(wstr);
 		}
 
 		sscanf(pViewMsgData, ",%d%n", &readint, &cnt);
@@ -536,7 +553,7 @@ const char *loadViewData(const char *pViewMsgData, UDWORD bufferSize)
 			psViewReplay = (VIEW_REPLAY *)psViewData->pData;
 
 			//read in number of sequences for this message
-			sscanf(pViewMsgData, ",%d%n", &count, &cnt);
+			sscanf(pViewMsgData, ",%u%n", &count, &cnt);
 			pViewMsgData += cnt;
 
 			psViewReplay->seqList.resize(count);
@@ -550,7 +567,7 @@ const char *loadViewData(const char *pViewMsgData, UDWORD bufferSize)
 				//load extradat for extended type only
 				if (psViewData->type == VIEW_RPL)
 				{
-					sscanf(pViewMsgData, ",%255[^,'\r\n],%d%n", name, &count, &cnt);
+					sscanf(pViewMsgData, ",%255[^,'\r\n],%u%n", name, &count, &cnt);
 					pViewMsgData += cnt;
 					//set the flag to default
 					psViewReplay->seqList[dataInc].flag = 0;
@@ -559,7 +576,7 @@ const char *loadViewData(const char *pViewMsgData, UDWORD bufferSize)
 				else //extended type
 				{
 					int count2;
-					sscanf(pViewMsgData, ",%255[^,'\r\n],%d,%d%n", name, &count, &count2, &cnt);
+					sscanf(pViewMsgData, ",%255[^,'\r\n],%u,%d%n", name, &count, &count2, &cnt);
 					pViewMsgData += cnt;
 					psViewReplay->seqList[dataInc].flag = (UBYTE)count;
 					numText = count2;
@@ -576,7 +593,7 @@ const char *loadViewData(const char *pViewMsgData, UDWORD bufferSize)
 					// Get the string from the ID string
 					const char *str = strresGetString(psStringRes, name);
 					ASSERT(str, "Cannot find the view data string with id \"%s\"", name);
-					QString qstr = QString::fromUtf8(str);
+					WzString qstr = WzString::fromUtf8(str);
 					psViewReplay->seqList[dataInc].textMsg.push_back(qstr);
 				}
 				//get the audio text string
@@ -662,18 +679,18 @@ const char *loadViewData(const char *pViewMsgData, UDWORD bufferSize)
 		//increment the pointer to the start of the next record
 		pViewMsgData = strchr(pViewMsgData, '\n') + 1;
 
-		apsViewData.insert(psViewData->name, psViewData);
+		apsViewData[psViewData->name] = psViewData;
 	}
 
 	return filename; // so that cleanup function will be called for correct data
 }
 
-const char *loadResearchViewData(const char *fileName)
+WzString *loadResearchViewData(const char *fileName)
 {
 	ASSERT_OR_RETURN(nullptr, PHYSFS_exists(fileName), "%s not found", fileName);
 	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
-	for (int i = 0; i < list.size(); ++i)
+	std::vector<WzString> list = ini.childGroups();
+	for (size_t i = 0; i < list.size(); ++i)
 	{
 		VIEWDATA *v = new VIEWDATA;
 		VIEW_RESEARCH *r = new VIEW_RESEARCH;
@@ -684,59 +701,66 @@ const char *loadResearchViewData(const char *fileName)
 
 		ini.beginGroup(list[i]);
 
-		v->textMsg = ini.value("text").toStringList();
-		for (int j = 0; j < v->textMsg.size(); j++)
+		v->textMsg = ini.value("text").toWzStringList();
+		for (size_t j = 0; j < v->textMsg.size(); j++)
 		{
-			v->textMsg[j].remove('\t');
-			v->textMsg[j] = QString(_(v->textMsg[j].toUtf8().constData()));
+			v->textMsg[j].remove("\t");
+			v->textMsg[j] = WzString::fromUtf8(_(v->textMsg[j].toUtf8().c_str()));
 			v->textMsg[j].replace("%%", "%");
 		}
 		v->type = VIEW_RES;
 		v->pData = r;
 		if (ini.contains("imdName"))
 		{
-			r->pIMD = modelGet(ini.value("imdName").toString());
+			r->pIMD = modelGet(ini.value("imdName").toWzString());
 		}
 		if (ini.contains("imdName2"))
 		{
-			r->pIMD2 = modelGet(ini.value("imdName2").toString());
+			r->pIMD2 = modelGet(ini.value("imdName2").toWzString());
 		}
 		if (ini.contains("sequenceName"))
 		{
-			r->sequenceName = ini.value("sequenceName").toString();
+			r->sequenceName = ini.value("sequenceName").toWzString();
 		}
 		if (ini.contains("audioName"))
 		{
-			r->audio = ini.value("audioName").toString();
+			r->audio = ini.value("audioName").toWzString();
 		}
 
 		ini.endGroup();
-		apsViewData.insert(v->name, v);
+		apsViewData[v->name] = v;
 	}
-	return fileName; // so that cleanup function will be called on right data
+	return new WzString(fileName); // so that cleanup function will be called on right data
 }
 
 /* Get the view data identified by the name */
-VIEWDATA *getViewData(const char *pName)
+VIEWDATA *getViewData(const WzString &name)
 {
-	VIEWDATA *ptr = apsViewData.value(pName);
+	std::map<WzString, VIEWDATA *>::iterator it = apsViewData.find(name);
+	VIEWDATA *ptr = (it != apsViewData.end()) ? it->second : nullptr;
 	if (!ptr) // dump for debugging
 	{
-		QMap<QString, VIEWDATA *>::iterator iter = apsViewData.begin();
-		while (iter != apsViewData.constEnd())
+		std::map<WzString, VIEWDATA *>::iterator iter = apsViewData.begin();
+		while (iter != apsViewData.end())
 		{
-			VIEWDATA *psViewData = iter.value();
-			debug(LOG_WZ, "\t%s", psViewData->name.toUtf8().constData());
+			VIEWDATA *psViewData = iter->second;
+			debug(LOG_WZ, "\t%s", psViewData->name.toUtf8().c_str());
 			++iter;
 		}
 	}
-	ASSERT(ptr, "Message %s not found, run with --debug=wz to get a list of all known messages", pName);
+	ASSERT(ptr, "Message %s not found, run with --debug=wz to get a list of all known messages", name.toUtf8().c_str());
 	return ptr;
 }
 
-QStringList getViewDataKeys()
+std::vector<WzString> getViewDataKeys()
 {
-	return apsViewData.keys();
+	std::vector<WzString> keys;
+	keys.reserve(apsViewData.size());
+	for(auto const& kvpair: apsViewData)
+	{
+		keys.push_back(kvpair.first);
+	}
+	return keys;
 }
 
 /* Release the message heaps */
@@ -768,10 +792,10 @@ static void checkMessages(VIEWDATA *psViewData)
 void viewDataShutDown(const char *fileName)
 {
 	debug(LOG_MSG, "calling shutdown for %s", fileName);
-	QMap<QString, VIEWDATA *>::iterator iter = apsViewData.begin();
-	while (iter != apsViewData.constEnd())
+	std::map<WzString, VIEWDATA *>::iterator iter = apsViewData.begin();
+	while (iter != apsViewData.end())
 	{
-		VIEWDATA *psViewData = iter.value();
+		VIEWDATA *psViewData = iter->second;
 
 		if (psViewData->fileName.compare(fileName) != 0)
 		{
@@ -833,7 +857,7 @@ void displayProximityMessage(PROXIMITY_DISPLAY *psProxDisp)
 		//display text - if any
 		if (!psViewData->textMsg.empty() && psViewData->type != VIEW_BEACON)
 		{
-			addConsoleMessage(psViewData->textMsg[0].toUtf8().constData(), DEFAULT_JUSTIFY, SYSTEM_MESSAGE);
+			addConsoleMessage(psViewData->textMsg[0].toUtf8().c_str(), DEFAULT_JUSTIFY, SYSTEM_MESSAGE);
 		}
 
 		//play message - if any

@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2013-2017  Warzone 2100 Project
+	Copyright (C) 2011-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -22,18 +22,30 @@
  * New scripting system -- script functions
  */
 
-#include "lib/framework/wzapp.h"
-#include "lib/framework/wzconfig.h"
-#include "lib/framework/fixedpoint.h"
-#include "lib/sound/audio.h"
-#include "lib/netplay/netplay.h"
-#include "qtscriptfuncs.h"
-#include "lib/ivis_opengl/tex.h"
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__) && (9 <= __GNUC__)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wdeprecated-copy" // Workaround Qt < 5.13 `deprecated-copy` issues with GCC 9
+#endif
 
+// **NOTE: Qt headers _must_ be before platform specific headers so we don't get conflicts.
 #include <QtScript/QScriptValue>
 #include <QtCore/QStringList>
 #include <QtCore/QJsonArray>
 #include <QtGui/QStandardItemModel>
+#include <QtCore/QPointer>
+
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__) && (9 <= __GNUC__)
+# pragma GCC diagnostic pop // Workaround Qt < 5.13 `deprecated-copy` issues with GCC 9
+#endif
+
+#include "lib/framework/wzapp.h"
+#include "lib/framework/wzconfig.h"
+#include "lib/framework/fixedpoint.h"
+#include "lib/sound/audio.h"
+#include "lib/sound/cdaudio.h"
+#include "lib/netplay/netplay.h"
+#include "qtscriptfuncs.h"
+#include "lib/ivis_opengl/tex.h"
 
 #include "action.h"
 #include "clparse.h"
@@ -55,13 +67,13 @@
 #include "research.h"
 #include "multilimit.h"
 #include "multigifts.h"
+#include "multimenu.h"
 #include "template.h"
 #include "lighting.h"
 #include "radar.h"
 #include "random.h"
 #include "frontend.h"
 #include "loop.h"
-#include "scriptextern.h"
 #include "gateway.h"
 #include "mapgrid.h"
 #include "lighting.h"
@@ -70,8 +82,10 @@
 #include "projectile.h"
 #include "component.h"
 #include "seqdisp.h"
+#include "ai.h"
+#include "advvis.h"
+#include "loadsave.h"
 
-#define FAKE_REF_LASSAT 999
 #define ALL_PLAYERS -1
 #define ALLIES -2
 #define ENEMIES -3
@@ -90,14 +104,119 @@ enum Scrcb {
 	SCRCB_HEA,
 	SCRCB_ELW,
 	SCRCB_HIT,
-	SCRCB_LAST = SCRCB_HIT
+	SCRCB_LIMIT,
+	SCRCB_LAST = SCRCB_LIMIT
 };
 
-// TODO, move this stuff into a script common subsystem
-#include "scriptfuncs.h"
-extern bool structDoubleCheck(BASE_STATS *psStat, UDWORD xx, UDWORD yy, SDWORD maxBlockingTiles);
-extern Vector2i positions[MAX_PLAYERS];
-extern std::vector<Vector2i> derricks;
+Vector2i positions[MAX_PLAYERS];
+std::vector<Vector2i> derricks;
+
+void scriptSetStartPos(int position, int x, int y)
+{
+	positions[position].x = x;
+	positions[position].y = y;
+	debug(LOG_SCRIPT, "Setting start position %d to (%d, %d)", position, x, y);
+}
+
+void scriptSetDerrickPos(int x, int y)
+{
+	Vector2i pos(x, y);
+	derricks.push_back(pos);
+}
+
+bool scriptInit()
+{
+	int i;
+
+	for (i = 0; i < MAX_PLAYERS; i++)
+	{
+		scriptSetStartPos(i, 0, 0);
+	}
+	derricks.clear();
+	derricks.reserve(8 * MAX_PLAYERS);
+	return true;
+}
+
+Vector2i getPlayerStartPosition(int player)
+{
+	return positions[player];
+}
+
+// additional structure check
+static bool structDoubleCheck(BASE_STATS *psStat, UDWORD xx, UDWORD yy, SDWORD maxBlockingTiles)
+{
+	UDWORD		x, y, xTL, yTL, xBR, yBR;
+	UBYTE		count = 0;
+	STRUCTURE_STATS	*psBuilding = (STRUCTURE_STATS *)psStat;
+
+	xTL = xx - 1;
+	yTL = yy - 1;
+	xBR = (xx + psBuilding->baseWidth);
+	yBR = (yy + psBuilding->baseBreadth);
+
+	// check against building in a gateway, as this can seriously block AI passages
+	for (auto psGate : gwGetGateways())
+	{
+		for (x = xx; x <= xBR; x++)
+		{
+			for (y = yy; y <= yBR; y++)
+			{
+				if ((x >= psGate->x1 && x <= psGate->x2) && (y >= psGate->y1 && y <= psGate->y2))
+				{
+					return false;
+				}
+			}
+		}
+	}
+
+	// can you get past it?
+	y = yTL;	// top
+	for (x = xTL; x != xBR + 1; x++)
+	{
+		if (fpathBlockingTile(x, y, PROPULSION_TYPE_WHEELED))
+		{
+			count++;
+			break;
+		}
+	}
+
+	y = yBR;	// bottom
+	for (x = xTL; x != xBR + 1; x++)
+	{
+		if (fpathBlockingTile(x, y, PROPULSION_TYPE_WHEELED))
+		{
+			count++;
+			break;
+		}
+	}
+
+	x = xTL;	// left
+	for (y = yTL + 1; y != yBR; y++)
+	{
+		if (fpathBlockingTile(x, y, PROPULSION_TYPE_WHEELED))
+		{
+			count++;
+			break;
+		}
+	}
+
+	x = xBR;	// right
+	for (y = yTL + 1; y != yBR; y++)
+	{
+		if (fpathBlockingTile(x, y, PROPULSION_TYPE_WHEELED))
+		{
+			count++;
+			break;
+		}
+	}
+
+	//make sure this location is not blocked from too many sides
+	if ((count <= maxBlockingTiles) || (maxBlockingTiles == -1))
+	{
+		return true;
+	}
+	return false;
+}
 
 // private qtscript bureaucracy
 typedef QMap<BASE_OBJECT *, int> GROUPMAP;
@@ -121,50 +240,55 @@ struct LABEL
 };
 typedef QMap<QString, LABEL> LABELMAP;
 static LABELMAP labels;
-static QStandardItemModel *labelModel = nullptr;
+static QPointer<QStandardItemModel> labelModel;
 
 #define SCRIPT_ASSERT_PLAYER(_context, _player) \
 	SCRIPT_ASSERT(_context, _player >= 0 && _player < MAX_PLAYERS, "Invalid player index %d", _player);
 
+#define WzStringToQScriptValue(_engine, _wzstring) \
+	QScriptValue(_engine, QString::fromUtf8(_wzstring.toUtf8().c_str()))
+
 // ----------------------------------------------------------------------------------------
 // Utility functions -- not called directly from scripts
 
-static QScriptValue mapJsonToQScriptValue(QScriptEngine *engine, const QJsonValue &instance); // forward decl
-
-static QScriptValue mapJsonObjectToQScriptValue(QScriptEngine *engine, const QJsonObject &obj)
+static QScriptValue mapJsonObjectToQScriptValue(QScriptEngine *engine, const nlohmann::json &obj, QScriptValue::PropertyFlags flags)
 {
 	QScriptValue value = engine->newObject();
-	QStringList const keys = obj.keys();
-	for (int i = 0; i < keys.size(); i++)
+	for (auto it = obj.begin(); it != obj.end(); ++it)
 	{
-		QScriptValue::PropertyFlags flags = QScriptValue::ReadOnly | QScriptValue::Undeletable;
-		value.setProperty(keys[i], mapJsonToQScriptValue(engine, obj.value(keys[i])), flags);
+		value.setProperty(QString::fromUtf8(it.key().c_str()), mapJsonToQScriptValue(engine, it.value(), flags), flags);
 	}
 	return value;
 }
 
-static QScriptValue mapJsonArrayToQScriptValue(QScriptEngine *engine, const QJsonArray &array)
+static QScriptValue mapJsonArrayToQScriptValue(QScriptEngine *engine, const nlohmann::json &array, QScriptValue::PropertyFlags flags)
 {
 	QScriptValue value = engine->newArray(array.size());
 	for (int i = 0; i < array.size(); i++)
 	{
-		QScriptValue::PropertyFlags flags = QScriptValue::Undeletable | QScriptValue::ReadOnly;
-		value.setProperty(i, mapJsonToQScriptValue(engine, array[i]), flags);
+		value.setProperty(i, mapJsonToQScriptValue(engine, array.at(i), flags), flags);
 	}
 	return value;
 }
 
-static QScriptValue mapJsonToQScriptValue(QScriptEngine *engine, const QJsonValue &instance)
+QScriptValue mapJsonToQScriptValue(QScriptEngine *engine, const nlohmann::json &instance, QScriptValue::PropertyFlags flags)
 {
 	switch (instance.type())
 	{
-	case QJsonValue::Null : return QScriptValue::NullValue;
-	case QJsonValue::Bool : return instance.toBool();
-	case QJsonValue::Double	: return instance.toDouble();
-	case QJsonValue::String	: return instance.toString();
-	case QJsonValue::Array : return mapJsonArrayToQScriptValue(engine, instance.toArray());
-	case QJsonValue::Object : return mapJsonObjectToQScriptValue(engine, instance.toObject());
-	case QJsonValue::Undefined : return QScriptValue::UndefinedValue;
+		// IMPORTANT: To match the prior behavior of loading a QVariant from the JSON value and using engine->toScriptValue(QVariant)
+		//			  to convert to a QScriptValue, "null" JSON values *MUST* map to QScriptValue::UndefinedValue.
+		//
+		//			  If they are set to QScriptValue::NullValue, it causes issues for libcampaign.js. (As the values become "defined".)
+		//
+		case json::value_t::null : return QScriptValue::UndefinedValue;
+		case json::value_t::boolean : return engine->toScriptValue(instance.get<bool>());
+		case json::value_t::number_integer: return engine->toScriptValue(instance.get<int>());
+		case json::value_t::number_unsigned: return engine->toScriptValue(instance.get<unsigned>());
+		case json::value_t::number_float: return engine->toScriptValue(instance.get<double>());
+		case json::value_t::string	: return engine->toScriptValue(QString::fromUtf8(instance.get<WzString>().toUtf8().c_str()));
+		case json::value_t::array : return mapJsonArrayToQScriptValue(engine, instance, flags);
+		case json::value_t::object : return mapJsonObjectToQScriptValue(engine, instance, flags);
+		case json::value_t::discarded : return QScriptValue::UndefinedValue;
 	}
 	return QScriptValue::UndefinedValue; // should never be reached
 }
@@ -313,24 +437,6 @@ void showLabel(const QString &key, bool clear_old, bool jump_to)
 			}
 		}
 	}
-	else if (l.type == SCRIPT_RADIUS)
-	{
-		if (jump_to)
-		{
-			setViewPos(map_coord(l.p1.x), map_coord(l.p1.y), false); // move camera position
-		}
-		for (int x = MAX(map_coord(l.p1.x - l.p2.x), 0); x < MIN(map_coord(l.p1.x + l.p2.x), mapWidth); x++)
-		{
-			for (int y = MAX(map_coord(l.p1.y - l.p2.x), 0); y < MIN(map_coord(l.p1.y + l.p2.x), mapHeight); y++) // l.p2.x is radius, not a bug
-			{
-				if (iHypot(map_coord(l.p1) - Vector2i(x, y)) < map_coord(l.p2.x))
-				{
-					MAPTILE *psTile = mapTile(x, y);
-					psTile->tileInfoBits |= BITS_MARKED;
-				}
-			}
-		}
-	}
 	else if (l.type == OBJ_DROID || l.type == OBJ_FEATURE || l.type == OBJ_STRUCTURE)
 	{
 		BASE_OBJECT *psObj = IdToObject((OBJECT_TYPE)l.type, l.id, l.player);
@@ -372,18 +478,24 @@ void showLabel(const QString &key, bool clear_old, bool jump_to)
 std::pair<bool, int> seenLabelCheck(QScriptEngine *engine, BASE_OBJECT *seen, BASE_OBJECT *viewer)
 {
 	GROUPMAP *psMap = groups.value(engine);
+	ASSERT_OR_RETURN(std::make_pair(false, 0), psMap != nullptr, "Non-existent groupmap for engine");
 	int groupId = psMap->value(seen);
 	bool foundObj = false, foundGroup = false;
 	for (auto &l : labels)
 	{
-		if (l.id == seen->id && l.triggered == 0
-		    && (l.subscriber == ALL_PLAYERS || l.subscriber == viewer->player))
+		if (l.triggered != 0 || !(l.subscriber == ALL_PLAYERS || l.subscriber == viewer->player))
+		{
+			continue;
+		}
+
+		// Don't let a seen game object ID which matches a group label ID to prematurely
+		// trigger a group label.
+		if (l.type != SCRIPT_GROUP && l.id == seen->id)
 		{
 			l.triggered = viewer->id; // record who made the discovery
 			foundObj = true;
 		}
-		else if (l.type == SCRIPT_GROUP && l.id == groupId && l.triggered == 0
-		         && (l.subscriber == ALL_PLAYERS || l.subscriber == viewer->player))
+		else if (l.type == SCRIPT_GROUP && l.id == groupId)
 		{
 			l.triggered = viewer->id; // record who made the discovery
 			foundGroup = true;
@@ -406,7 +518,7 @@ bool areaLabelCheck(DROID *psDroid)
 		LABEL &l = i.value();
 		if (l.triggered == 0 && (l.subscriber == ALL_PLAYERS || l.subscriber == psDroid->player)
 		    && ((l.type == SCRIPT_AREA && l.p1.x < x && l.p1.y < y && l.p2.x > x && l.p2.y > y)
-		        || (l.type == SCRIPT_RADIUS && iHypot(l.p1 - psDroid->pos.xy) < l.p2.x)))
+		        || (l.type == SCRIPT_RADIUS && iHypot(l.p1 - psDroid->pos.xy()) < l.p2.x)))
 		{
 			// We're inside an untriggered area
 			activated = true;
@@ -454,17 +566,18 @@ static bool groupAddObject(BASE_OBJECT *psObj, int groupId, QScriptEngine *engin
 	return true; // inserted
 }
 
-//;; \subsection{Research}
+//;; ## Research
+//;;
 //;; Describes a research item. The following properties are defined:
-//;; \begin{description}
-//;; \item[power] Number of power points needed for starting the research.
-//;; \item[points] Number of research points needed to complete the research.
-//;; \item[started] A boolean saying whether or not this research has been started by current player or any of its allies.
-//;; \item[done] A boolean saying whether or not this research has been completed.
-//;; \item[name] A string containing the full name of the research.
-//;; \item[id] A string containing the index name of the research.
-//;; \item[type] The type will always be RESEARCH_DATA.
-//;; \end{description}
+//;;
+//;; * ```power``` Number of power points needed for starting the research.
+//;; * ```points``` Number of research points needed to complete the research.
+//;; * ```started``` A boolean saying whether or not this research has been started by current player or any of its allies.
+//;; * ```done``` A boolean saying whether or not this research has been completed.
+//;; * ```name``` A string containing the full name of the research.
+//;; * ```id``` A string containing the index name of the research.
+//;; * ```type``` The type will always be ```RESEARCH_DATA```.
+//;;
 QScriptValue convResearch(RESEARCH *psResearch, QScriptEngine *engine, int player)
 {
 	QScriptValue value = engine->newObject();
@@ -481,34 +594,35 @@ QScriptValue convResearch(RESEARCH *psResearch, QScriptEngine *engine, int playe
 	}
 	value.setProperty("started", started); // including whether an ally has started it
 	value.setProperty("done", IsResearchCompleted(&asPlayerResList[player][psResearch->index]));
-	value.setProperty("fullname", psResearch->name); // temporary
-	value.setProperty("name", psResearch->id); // will be changed to contain fullname
-	value.setProperty("id", psResearch->id);
+	value.setProperty("fullname", WzStringToQScriptValue(engine, psResearch->name)); // temporary
+	value.setProperty("name", WzStringToQScriptValue(engine, psResearch->id)); // will be changed to contain fullname
+	value.setProperty("id", WzStringToQScriptValue(engine, psResearch->id));
 	value.setProperty("type", SCRIPT_RESEARCH);
-	value.setProperty("results", mapJsonToQScriptValue(engine, psResearch->results));
+	value.setProperty("results", mapJsonToQScriptValue(engine, psResearch->results, QScriptValue::ReadOnly | QScriptValue::Undeletable));
 	return value;
 }
 
-//;; \subsection{Structure\label{objects:structure}}
+//;; ## Structure
+//;;
 //;; Describes a structure (building). It inherits all the properties of the base object (see below).
 //;; In addition, the following properties are defined:
-//;; \begin{description}
-//;; \item[status] The completeness status of the structure. It will be one of BEING_BUILT and BUILT.
-//;; \item[type] The type will always be STRUCTURE.
-//;; \item[cost] What it would cost to build this structure. (3.2+ only)
-//;; \item[stattype] The stattype defines the type of structure. It will be one of HQ, FACTORY, POWER_GEN, RESOURCE_EXTRACTOR,
-//;; LASSAT, DEFENSE, WALL, RESEARCH_LAB, REPAIR_FACILITY, CYBORG_FACTORY, VTOL_FACTORY, REARM_PAD, SAT_UPLINK, GATE
-//;; and COMMAND_CONTROL.
-//;; \item[modules] If the stattype is set to one of the factories, POWER_GEN or RESEARCH_LAB, then this property is set to the
+//;;
+//;; * ```status``` The completeness status of the structure. It will be one of ```BEING_BUILT``` and ```BUILT```.
+//;; * ```type``` The type will always be ```STRUCTURE```.
+//;; * ```cost``` What it would cost to build this structure. (3.2+ only)
+//;; * ```stattype``` The stattype defines the type of structure. It will be one of ```HQ```, ```FACTORY```, ```POWER_GEN```,
+//;; ```RESOURCE_EXTRACTOR```, ```LASSAT```, ```DEFENSE```, ```WALL```, ```RESEARCH_LAB```, ```REPAIR_FACILITY```,
+//;; ```CYBORG_FACTORY```, ```VTOL_FACTORY```, ```REARM_PAD```, ```SAT_UPLINK```, ```GATE``` and ```COMMAND_CONTROL```.
+//;; * ```modules``` If the stattype is set to one of the factories, ```POWER_GEN``` or ```RESEARCH_LAB```, then this property is set to the
 //;; number of module upgrades it has.
-//;; \item[canHitAir] True if the structure has anti-air capabilities. (3.2+ only)
-//;; \item[canHitGround] True if the structure has anti-ground capabilities. (3.2+ only)
-//;; \item[isSensor] True if the structure has sensor ability. (3.2+ only)
-//;; \item[isCB] True if the structure has counter-battery ability. (3.2+ only)
-//;; \item[isRadarDetector] True if the structure has radar detector ability. (3.2+ only)
-//;; \item[range] Maximum range of its weapons. (3.2+ only)
-//;; \item[hasIndirect] One or more of the structure's weapons are indirect. (3.2+ only)
-//;; \end{description}
+//;; * ```canHitAir``` True if the structure has anti-air capabilities. (3.2+ only)
+//;; * ```canHitGround``` True if the structure has anti-ground capabilities. (3.2+ only)
+//;; * ```isSensor``` True if the structure has sensor ability. (3.2+ only)
+//;; * ```isCB``` True if the structure has counter-battery ability. (3.2+ only)
+//;; * ```isRadarDetector``` True if the structure has radar detector ability. (3.2+ only)
+//;; * ```range``` Maximum range of its weapons. (3.2+ only)
+//;; * ```hasIndirect``` One or more of the structure's weapons are indirect. (3.2+ only)
+//;;
 QScriptValue convStructure(STRUCTURE *psStruct, QScriptEngine *engine)
 {
 	bool aa = false;
@@ -523,7 +637,7 @@ QScriptValue convStructure(STRUCTURE *psStruct, QScriptEngine *engine)
 			aa = aa || psWeap->surfaceToAir & SHOOT_IN_AIR;
 			ga = ga || psWeap->surfaceToAir & SHOOT_ON_GROUND;
 			indirect = indirect || psWeap->movementModel == MM_INDIRECT || psWeap->movementModel == MM_HOMINGINDIRECT;
-			range = MAX((int)psWeap->upgrade[psStruct->player].maxRange, range);
+			range = MAX(proj_GetLongRange(psWeap, psStruct->player), range);
 		}
 	}
 	QScriptValue value = convObj(psStruct, engine);
@@ -546,11 +660,6 @@ QScriptValue convStructure(STRUCTURE *psStruct, QScriptEngine *engine)
 		break;
 	case REF_GENERIC:
 	case REF_DEFENSE:
-		if (isLasSat(psStruct->pStructureType))
-		{
-			value.setProperty("stattype", (int)FAKE_REF_LASSAT, QScriptValue::ReadOnly);
-			break;
-		}
 		value.setProperty("stattype", (int)REF_DEFENSE, QScriptValue::ReadOnly);
 		break;
 	default:
@@ -573,9 +682,9 @@ QScriptValue convStructure(STRUCTURE *psStruct, QScriptEngine *engine)
 	{
 		QScriptValue weapon = engine->newObject();
 		const WEAPON_STATS *psStats = asWeaponStats + psStruct->asWeaps[j].nStat;
-		weapon.setProperty("fullname", psStats->name, QScriptValue::ReadOnly);
-		weapon.setProperty("name", psStats->id, QScriptValue::ReadOnly); // will be changed to contain full name
-		weapon.setProperty("id", psStats->id, QScriptValue::ReadOnly);
+		weapon.setProperty("fullname", WzStringToQScriptValue(engine, psStats->name), QScriptValue::ReadOnly);
+		weapon.setProperty("name", WzStringToQScriptValue(engine, psStats->id), QScriptValue::ReadOnly); // will be changed to contain full name
+		weapon.setProperty("id", WzStringToQScriptValue(engine, psStats->id), QScriptValue::ReadOnly);
 		weapon.setProperty("lastFired", psStruct->asWeaps[j].lastFired, QScriptValue::ReadOnly);
 		weaponlist.setProperty(j, weapon, QScriptValue::ReadOnly);
 	}
@@ -583,14 +692,14 @@ QScriptValue convStructure(STRUCTURE *psStruct, QScriptEngine *engine)
 	return value;
 }
 
-//;; \subsection{Feature}
-//;; Describes a feature (a \emph{game object} not owned by any player). It inherits all the properties of the base object (see below).
+//;; ## Feature
+//;;
+//;; Describes a feature (a **game object** not owned by any player). It inherits all the properties of the base object (see below).
 //;; In addition, the following properties are defined:
-//;; \begin{description}
-//;; \item[type] It will always be FEATURE.
-//;; \item[stattype] The type of feature. Defined types are OIL_RESOURCE, OIL_DRUM and ARTIFACT.
-//;; \item[damageable] Can this feature be damaged?
-//;; \end{description}
+//;; * ```type``` It will always be ```FEATURE```.
+//;; * ```stattype``` The type of feature. Defined types are ```OIL_RESOURCE```, ```OIL_DRUM``` and ```ARTIFACT```.
+//;; * ```damageable``` Can this feature be damaged?
+//;;
 QScriptValue convFeature(FEATURE *psFeature, QScriptEngine *engine)
 {
 	QScriptValue value = convObj(psFeature, engine);
@@ -601,72 +710,68 @@ QScriptValue convFeature(FEATURE *psFeature, QScriptEngine *engine)
 	return value;
 }
 
-//;; \subsection{Droid}
+//;; ## Droid
+//;;
 //;; Describes a droid. It inherits all the properties of the base object (see below).
 //;; In addition, the following properties are defined:
-//;; \begin{description}
-//;; \item[type] It will always be DROID.
-//;; \item[order] The current order of the droid. This is its plan. The following orders are defined:
-//;;  \begin{description}
-//;;   \item[DORDER_ATTACK] Order a droid to attack something.
-//;;   \item[DORDER_MOVE] Order a droid to move somewhere.
-//;;   \item[DORDER_SCOUT] Order a droid to move somewhere and stop to attack anything on the way.
-//;;   \item[DORDER_BUILD] Order a droid to build something.
-//;;   \item[DORDER_HELPBUILD] Order a droid to help build something.
-//;;   \item[DORDER_LINEBUILD] Order a droid to build something repeatedly in a line.
-//;;   \item[DORDER_REPAIR] Order a droid to repair something.
-//;;   \item[DORDER_RETREAT] Order a droid to retreat back to HQ.
-//;;   \item[DORDER_PATROL] Order a droid to patrol.
-//;;   \item[DORDER_DEMOLISH] Order a droid to demolish something.
-//;;   \item[DORDER_EMBARK] Order a droid to embark on a transport.
-//;;   \item[DORDER_DISEMBARK] Order a transport to disembark its units at the given position.
-//;;   \item[DORDER_FIRESUPPORT] Order a droid to fire at whatever the target sensor is targeting. (3.2+ only)
-//;;   \item[DORDER_COMMANDERSUPPORT] Assign the droid to a commander. (3.2+ only)
-//;;   \item[DORDER_STOP] Order a droid to stop whatever it is doing. (3.2+ only)
-//;;   \item[DORDER_RTR] Order a droid to return for repairs. (3.2+ only)
-//;;   \item[DORDER_RTB] Order a droid to return to base. (3.2+ only)
-//;;   \item[DORDER_HOLD] Order a droid to hold its position. (3.2+ only)
-//;;   \item[DORDER_REARM] Order a VTOL droid to rearm. If given a target, will go to specified rearm pad. If not, will go to nearest rearm pad. (3.2+ only)
-//;;   \item[DORDER_OBSERVE] Order a droid to keep a target in sensor view. (3.2+ only)
-//;;   \item[DORDER_RECOVER] Order a droid to pick up something. (3.2+ only)
-//;;   \item[DORDER_RECYCLE] Order a droid to factory for recycling. (3.2+ only)
-//;;  \end{description}
-//;; \item[action] The current action of the droid. This is how it intends to carry out its plan. The
+//;;
+//;; * ```type``` It will always be ```DROID```.
+//;; * ```order``` The current order of the droid. This is its plan. The following orders are defined:
+//;;   * ```DORDER_ATTACK``` Order a droid to attack something.
+//;;   * ```DORDER_MOVE``` Order a droid to move somewhere.
+//;;   * ```DORDER_SCOUT``` Order a droid to move somewhere and stop to attack anything on the way.
+//;;   * ```DORDER_BUILD``` Order a droid to build something.
+//;;   * ```DORDER_HELPBUILD``` Order a droid to help build something.
+//;;   * ```DORDER_LINEBUILD``` Order a droid to build something repeatedly in a line.
+//;;   * ```DORDER_REPAIR``` Order a droid to repair something.
+//;;   * ```DORDER_PATROL``` Order a droid to patrol.
+//;;   * ```DORDER_DEMOLISH``` Order a droid to demolish something.
+//;;   * ```DORDER_EMBARK``` Order a droid to embark on a transport.
+//;;   * ```DORDER_DISEMBARK``` Order a transport to disembark its units at the given position.
+//;;   * ```DORDER_FIRESUPPORT``` Order a droid to fire at whatever the target sensor is targeting. (3.2+ only)
+//;;   * ```DORDER_COMMANDERSUPPORT``` Assign the droid to a commander. (3.2+ only)
+//;;   * ```DORDER_STOP``` Order a droid to stop whatever it is doing. (3.2+ only)
+//;;   * ```DORDER_RTR``` Order a droid to return for repairs. (3.2+ only)
+//;;   * ```DORDER_RTB``` Order a droid to return to base. (3.2+ only)
+//;;   * ```DORDER_HOLD``` Order a droid to hold its position. (3.2+ only)
+//;;   * ```DORDER_REARM``` Order a VTOL droid to rearm. If given a target, will go to specified rearm pad. If not, will go to nearest rearm pad. (3.2+ only)
+//;;   * ```DORDER_OBSERVE``` Order a droid to keep a target in sensor view. (3.2+ only)
+//;;   * ```DORDER_RECOVER``` Order a droid to pick up something. (3.2+ only)
+//;;   * ```DORDER_RECYCLE``` Order a droid to factory for recycling. (3.2+ only)
+//;; * ```action``` The current action of the droid. This is how it intends to carry out its plan. The
 //;; C++ code may change the action frequently as it tries to carry out its order. You never want to set
 //;; the action directly, but it may be interesting to look at what it currently is.
-//;; \item[droidType] The droid's type. The following types are defined:
-//;;  \begin{description}
-//;;   \item[DROID_CONSTRUCT] Trucks and cyborg constructors.
-//;;   \item[DROID_WEAPON] Droids with weapon turrets, except cyborgs.
-//;;   \item[DROID_PERSON] Non-cyborg two-legged units, like scavengers.
-//;;   \item[DROID_REPAIR] Units with repair turret, including repair cyborgs.
-//;;   \item[DROID_SENSOR] Units with sensor turret.
-//;;   \item[DROID_ECM] Unit with ECM jammer turret.
-//;;   \item[DROID_CYBORG] Cyborgs with weapons.
-//;;   \item[DROID_TRANSPORTER] Cyborg transporter.
-//;;   \item[DROID_SUPERTRANSPORTER] Droid transporter.
-//;;   \item[DROID_COMMAND] Commanders.
-//;;  \end{description}
-//;; \item[group] The group this droid is member of. This is a numerical ID. If not a member of any group, will be set to \emph{null}.
-//;; \item[armed] The percentage of weapon capability that is fully armed. Will be \emph{null} for droids other than VTOLs.
-//;; \item[experience] Amount of experience this droid has, based on damage it has dealt to enemies.
-//;; \item[cost] What it would cost to build the droid. (3.2+ only)
-//;; \item[isVTOL] True if the droid is VTOL. (3.2+ only)
-//;; \item[canHitAir] True if the droid has anti-air capabilities. (3.2+ only)
-//;; \item[canHitGround] True if the droid has anti-ground capabilities. (3.2+ only)
-//;; \item[isSensor] True if the droid has sensor ability. (3.2+ only)
-//;; \item[isCB] True if the droid has counter-battery ability. (3.2+ only)
-//;; \item[isRadarDetector] True if the droid has radar detector ability. (3.2+ only)
-//;; \item[hasIndirect] One or more of the droid's weapons are indirect. (3.2+ only)
-//;; \item[range] Maximum range of its weapons. (3.2+ only)
-//;; \item[body] The body component of the droid. (3.2+ only)
-//;; \item[propulsion] The propulsion component of the droid. (3.2+ only)
-//;; \item[weapons] The weapon components of the droid, as an array. Contains 'name', 'id', 'armed' percentage and 'lastFired' properties. (3.2+ only)
-//;; \item[cargoCapacity] Defined for transporters only: Total cargo capacity (number of items that will fit may depend on their size). (3.2+ only)
-//;; \item[cargoSpace] Defined for transporters only: Cargo capacity left. (3.2+ only)
-//;; \item[cargoCount] Defined for transporters only: Number of individual \emph{items} in the cargo hold. (3.2+ only)
-//;; \item[cargoSize] The amount of cargo space the droid will take inside a transport. (3.2+ only)
-//;; \end{description}
+//;; * ```droidType``` The droid's type. The following types are defined:
+//;;   * ```DROID_CONSTRUCT``` Trucks and cyborg constructors.
+//;;   * ```DROID_WEAPON``` Droids with weapon turrets, except cyborgs.
+//;;   * ```DROID_PERSON``` Non-cyborg two-legged units, like scavengers.
+//;;   * ```DROID_REPAIR``` Units with repair turret, including repair cyborgs.
+//;;   * ```DROID_SENSOR``` Units with sensor turret.
+//;;   * ```DROID_ECM``` Unit with ECM jammer turret.
+//;;   * ```DROID_CYBORG``` Cyborgs with weapons.
+//;;   * ```DROID_TRANSPORTER``` Cyborg transporter.
+//;;   * ```DROID_SUPERTRANSPORTER``` Droid transporter.
+//;;   * ```DROID_COMMAND``` Commanders.
+//;; * ```group``` The group this droid is member of. This is a numerical ID. If not a member of any group, will be set to \emph{null}.
+//;; * ```armed``` The percentage of weapon capability that is fully armed. Will be \emph{null} for droids other than VTOLs.
+//;; * ```experience``` Amount of experience this droid has, based on damage it has dealt to enemies.
+//;; * ```cost``` What it would cost to build the droid. (3.2+ only)
+//;; * ```isVTOL``` True if the droid is VTOL. (3.2+ only)
+//;; * ```canHitAir``` True if the droid has anti-air capabilities. (3.2+ only)
+//;; * ```canHitGround``` True if the droid has anti-ground capabilities. (3.2+ only)
+//;; * ```isSensor``` True if the droid has sensor ability. (3.2+ only)
+//;; * ```isCB``` True if the droid has counter-battery ability. (3.2+ only)
+//;; * ```isRadarDetector``` True if the droid has radar detector ability. (3.2+ only)
+//;; * ```hasIndirect``` One or more of the droid's weapons are indirect. (3.2+ only)
+//;; * ```range``` Maximum range of its weapons. (3.2+ only)
+//;; * ```body``` The body component of the droid. (3.2+ only)
+//;; * ```propulsion``` The propulsion component of the droid. (3.2+ only)
+//;; * ```weapons``` The weapon components of the droid, as an array. Contains 'name', 'id', 'armed' percentage and 'lastFired' properties. (3.2+ only)
+//;; * ```cargoCapacity``` Defined for transporters only: Total cargo capacity (number of items that will fit may depend on their size). (3.2+ only)
+//;; * ```cargoSpace``` Defined for transporters only: Cargo capacity left. (3.2+ only)
+//;; * ```cargoCount``` Defined for transporters only: Number of individual \emph{items} in the cargo hold. (3.2+ only)
+//;; * ```cargoSize``` The amount of cargo space the droid will take inside a transport. (3.2+ only)
+//;;
 QScriptValue convDroid(DROID *psDroid, QScriptEngine *engine)
 {
 	bool aa = false;
@@ -683,7 +788,7 @@ QScriptValue convDroid(DROID *psDroid, QScriptEngine *engine)
 			aa = aa || psWeap->surfaceToAir & SHOOT_IN_AIR;
 			ga = ga || psWeap->surfaceToAir & SHOOT_ON_GROUND;
 			indirect = indirect || psWeap->movementModel == MM_INDIRECT || psWeap->movementModel == MM_HOMINGINDIRECT;
-			range = MAX((int)psWeap->upgrade[psDroid->player].maxRange, range);
+			range = MAX(proj_GetLongRange(psWeap, psDroid->player), range);
 		}
 	}
 	DROID_TYPE type = psDroid->droidType;
@@ -729,8 +834,8 @@ QScriptValue convDroid(DROID *psDroid, QScriptEngine *engine)
 	value.setProperty("droidType", (int)type, QScriptValue::ReadOnly);
 	value.setProperty("experience", (double)psDroid->experience / 65536.0, QScriptValue::ReadOnly);
 	value.setProperty("health", 100.0 / (double)psDroid->originalBody * (double)psDroid->body, QScriptValue::ReadOnly);
-	value.setProperty("body", asBodyStats[psDroid->asBits[COMP_BODY]].id, QScriptValue::ReadOnly);
-	value.setProperty("propulsion", asPropulsionStats[psDroid->asBits[COMP_PROPULSION]].id, QScriptValue::ReadOnly);
+	value.setProperty("body", WzStringToQScriptValue(engine, asBodyStats[psDroid->asBits[COMP_BODY]].id), QScriptValue::ReadOnly);
+	value.setProperty("propulsion", WzStringToQScriptValue(engine, asPropulsionStats[psDroid->asBits[COMP_PROPULSION]].id), QScriptValue::ReadOnly);
 	value.setProperty("armed", 0.0, QScriptValue::ReadOnly); // deprecated!
 	QScriptValue weaponlist = engine->newArray(psDroid->numWeaps);
 	for (int j = 0; j < psDroid->numWeaps; j++)
@@ -738,9 +843,9 @@ QScriptValue convDroid(DROID *psDroid, QScriptEngine *engine)
 		int armed = droidReloadBar(psDroid, &psDroid->asWeaps[j], j);
 		QScriptValue weapon = engine->newObject();
 		const WEAPON_STATS *psStats = asWeaponStats + psDroid->asWeaps[j].nStat;
-		weapon.setProperty("fullname", psStats->name, QScriptValue::ReadOnly);
-		weapon.setProperty("id", psStats->id, QScriptValue::ReadOnly); // will be changed to full name
-		weapon.setProperty("name", psStats->id, QScriptValue::ReadOnly);
+		weapon.setProperty("fullname", WzStringToQScriptValue(engine, psStats->name), QScriptValue::ReadOnly);
+		weapon.setProperty("id", WzStringToQScriptValue(engine, psStats->id), QScriptValue::ReadOnly); // will be changed to full name
+		weapon.setProperty("name", WzStringToQScriptValue(engine, psStats->id), QScriptValue::ReadOnly);
 		weapon.setProperty("lastFired", psDroid->asWeaps[j].lastFired, QScriptValue::ReadOnly);
 		weapon.setProperty("armed", armed, QScriptValue::ReadOnly);
 		weaponlist.setProperty(j, weapon, QScriptValue::ReadOnly);
@@ -750,24 +855,26 @@ QScriptValue convDroid(DROID *psDroid, QScriptEngine *engine)
 	return value;
 }
 
-//;; \subsection{Base Object}
-//;; Describes a basic object. It will always be a droid, structure or feature, but sometimes
-//;; the difference does not matter, and you can treat any of them simply as a basic object.
+//;; ## Base Object
+//;;
+//;; Describes a basic object. It will always be a droid, structure or feature, but sometimes the
+//;; difference does not matter, and you can treat any of them simply as a basic object. These
+//;; fields are also inherited by the droid, structure and feature objects.
 //;; The following properties are defined:
-//;; \begin{description}
-//;; \item[type] It will be one of DROID, STRUCTURE or FEATURE.
-//;; \item[id] The unique ID of this object.
-//;; \item[x] X position of the object in tiles.
-//;; \item[y] Y position of the object in tiles.
-//;; \item[z] Z (height) position of the object in tiles.
-//;; \item[player] The player owning this object.
-//;; \item[selected] A boolean saying whether 'selectedPlayer' has selected this object.
-//;; \item[name] A user-friendly name for this object.
-//;; \item[health] Percentage that this object is damaged (where 100 means not damaged at all).
-//;; \item[armour] Amount of armour points that protect against kinetic weapons.
-//;; \item[thermal] Amount of thermal protection that protect against heat based weapons.
-//;; \item[born] The game time at which this object was produced or came into the world. (3.2+ only)
-//;; \end{description}
+//;;
+//;; * ```type``` It will be one of ```DROID```, ```STRUCTURE``` or ```FEATURE```.
+//;; * ```id``` The unique ID of this object.
+//;; * ```x``` X position of the object in tiles.
+//;; * ```y``` Y position of the object in tiles.
+//;; * ```z``` Z (height) position of the object in tiles.
+//;; * ```player``` The player owning this object.
+//;; * ```selected``` A boolean saying whether 'selectedPlayer' has selected this object.
+//;; * ```name``` A user-friendly name for this object.
+//;; * ```health``` Percentage that this object is damaged (where 100 means not damaged at all).
+//;; * ```armour``` Amount of armour points that protect against kinetic weapons.
+//;; * ```thermal``` Amount of thermal protection that protect against heat based weapons.
+//;; * ```born``` The game time at which this object was produced or came into the world. (3.2+ only)
+//;;
 QScriptValue convObj(BASE_OBJECT *psObj, QScriptEngine *engine)
 {
 	QScriptValue value = engine->newObject();
@@ -784,7 +891,7 @@ QScriptValue convObj(BASE_OBJECT *psObj, QScriptEngine *engine)
 	value.setProperty("name", objInfo(psObj), QScriptValue::ReadOnly);
 	value.setProperty("born", psObj->born, QScriptValue::ReadOnly);
 	GROUPMAP *psMap = groups.value(engine);
-	if (psMap->contains(psObj))
+	if (psMap != nullptr && psMap->contains(psObj))
 	{
 		int group = psMap->value(psObj);
 		value.setProperty("group", group, QScriptValue::ReadOnly);
@@ -796,45 +903,44 @@ QScriptValue convObj(BASE_OBJECT *psObj, QScriptEngine *engine)
 	return value;
 }
 
-//;; \subsection{Template}
-//;; Describes a template type. Templates are droid designs that a player has created. This type is experimental
-//;; and subject to change.
+//;; ## Template
+//;;
+//;; Describes a template type. Templates are droid designs that a player has created.
 //;; The following properties are defined:
-//;; \begin{description}
-//;; \item[id] The ID of this object.
-//;; \item[name] Name of the template.
-//;; \item[cost] The power cost of the template if put into production.
-//;; \item[droidType] The type of droid that would be created.
-//;; \item[body] The name of the body type.
-//;; \item[propulsion] The name of the propulsion type.
-//;; \item[brain] The name of the brain type.
-//;; \item[repair] The name of the repair type.
-//;; \item[ecm] The name of the ECM (electronic counter-measure) type.
-//;; \item[construct] The name of the construction type.
-//;; \item[weapons] An array of weapon names attached to this template.
-//;; \end{description}
+//;;
+//;; * ```id``` The ID of this object.
+//;; * ```name``` Name of the template.
+//;; * ```cost``` The power cost of the template if put into production.
+//;; * ```droidType``` The type of droid that would be created.
+//;; * ```body``` The name of the body type.
+//;; * ```propulsion``` The name of the propulsion type.
+//;; * ```brain``` The name of the brain type.
+//;; * ```repair``` The name of the repair type.
+//;; * ```ecm``` The name of the ECM (electronic counter-measure) type.
+//;; * ```construct``` The name of the construction type.
+//;; * ```weapons``` An array of weapon names attached to this template.
 QScriptValue convTemplate(DROID_TEMPLATE *psTempl, QScriptEngine *engine)
 {
 	QScriptValue value = engine->newObject();
 	ASSERT_OR_RETURN(value, psTempl, "No object for conversion");
-	value.setProperty("fullname", psTempl->name, QScriptValue::ReadOnly);
-	value.setProperty("name", psTempl->id, QScriptValue::ReadOnly);
-	value.setProperty("id", psTempl->id, QScriptValue::ReadOnly);
+	value.setProperty("fullname", WzStringToQScriptValue(engine, psTempl->name), QScriptValue::ReadOnly);
+	value.setProperty("name", WzStringToQScriptValue(engine, psTempl->id), QScriptValue::ReadOnly);
+	value.setProperty("id", WzStringToQScriptValue(engine, psTempl->id), QScriptValue::ReadOnly);
 	value.setProperty("points", calcTemplateBuild(psTempl), QScriptValue::ReadOnly);
 	value.setProperty("power", calcTemplatePower(psTempl), QScriptValue::ReadOnly); // deprecated, use cost below
 	value.setProperty("cost", calcTemplatePower(psTempl), QScriptValue::ReadOnly);
 	value.setProperty("droidType", psTempl->droidType, QScriptValue::ReadOnly);
-	value.setProperty("body", (asBodyStats + psTempl->asParts[COMP_BODY])->id, QScriptValue::ReadOnly);
-	value.setProperty("propulsion", (asPropulsionStats + psTempl->asParts[COMP_PROPULSION])->id, QScriptValue::ReadOnly);
-	value.setProperty("brain", (asBrainStats + psTempl->asParts[COMP_BRAIN])->id, QScriptValue::ReadOnly);
-	value.setProperty("repair", (asRepairStats + psTempl->asParts[COMP_REPAIRUNIT])->id, QScriptValue::ReadOnly);
-	value.setProperty("ecm", (asECMStats + psTempl->asParts[COMP_ECM])->id, QScriptValue::ReadOnly);
-	value.setProperty("sensor", (asSensorStats + psTempl->asParts[COMP_SENSOR])->id, QScriptValue::ReadOnly);
-	value.setProperty("construct", (asConstructStats + psTempl->asParts[COMP_CONSTRUCT])->id, QScriptValue::ReadOnly);
+	value.setProperty("body", WzStringToQScriptValue(engine, (asBodyStats + psTempl->asParts[COMP_BODY])->id), QScriptValue::ReadOnly);
+	value.setProperty("propulsion", WzStringToQScriptValue(engine, (asPropulsionStats + psTempl->asParts[COMP_PROPULSION])->id), QScriptValue::ReadOnly);
+	value.setProperty("brain", WzStringToQScriptValue(engine, (asBrainStats + psTempl->asParts[COMP_BRAIN])->id), QScriptValue::ReadOnly);
+	value.setProperty("repair", WzStringToQScriptValue(engine, (asRepairStats + psTempl->asParts[COMP_REPAIRUNIT])->id), QScriptValue::ReadOnly);
+	value.setProperty("ecm", WzStringToQScriptValue(engine, (asECMStats + psTempl->asParts[COMP_ECM])->id), QScriptValue::ReadOnly);
+	value.setProperty("sensor", WzStringToQScriptValue(engine, (asSensorStats + psTempl->asParts[COMP_SENSOR])->id), QScriptValue::ReadOnly);
+	value.setProperty("construct", WzStringToQScriptValue(engine, (asConstructStats + psTempl->asParts[COMP_CONSTRUCT])->id), QScriptValue::ReadOnly);
 	QScriptValue weaponlist = engine->newArray(psTempl->numWeaps);
 	for (int j = 0; j < psTempl->numWeaps; j++)
 	{
-		weaponlist.setProperty(j, QScriptValue((asWeaponStats + psTempl->asWeaps[j])->id), QScriptValue::ReadOnly);
+		weaponlist.setProperty(j, WzStringToQScriptValue(engine, (asWeaponStats + psTempl->asWeaps[j])->id), QScriptValue::ReadOnly);
 	}
 	value.setProperty("weapons", weaponlist);
 	return value;
@@ -881,17 +987,18 @@ bool saveGroups(WzConfig &ini, QScriptEngine *engine)
 {
 	// Save group info as a list of group memberships for each droid
 	GROUPMAP *psMap = groups.value(engine);
+	ASSERT_OR_RETURN(false, psMap, "Non-existent groupmap for engine");
 	for (GROUPMAP::const_iterator i = psMap->constBegin(); i != psMap->constEnd(); ++i)
 	{
-		QStringList value;
+		std::vector<WzString> value;
 		BASE_OBJECT *psObj = i.key();
 		ASSERT(!isDead(psObj), "Wanted to save dead %s to savegame!", objInfo(psObj));
-		if (ini.contains(QString::number(psObj->id)))
+		if (ini.contains(WzString::number(psObj->id)))
 		{
-			value.push_back(ini.value(QString::number(psObj->id)).toString());
+			value.push_back(ini.value(WzString::number(psObj->id)).toWzString());
 		}
-		value.push_back(QString::number(i.value()));
-		ini.setValue(QString::number(psObj->id), value);
+		value.push_back(WzString::number(i.value()));
+		ini.setValue(WzString::number(psObj->id), value);
 	}
 	return true;
 }
@@ -912,13 +1019,13 @@ bool loadLabels(const char *filename)
 	}
 	WzConfig ini(filename, WzConfig::ReadOnly);
 	labels.clear();
-	QStringList list = ini.childGroups();
-	debug(LOG_SAVE, "Loading %d labels...", list.size());
+	std::vector<WzString> list = ini.childGroups();
+	debug(LOG_SAVE, "Loading %zu labels...", list.size());
 	for (int i = 0; i < list.size(); ++i)
 	{
 		ini.beginGroup(list[i]);
 		LABEL p;
-		QString label(ini.value("label").toString());
+		QString label(QString::fromUtf8(ini.value("label").toWzString().toUtf8().c_str()));
 		if (labels.contains(label))
 		{
 			debug(LOG_ERROR, "Duplicate label found");
@@ -972,13 +1079,13 @@ bool loadLabels(const char *filename)
 			p.id = groupidx--;
 			p.type = SCRIPT_GROUP;
 			p.player = ini.value("player").toInt();
-			QStringList memberList = ini.value("members").toStringList();
-			for (QString const &j : memberList)
+			std::vector<WzString> memberList = ini.value("members").toWzStringList();
+			for (WzString const &j : memberList)
 			{
 				int id = j.toInt();
 				BASE_OBJECT *psObj = IdToPointer(id, p.player);
 				ASSERT(psObj, "Unit %d belonging to player %d not found from label %s",
-				       id, p.player, list[i].toUtf8().constData());
+				       id, p.player, list[i].toUtf8().c_str());
 				p.idlist += id;
 			}
 			labels.insert(label, p);
@@ -1004,18 +1111,18 @@ bool writeLabels(const char *filename)
 		LABEL l = i.value();
 		if (l.type == SCRIPT_POSITION)
 		{
-			ini.beginGroup("position_" + QString::number(c[0]++));
+			ini.beginGroup("position_" + WzString::number(c[0]++));
 			ini.setVector2i("pos", l.p1);
-			ini.setValue("label", key);
+			ini.setValue("label", QStringToWzString(key));
 			ini.setValue("triggered", l.triggered);
 			ini.endGroup();
 		}
 		else if (l.type == SCRIPT_AREA)
 		{
-			ini.beginGroup("area_" + QString::number(c[1]++));
+			ini.beginGroup("area_" + WzString::number(c[1]++));
 			ini.setVector2i("pos1", l.p1);
 			ini.setVector2i("pos2", l.p2);
-			ini.setValue("label", key);
+			ini.setValue("label", QStringToWzString(key));
 			ini.setValue("player", l.player);
 			ini.setValue("triggered", l.triggered);
 			ini.setValue("subscriber", l.subscriber);
@@ -1023,10 +1130,10 @@ bool writeLabels(const char *filename)
 		}
 		else if (l.type == SCRIPT_RADIUS)
 		{
-			ini.beginGroup("radius_" + QString::number(c[2]++));
+			ini.beginGroup("radius_" + WzString::number(c[2]++));
 			ini.setVector2i("pos", l.p1);
 			ini.setValue("radius", l.p2.x);
-			ini.setValue("label", key);
+			ini.setValue("label", QStringToWzString(key));
 			ini.setValue("player", l.player);
 			ini.setValue("triggered", l.triggered);
 			ini.setValue("subscriber", l.subscriber);
@@ -1034,7 +1141,7 @@ bool writeLabels(const char *filename)
 		}
 		else if (l.type == SCRIPT_GROUP)
 		{
-			ini.beginGroup("group_" + QString::number(c[3]++));
+			ini.beginGroup("group_" + WzString::number(c[3]++));
 			ini.setValue("player", l.player);
 			ini.setValue("triggered", l.triggered);
 			QStringList list;
@@ -1042,18 +1149,21 @@ bool writeLabels(const char *filename)
 			{
 				list += QString::number(i);
 			}
-			ini.setValue("members", list);
-			ini.setValue("label", key);
+			std::list<WzString> wzlist;
+			std::transform(list.constBegin(), list.constEnd(), std::back_inserter(wzlist),
+						   [](const QString& qs) -> WzString { return QStringToWzString(qs); });
+			ini.setValue("members", wzlist);
+			ini.setValue("label", QStringToWzString(key));
 			ini.setValue("subscriber", l.subscriber);
 			ini.endGroup();
 		}
 		else
 		{
-			ini.beginGroup("object_" + QString::number(c[4]++));
+			ini.beginGroup("object_" + WzString::number(c[4]++));
 			ini.setValue("id", l.id);
 			ini.setValue("player", l.player);
 			ini.setValue("type", l.type);
-			ini.setValue("label", key);
+			ini.setValue("label", QStringToWzString(key));
 			ini.setValue("triggered", l.triggered);
 			ini.endGroup();
 		}
@@ -1066,17 +1176,19 @@ bool writeLabels(const char *filename)
 //
 // All script functions should be prefixed with "js_" then followed by same name as in script.
 
-//-- \subsection{getWeaponInfo(weapon id)}
+//-- ## getWeaponInfo(weapon id)
+//--
 //-- Return information about a particular weapon type. DEPRECATED - query the Stats object instead. (3.2+ only)
+//--
 static QScriptValue js_getWeaponInfo(QScriptContext *context, QScriptEngine *engine)
 {
 	QString id = context->argument(0).toString();
-	int idx = getCompFromName(COMP_WEAPON, id);
+	int idx = getCompFromName(COMP_WEAPON, QStringToWzString(id));
 	SCRIPT_ASSERT(context, idx >= 0, "No such weapon: %s", id.toUtf8().constData());
 	WEAPON_STATS *psStats = asWeaponStats + idx;
 	QScriptValue info = engine->newObject();
 	info.setProperty("id", id);
-	info.setProperty("name", psStats->name);
+	info.setProperty("name", WzStringToQScriptValue(engine, psStats->name));
 	info.setProperty("impactClass", psStats->weaponClass == WC_KINETIC ? "KINETIC" : "HEAT");
 	info.setProperty("damage", psStats->base.damage);
 	info.setProperty("firePause", psStats->base.firePause);
@@ -1084,17 +1196,19 @@ static QScriptValue js_getWeaponInfo(QScriptContext *context, QScriptEngine *eng
 	return QScriptValue(info);
 }
 
-//-- \subsection{resetLabel(label[, filter])}
+//-- ## resetLabel(label[, filter])
+//--
 //-- Reset the trigger on an label. Next time a unit enters the area, it will trigger
 //-- an area event. Next time an object or a group is seen, it will trigger a seen event.
 //-- Optionally add a filter on it in the second parameter, which can
 //-- be a specific player to watch for, or ALL_PLAYERS by default.
 //-- This is a fast operation of O(log n) algorithmic complexity. (3.2+ only)
-//-- \subsection{resetArea(label[, filter])}
+//-- ## resetArea(label[, filter])
 //-- Reset the trigger on an area. Next time a unit enters the area, it will trigger
 //-- an area event. Optionally add a filter on it in the second parameter, which can
 //-- be a specific player to watch for, or ALL_PLAYERS by default.
 //-- This is a fast operation of O(log n) algorithmic complexity. DEPRECATED - use resetLabel instead. (3.2+ only)
+//--
 static QScriptValue js_resetLabel(QScriptContext *context, QScriptEngine *)
 {
 	QString labelName = context->argument(0).toString();
@@ -1108,9 +1222,11 @@ static QScriptValue js_resetLabel(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{enumLabels([filter])}
+//-- ## enumLabels([filter])
+//--
 //-- Returns a string list of labels that exist for this map. The optional filter
 //-- parameter can be used to only return labels of one specific type. (3.2+ only)
+//--
 static QScriptValue js_enumLabels(QScriptContext *context, QScriptEngine *engine)
 {
 	QStringList matches;
@@ -1138,9 +1254,11 @@ static QScriptValue js_enumLabels(QScriptContext *context, QScriptEngine *engine
 	return result;
 }
 
-//-- \subsection{addLabel(object, label)}
+//-- ## addLabel(object, label)
+//--
 //-- Add a label to a game object. If there already is a label by that name, it is overwritten.
 //-- This is a fast operation of O(log n) algorithmic complexity. (3.2+ only)
+//--
 static QScriptValue js_addLabel(QScriptContext *context, QScriptEngine *engine)
 {
 	LABEL value;
@@ -1177,9 +1295,11 @@ static QScriptValue js_addLabel(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue();
 }
 
-//-- \subsection{removeLabel(label)}
+//-- ## removeLabel(label)
+//--
 //-- Remove a label from the game. Returns the number of labels removed, which should normally be
 //-- either 1 (label found) or 0 (label not found). (3.2+ only)
+//--
 static QScriptValue js_removeLabel(QScriptContext *context, QScriptEngine *engine)
 {
 	QString key = context->argument(0).toString();
@@ -1188,10 +1308,12 @@ static QScriptValue js_removeLabel(QScriptContext *context, QScriptEngine *engin
 	return QScriptValue(result);
 }
 
-//-- \subsection{getLabel(object)}
+//-- ## getLabel(object)
+//--
 //-- Get a label string belonging to a game object. If the object has multiple labels, only the first
 //-- label found will be returned. If the object has no labels, null is returned.
 //-- This is a relatively slow operation of O(n) algorithmic complexity. (3.2+ only)
+//--
 static QScriptValue js_getLabel(QScriptContext *context, QScriptEngine *engine)
 {
 	LABEL value;
@@ -1207,9 +1329,10 @@ static QScriptValue js_getLabel(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue::NullValue;
 }
 
-//-- \subsection{getObject(label | x, y | type, player, id)}
+//-- ## getObject(label | x, y | type, player, id)
+//--
 //-- Fetch something denoted by a label, a map position or its object ID. A label refers to an area,
-//-- a position or a \emph{game object} on the map defined using the map editor and stored
+//-- a position or a **game object** on the map defined using the map editor and stored
 //-- together with the map. In this case, the only argument is a text label. The function
 //-- returns an object that has a type variable defining what it is (in case this is
 //-- unclear). This type will be one of DROID, STRUCTURE, FEATURE, AREA, GROUP or POSITION.
@@ -1224,6 +1347,7 @@ static QScriptValue js_getLabel(QScriptContext *context, QScriptEngine *engine)
 //-- manner, since they do not have a unique placement on map tiles. Finally, you can fetch an object using
 //-- its ID, in which case you need to pass its type, owner and unique object ID. This is an
 //-- operation of O(n) algorithmic complexity. (3.2+ only)
+//--
 static QScriptValue js_getObject(QScriptContext *context, QScriptEngine *engine)
 {
 	if (context->argumentCount() == 2) // get at position case
@@ -1288,10 +1412,12 @@ static QScriptValue js_getObject(QScriptContext *context, QScriptEngine *engine)
 	return ret;
 }
 
-//-- \subsection{enumBlips(player)}
+//-- ## enumBlips(player)
+//--
 //-- Return an array containing all the non-transient radar blips that the given player
 //-- can see. This includes sensors revealed by radar detectors, as well as ECM jammers.
 //-- It does not include units going out of view.
+//--
 static QScriptValue js_enumBlips(QScriptContext *context, QScriptEngine *engine)
 {
 	QList<Position> matches;
@@ -1317,8 +1443,10 @@ static QScriptValue js_enumBlips(QScriptContext *context, QScriptEngine *engine)
 	return result;
 }
 
-//-- \subsection{enumSelected()}
+//-- ## enumSelected()
+//--
 //-- Return an array containing all game objects currently selected by the host player. (3.2+ only)
+//--
 QScriptValue js_enumSelected(QScriptContext *, QScriptEngine *engine)
 {
 	QList<BASE_OBJECT *> matches;
@@ -1345,9 +1473,11 @@ QScriptValue js_enumSelected(QScriptContext *, QScriptEngine *engine)
 	return result;
 }
 
-//-- \subsection{enumGateways()}
+//-- ## enumGateways()
+//--
 //-- Return an array containing all the gateways on the current map. The array contains object with the properties
 //-- x1, y1, x2 and y2. (3.2+ only)
+//--
 static QScriptValue js_enumGateways(QScriptContext *, QScriptEngine *engine)
 {
 	QScriptValue result = engine->newArray(gwNumGateways());
@@ -1364,8 +1494,10 @@ static QScriptValue js_enumGateways(QScriptContext *, QScriptEngine *engine)
 	return result;
 }
 
-//-- \subsection{enumTemplates(player)}
+//-- ## enumTemplates(player)
+//--
 //-- Return an array containing all the buildable templates for the given player. (3.2+ only)
+//--
 static QScriptValue js_enumTemplates(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = context->argument(0).toInt32();
@@ -1379,19 +1511,24 @@ static QScriptValue js_enumTemplates(QScriptContext *context, QScriptEngine *eng
 	return result;
 }
 
-//-- \subsection{enumGroup(group)}
+//-- ## enumGroup(group)
+//--
 //-- Return an array containing all the members of a given group.
+//--
 static QScriptValue js_enumGroup(QScriptContext *context, QScriptEngine *engine)
 {
 	int groupId = context->argument(0).toInt32();
 	QList<BASE_OBJECT *> matches;
 	GROUPMAP *psMap = groups.value(engine);
 
-	for (GROUPMAP::const_iterator i = psMap->constBegin(); i != psMap->constEnd(); ++i)
+	if (psMap != nullptr)
 	{
-		if (i.value() == groupId)
+		for (GROUPMAP::const_iterator i = psMap->constBegin(); i != psMap->constEnd(); ++i)
 		{
-			matches.push_back(i.key());
+			if (i.value() == groupId)
+			{
+				matches.push_back(i.key());
+			}
 		}
 	}
 	QScriptValue result = engine->newArray(matches.size());
@@ -1403,18 +1540,22 @@ static QScriptValue js_enumGroup(QScriptContext *context, QScriptEngine *engine)
 	return result;
 }
 
-//-- \subsection{newGroup()}
+//-- ## newGroup()
+//--
 //-- Allocate a new group. Returns its numerical ID. Deprecated since 3.2 - you should now
 //-- use your own number scheme for groups.
+//--
 static QScriptValue js_newGroup(QScriptContext *, QScriptEngine *engine)
 {
 	static int i = 1; // group zero reserved
 	return QScriptValue(i++);
 }
 
-//-- \subsection{activateStructure(structure, [target[, ability]])}
+//-- ## activateStructure(structure, [target[, ability]])
+//--
 //-- Activate a special ability on a structure. Currently only works on the lassat.
 //-- The lassat needs a target.
+//--
 static QScriptValue js_activateStructure(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue structVal = context->argument(0);
@@ -1433,9 +1574,11 @@ static QScriptValue js_activateStructure(QScriptContext *context, QScriptEngine 
 	return QScriptValue(true);
 }
 
-//-- \subsection{findResearch(research, [player])}
+//-- ## findResearch(research, [player])
+//--
 //-- Return list of research items remaining to be researched for the given research item. (3.2+ only)
 //-- (Optional second argument 3.2.3+ only)
+//--
 static QScriptValue js_findResearch(QScriptContext *context, QScriptEngine *engine)
 {
 	QList<RESEARCH *> list;
@@ -1487,12 +1630,14 @@ static QScriptValue js_findResearch(QScriptContext *context, QScriptEngine *engi
 	return retval;
 }
 
-//-- \subsection{pursueResearch(lab, research)}
+//-- ## pursueResearch(lab, research)
+//--
 //-- Start researching the first available technology on the way to the given technology.
 //-- First parameter is the structure to research in, which must be a research lab. The
 //-- second parameter is the technology to pursue, as a text string as defined in "research.json".
 //-- The second parameter may also be an array of such strings. The first technology that has
 //-- not yet been researched in that list will be pursued.
+//--
 static QScriptValue js_pursueResearch(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue structVal = context->argument(0);
@@ -1590,9 +1735,11 @@ static QScriptValue js_pursueResearch(QScriptContext *context, QScriptEngine *en
 	return QScriptValue(false); // none found
 }
 
-//-- \subsection{getResearch(research[, player])}
+//-- ## getResearch(research[, player])
+//--
 //-- Fetch information about a given technology item, given by a string that matches
 //-- its definition in "research.json". If not found, returns null.
+//--
 static QScriptValue js_getResearch(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = 0;
@@ -1613,8 +1760,10 @@ static QScriptValue js_getResearch(QScriptContext *context, QScriptEngine *engin
 	return convResearch(psResearch, engine, player);
 }
 
-//-- \subsection{enumResearch()}
+//-- ## enumResearch()
+//--
 //-- Returns an array of all research objects that are currently and immediately available for research.
+//--
 static QScriptValue js_enumResearch(QScriptContext *context, QScriptEngine *engine)
 {
 	QList<RESEARCH *> reslist;
@@ -1635,27 +1784,32 @@ static QScriptValue js_enumResearch(QScriptContext *context, QScriptEngine *engi
 	return result;
 }
 
-//-- \subsection{componentAvailable([component type,] component name)}
+//-- ## componentAvailable([component type,] component name)
+//--
 //-- Checks whether a given component is available to the current player. The first argument is
 //-- optional and deprecated.
+//--
 static QScriptValue js_componentAvailable(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = engine->globalObject().property("me").toInt32();
 	QString id = (context->argumentCount() == 1) ? context->argument(0).toString() : context->argument(1).toString();
-	COMPONENT_STATS *psComp = getCompStatsFromName(id);
+	COMPONENT_STATS *psComp = getCompStatsFromName(WzString::fromUtf8(id.toUtf8().constData()));
 	SCRIPT_ASSERT(context, psComp, "No such component: %s", id.toUtf8().constData());
-	return QScriptValue(apCompLists[player][psComp->compType][psComp->index] == AVAILABLE);
+	int status = apCompLists[player][psComp->compType][psComp->index];
+	return QScriptValue(status == AVAILABLE || status == REDUNDANT);
 }
 
-//-- \subsection{addFeature(name, x, y)}
+//-- ## addFeature(name, x, y)
+//--
 //-- Create and place a feature at the given x, y position. Will cause a desync in multiplayer.
 //-- Returns the created game object on success, null otherwise. (3.2+ only)
+//--
 static QScriptValue js_addFeature(QScriptContext *context, QScriptEngine *engine)
 {
 	QString featName = context->argument(0).toString();
 	int x = context->argument(1).toInt32();
 	int y = context->argument(2).toInt32();
-	int feature = getFeatureStatFromName(featName.toUtf8().constData());
+	int feature = getFeatureStatFromName(QStringToWzString(featName));
 	FEATURE_STATS *psStats = &asFeatureStats[feature];
 	for (FEATURE *psFeat = apsFeatureLists[0]; psFeat; psFeat = psFeat->psNext)
 	{
@@ -1675,11 +1829,15 @@ static int get_first_available_component(int player, int capacity, const QScript
 		for (k = 0; k < length; k++)
 		{
 			QString compName = list.property(k).toString();
-			int result = getCompFromName(type, compName);
-			if (result >= 0 && (apCompLists[player][type][result] == AVAILABLE || !strict)
-			    && (type != COMP_BODY || asBodyStats[result].size <= capacity))
+			int result = getCompFromName(type, QStringToWzString(compName));
+			if (result >= 0)
 			{
-				return result; // found one!
+				int status = apCompLists[player][type][result];
+				if (((status == AVAILABLE || status == REDUNDANT) || !strict)
+					&& (type != COMP_BODY || asBodyStats[result].size <= capacity))
+				{
+					return result; // found one!
+				}
 			}
 			if (result < 0)
 			{
@@ -1689,11 +1847,15 @@ static int get_first_available_component(int player, int capacity, const QScript
 	}
 	else if (list.isString())
 	{
-		int result = getCompFromName(type, list.toString());
-		if (result >= 0 && (apCompLists[player][type][result] == AVAILABLE || !strict)
-		    && (type != COMP_BODY || asBodyStats[result].size <= capacity))
+		int result = getCompFromName(type, QStringToWzString(list.toString()));
+		if (result >= 0)
 		{
-			return result; // found it!
+			int status = apCompLists[player][type][result];
+			if (((status == AVAILABLE || status == REDUNDANT) || !strict)
+				&& (type != COMP_BODY || asBodyStats[result].size <= capacity))
+			{
+				return result; // found it!
+			}
 		}
 		if (result < 0)
 		{
@@ -1747,7 +1909,7 @@ static DROID_TEMPLATE *makeTemplate(int player, const QString &templName, QScrip
 	{
 		compName = context->argument(firstTurret).toString();
 	}
-	COMPONENT_STATS *psComp = getCompStatsFromName(compName);
+	COMPONENT_STATS *psComp = getCompStatsFromName(WzString::fromUtf8(compName.toUtf8().constData()));
 	if (psComp == nullptr)
 	{
 		debug(LOG_ERROR, "Wanted to build %s but %s does not exist", templName.toUtf8().constData(), compName.toUtf8().constData());
@@ -1801,12 +1963,14 @@ static DROID_TEMPLATE *makeTemplate(int player, const QString &templName, QScrip
 	}
 }
 
-//-- \subsection{addDroid(player, x, y, name, body, propulsion, reserved, reserved, turrets...)}
+//-- ## addDroid(player, x, y, name, body, propulsion, reserved, reserved, turrets...)
+//--
 //-- Create and place a droid at the given x, y position as belonging to the given player, built with
 //-- the given components. Currently does not support placing droids in multiplayer, doing so will
 //-- cause a desync. Returns the created droid on success, otherwise returns null. Passing "" for
 //-- reserved parameters is recommended. In 3.2+ only, to create droids in off-world (campaign mission list),
 //-- pass -1 as both x and y.
+//--
 static QScriptValue js_addDroid(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = context->argument(0).toInt32();
@@ -1854,10 +2018,12 @@ static QScriptValue js_addDroid(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue::NullValue;
 }
 
-//-- \subsection{addDroidToTransporter(transporter, droid)}
+//-- ## addDroidToTransporter(transporter, droid)
+//--
 //-- Load a droid, which is currently located on the campaign off-world mission list,
 //-- into a transporter, which is also currently on the campaign off-world mission list.
 //-- (3.2+ only)
+//--
 static QScriptValue js_addDroidToTransporter(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue transporterVal = context->argument(0);
@@ -1878,10 +2044,12 @@ static QScriptValue js_addDroidToTransporter(QScriptContext *context, QScriptEng
 	return QScriptValue();
 }
 
-//-- \subsection{makeTemplate(player, name, body, propulsion, reserved, turrets...)}
+//-- ## makeTemplate(player, name, body, propulsion, reserved, turrets...)
+//--
 //-- Create a template (virtual droid) with the given components. Can be useful for calculating the cost
 //-- of droids before putting them into production, for instance. Will fail and return null if template
 //-- could not possibly be built using current research. (3.2+ only)
+//--
 static QScriptValue js_makeTemplate(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = context->argument(0).toInt32();
@@ -1896,13 +2064,15 @@ static QScriptValue js_makeTemplate(QScriptContext *context, QScriptEngine *engi
 	return QScriptValue(retval);
 }
 
-//-- \subsection{buildDroid(factory, name, body, propulsion, reserved, reserved, turrets...)}
+//-- ## buildDroid(factory, name, body, propulsion, reserved, reserved, turrets...)
+//--
 //-- Start factory production of new droid with the given name, body, propulsion and turrets.
-//-- The reserved parameter should be passed \emph{null} for now. The components can be
+//-- The reserved parameter should be passed **null** for now. The components can be
 //-- passed as ordinary strings, or as a list of strings. If passed as a list, the first available
 //-- component in the list will be used. The second reserved parameter used to be a droid type.
 //-- It is now unused and in 3.2+ should be passed "", while in 3.1 it should be the
 //-- droid type to be built. Returns a boolean that is true if production was started.
+//--
 static QScriptValue js_buildDroid(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue structVal = context->argument(0);
@@ -1943,18 +2113,20 @@ static QScriptValue js_buildDroid(QScriptContext *context, QScriptEngine *engine
 	return QScriptValue(psTemplate != nullptr);
 }
 
-//-- \subsection{enumStruct([player[, structure type[, looking player]]])}
+//-- ## enumStruct([player[, structure type[, looking player]]])
+//--
 //-- Returns an array of structure objects. If no parameters given, it will
 //-- return all of the structures for the current player. The second parameter
 //-- can be either a string with the name of the structure type as defined in
-//-- "structures.json", or a stattype as defined in \ref{objects:structure}. The
+//-- "structures.json", or a stattype as defined in ```Structure```. The
 //-- third parameter can be used to filter by visibility, the default is not
 //-- to filter.
+//--
 static QScriptValue js_enumStruct(QScriptContext *context, QScriptEngine *engine)
 {
 	QList<STRUCTURE *> matches;
 	int player = -1, looking = -1;
-	QString statsName;
+	WzString statsName;
 	QScriptValue val;
 	STRUCTURE_TYPE type = NUM_DIFF_BUILDINGS;
 
@@ -1969,7 +2141,7 @@ static QScriptValue js_enumStruct(QScriptContext *context, QScriptEngine *engine
 		}
 		else
 		{
-			statsName = val.toString();
+			statsName = WzString::fromUtf8(val.toString().toUtf8().constData());
 		} // fall-through
 	case 1: player = context->argument(0).toInt32(); break;
 	case 0: player = engine->globalObject().property("me").toInt32();
@@ -1996,18 +2168,20 @@ static QScriptValue js_enumStruct(QScriptContext *context, QScriptEngine *engine
 	return result;
 }
 
-//-- \subsection{enumStructOffWorld([player[, structure type[, looking player]]])}
+//-- ## enumStructOffWorld([player[, structure type[, looking player]]])
+//--
 //-- Returns an array of structure objects in your base when on an off-world mission, NULL otherwise.
 //-- If no parameters given, it will return all of the structures for the current player.
 //-- The second parameter can be either a string with the name of the structure type as defined
-//-- in "structures.json", or a stattype as defined in \ref{objects:structure}.
+//-- in "structures.json", or a stattype as defined in ```Structure```.
 //-- The third parameter can be used to filter by visibility, the default is not
 //-- to filter.
+//--
 static QScriptValue js_enumStructOffWorld(QScriptContext *context, QScriptEngine *engine)
 {
 	QList<STRUCTURE *> matches;
 	int player = -1, looking = -1;
-	QString statsName;
+	WzString statsName;
 	QScriptValue val;
 	STRUCTURE_TYPE type = NUM_DIFF_BUILDINGS;
 
@@ -2022,7 +2196,7 @@ static QScriptValue js_enumStructOffWorld(QScriptContext *context, QScriptEngine
 		}
 		else
 		{
-			statsName = val.toString();
+			statsName = WzString::fromUtf8(val.toString().toUtf8().constData());
 		} // fall-through
 	case 1: player = context->argument(0).toInt32(); break;
 	case 0: player = engine->globalObject().property("me").toInt32();
@@ -2049,18 +2223,20 @@ static QScriptValue js_enumStructOffWorld(QScriptContext *context, QScriptEngine
 	return result;
 }
 
-//-- \subsection{enumFeature(player[, name])}
+//-- ## enumFeature(player[, name])
+//--
 //-- Returns an array of all features seen by player of given name, as defined in "features.json".
-//-- If player is \emph{ALL_PLAYERS}, it will return all features irrespective of visibility to any player. If
+//-- If player is ```ALL_PLAYERS```, it will return all features irrespective of visibility to any player. If
 //-- name is empty, it will return any feature.
+//--
 static QScriptValue js_enumFeature(QScriptContext *context, QScriptEngine *engine)
 {
 	QList<FEATURE *> matches;
 	int looking = context->argument(0).toInt32();
-	QString statsName;
+	WzString statsName;
 	if (context->argumentCount() > 1)
 	{
-		statsName = context->argument(1).toString();
+		statsName = WzString::fromUtf8(context->argument(1).toString().toUtf8().constData());
 	}
 	SCRIPT_ASSERT(context, looking < MAX_PLAYERS && looking >= -1, "Looking player index out of range: %d", looking);
 	for (FEATURE *psFeat = apsFeatureLists[0]; psFeat; psFeat = psFeat->psNext)
@@ -2081,8 +2257,10 @@ static QScriptValue js_enumFeature(QScriptContext *context, QScriptEngine *engin
 	return result;
 }
 
-//-- \subsection{enumCargo(transport droid)}
+//-- ## enumCargo(transport droid)
+//--
 //-- Returns an array of droid objects inside given transport. (3.2+ only)
+//--
 static QScriptValue js_enumCargo(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue droidVal = context->argument(0);
@@ -2103,11 +2281,13 @@ static QScriptValue js_enumCargo(QScriptContext *context, QScriptEngine *engine)
 	return result;
 }
 
-//-- \subsection{enumDroid([player[, droid type[, looking player]]])}
+//-- ## enumDroid([player[, droid type[, looking player]]])
+//--
 //-- Returns an array of droid objects. If no parameters given, it will
 //-- return all of the droids for the current player. The second, optional parameter
 //-- is the name of the droid type. The third parameter can be used to filter by
 //-- visibility - the default is not to filter.
+//--
 static QScriptValue js_enumDroid(QScriptContext *context, QScriptEngine *engine)
 {
 	QList<DROID *> matches;
@@ -2169,8 +2349,10 @@ void dumpScriptLog(const QString &scriptName, int me, const QString &info)
 	}
 }
 
-//-- \subsection{dump(string...)}
+//-- ## dump(string...)
+//--
 //-- Output text to a debug file. (3.2+ only)
+//--
 static QScriptValue js_dump(QScriptContext *context, QScriptEngine *engine)
 {
 	QString result;
@@ -2195,8 +2377,10 @@ static QScriptValue js_dump(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue();
 }
 
-//-- \subsection{debug(string...)}
+//-- ## debug(string...)
+//--
 //-- Output text to the command line.
+//--
 static QScriptValue js_debug(QScriptContext *context, QScriptEngine *engine)
 {
 	QString result;
@@ -2217,9 +2401,11 @@ static QScriptValue js_debug(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue();
 }
 
-//-- \subsection{pickStructLocation(droid, structure type, x, y)}
+//-- ## pickStructLocation(droid, structure type, x, y)
+//--
 //-- Pick a location for constructing a certain type of building near some given position.
 //-- Returns an object containing "type" POSITION, and "x" and "y" values, if successful.
+//--
 static QScriptValue js_pickStructLocation(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue droidVal = context->argument(0);
@@ -2227,7 +2413,7 @@ static QScriptValue js_pickStructLocation(QScriptContext *context, QScriptEngine
 	const int player = droidVal.property("player").toInt32();
 	DROID *psDroid = IdToDroid(id, player);
 	QString statName = context->argument(1).toString();
-	int index = getStructStatFromName(statName.toUtf8().constData());
+	int index = getStructStatFromName(QStringToWzString(statName));
 	SCRIPT_ASSERT(context, index >= 0, "%s not found", statName.toUtf8().constData());
 	STRUCTURE_STATS	*psStat = &asStructureStats[index];
 	const int startX = context->argument(2).toInt32();
@@ -2320,8 +2506,10 @@ endstructloc:
 	return QScriptValue();
 }
 
-//-- \subsection{structureIdle(structure)}
+//-- ## structureIdle(structure)
+//--
 //-- Is given structure idle?
+//--
 static QScriptValue js_structureIdle(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue structVal = context->argument(0);
@@ -2332,9 +2520,11 @@ static QScriptValue js_structureIdle(QScriptContext *context, QScriptEngine *)
 	return QScriptValue(structureIdle(psStruct));
 }
 
-//-- \subsection{removeStruct(structure)}
+//-- ## removeStruct(structure)
+//--
 //-- Immediately remove the given structure from the map. Returns a boolean that is true on success.
 //-- No special effects are applied. Deprecated since 3.2.
+//--
 static QScriptValue js_removeStruct(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue structVal = context->argument(0);
@@ -2345,9 +2535,11 @@ static QScriptValue js_removeStruct(QScriptContext *context, QScriptEngine *)
 	return QScriptValue(removeStruct(psStruct, true));
 }
 
-//-- \subsection{removeObject(game object[, special effects?])}
+//-- ## removeObject(game object[, special effects?])
+//--
 //-- Remove the given game object with special effects. Returns a boolean that is true on success.
 //-- A second, optional boolean parameter specifies whether special effects are to be applied. (3.2+ only)
+//--
 static QScriptValue js_removeObject(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue qval = context->argument(0);
@@ -2385,8 +2577,20 @@ static QScriptValue js_removeObject(QScriptContext *context, QScriptEngine *)
 	return QScriptValue(retval);
 }
 
-//-- \subsection{console(strings...)}
+//-- ## clearConsole()
+//--
+//-- Clear the console. (3.3+ only)
+//--
+static QScriptValue js_clearConsole(QScriptContext *context, QScriptEngine *engine)
+{
+	flushConsoleMessages();
+	return QScriptValue();
+}
+
+//-- ## console(strings...)
+//--
 //-- Print text to the player console.
+//--
 // TODO, should cover scrShowConsoleText, scrAddConsoleText, scrTagConsoleText and scrConsole
 static QScriptValue js_console(QScriptContext *context, QScriptEngine *engine)
 {
@@ -2415,8 +2619,10 @@ static QScriptValue js_console(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue();
 }
 
-//-- \subsection{groupAddArea(group, x1, y1, x2, y2)}
+//-- ## groupAddArea(group, x1, y1, x2, y2)
+//--
 //-- Add any droids inside the given area to the given group. (3.2+ only)
+//--
 static QScriptValue js_groupAddArea(QScriptContext *context, QScriptEngine *engine)
 {
 	int groupId = context->argument(0).toInt32();
@@ -2437,8 +2643,10 @@ static QScriptValue js_groupAddArea(QScriptContext *context, QScriptEngine *engi
 	return QScriptValue();
 }
 
-//-- \subsection{groupAddDroid(group, droid)}
+//-- ## groupAddDroid(group, droid)
+//--
 //-- Add given droid to given group. Deprecated since 3.2 - use groupAdd() instead.
+//--
 static QScriptValue js_groupAddDroid(QScriptContext *context, QScriptEngine *engine)
 {
 	int groupId = context->argument(0).toInt32();
@@ -2452,8 +2660,10 @@ static QScriptValue js_groupAddDroid(QScriptContext *context, QScriptEngine *eng
 	return QScriptValue();
 }
 
-//-- \subsection{groupAdd(group, object)}
+//-- ## groupAdd(group, object)
+//--
 //-- Add given game object to the given group.
+//--
 static QScriptValue js_groupAdd(QScriptContext *context, QScriptEngine *engine)
 {
 	int groupId = context->argument(0).toInt32();
@@ -2468,19 +2678,23 @@ static QScriptValue js_groupAdd(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue();
 }
 
-//-- \subsection{distBetweenTwoPoints(x1, y1, x2, y2)}
+//-- ## distBetweenTwoPoints(x1, y1, x2, y2)
+//--
 //-- Return distance between two points.
+//--
 static QScriptValue js_distBetweenTwoPoints(QScriptContext *context, QScriptEngine *engine)
 {
-	int x1 = context->argument(0).toNumber();
-	int y1 = context->argument(1).toNumber();
-	int x2 = context->argument(2).toNumber();
-	int y2 = context->argument(3).toNumber();
+	int32_t x1 = context->argument(0).toInt32();
+	int32_t y1 = context->argument(1).toInt32();
+	int32_t x2 = context->argument(2).toInt32();
+	int32_t y2 = context->argument(3).toInt32();
 	return QScriptValue(iHypot(x1 - x2, y1 - y2));
 }
 
-//-- \subsection{groupSize(group)}
+//-- ## groupSize(group)
+//--
 //-- Return the number of droids currently in the given group. Note that you can use groupSizes[] instead.
+//--
 static QScriptValue js_groupSize(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue groups = engine->globalObject().property("groupSizes");
@@ -2488,9 +2702,11 @@ static QScriptValue js_groupSize(QScriptContext *context, QScriptEngine *engine)
 	return groups.property(groupId).toInt32();
 }
 
-//-- \subsection{droidCanReach(droid, x, y)}
+//-- ## droidCanReach(droid, x, y)
+//--
 //-- Return whether or not the given droid could possibly drive to the given position. Does
 //-- not take player built blockades into account.
+//--
 static QScriptValue js_droidCanReach(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue droidVal = context->argument(0);
@@ -2504,13 +2720,15 @@ static QScriptValue js_droidCanReach(QScriptContext *context, QScriptEngine *)
 	return QScriptValue(fpathCheck(psDroid->pos, Vector3i(world_coord(x), world_coord(y), 0), psPropStats->propulsionType));
 }
 
-//-- \subsection{propulsionCanReach(propulsion, x1, y1, x2, y2)}
+//-- ## propulsionCanReach(propulsion, x1, y1, x2, y2)
+//--
 //-- Return true if a droid with a given propulsion is able to travel from (x1, y1) to (x2, y2).
 //-- Does not take player built blockades into account. (3.2+ only)
+//--
 static QScriptValue js_propulsionCanReach(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue propulsionValue = context->argument(0);
-	int propulsion = getCompFromName(COMP_PROPULSION, propulsionValue.toString());
+	int propulsion = getCompFromName(COMP_PROPULSION, QStringToWzString(propulsionValue.toString()));
 	SCRIPT_ASSERT(context, propulsion > 0, "No such propulsion: %s", propulsionValue.toString().toUtf8().constData());
 	int x1 = context->argument(1).toInt32();
 	int y1 = context->argument(2).toInt32();
@@ -2520,9 +2738,11 @@ static QScriptValue js_propulsionCanReach(QScriptContext *context, QScriptEngine
 	return QScriptValue(fpathCheck(Vector3i(world_coord(x1), world_coord(y1), 0), Vector3i(world_coord(x2), world_coord(y2), 0), psPropStats->propulsionType));
 }
 
-//-- \subsection{terrainType(x, y)}
+//-- ## terrainType(x, y)
+//--
 //-- Returns tile type of a given map tile, such as TER_WATER for water tiles or TER_CLIFFFACE for cliffs.
 //-- Tile types regulate which units may pass through this tile. (3.2+ only)
+//--
 static QScriptValue js_terrainType(QScriptContext *context, QScriptEngine *)
 {
 	int x = context->argument(0).toInt32();
@@ -2530,8 +2750,10 @@ static QScriptValue js_terrainType(QScriptContext *context, QScriptEngine *)
 	return QScriptValue(terrainType(mapTile(x, y)));
 }
 
-//-- \subsection{orderDroid(droid, order)}
+//-- ## orderDroid(droid, order)
+//--
 //-- Give a droid an order to do something. (3.2+ only)
+//--
 static QScriptValue js_orderDroid(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue droidVal = context->argument(0);
@@ -2543,6 +2765,11 @@ static QScriptValue js_orderDroid(QScriptContext *context, QScriptEngine *)
 	SCRIPT_ASSERT(context, order == DORDER_HOLD || order == DORDER_RTR || order == DORDER_STOP
 	              || order == DORDER_RTB || order == DORDER_REARM || order == DORDER_RECYCLE,
 	              "Invalid order: %s", getDroidOrderName(order));
+	DROID_ORDER_DATA *droidOrder = &psDroid->order;
+	if (droidOrder->type == order)
+	{
+		return QScriptValue(true);
+	}
 	if (order == DORDER_REARM)
 	{
 		if (STRUCTURE *psStruct = findNearestReArmPad(psDroid, psDroid->psBaseStruct, false))
@@ -2561,8 +2788,10 @@ static QScriptValue js_orderDroid(QScriptContext *context, QScriptEngine *)
 	return QScriptValue(true);
 }
 
-//-- \subsection{orderDroidObj(droid, order, object)}
+//-- ## orderDroidObj(droid, order, object)
+//--
 //-- Give a droid an order to do something to something.
+//--
 static QScriptValue js_orderDroidObj(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue droidVal = context->argument(0);
@@ -2578,12 +2807,19 @@ static QScriptValue js_orderDroidObj(QScriptContext *context, QScriptEngine *)
 	BASE_OBJECT *psObj = IdToObject(otype, oid, oplayer);
 	SCRIPT_ASSERT(context, psObj, "Object id %d not found belonging to player %d", oid, oplayer);
 	SCRIPT_ASSERT(context, validOrderForObj(order), "Invalid order: %s", getDroidOrderName(order));
+	DROID_ORDER_DATA *droidOrder = &psDroid->order;
+	if (droidOrder->type == order && psDroid->order.psObj == psObj)
+	{
+		return QScriptValue(true);
+	}
 	orderDroidObj(psDroid, order, psObj, ModeQueue);
 	return QScriptValue(true);
 }
 
-//-- \subsection{orderDroidBuild(droid, order, structure type, x, y[, direction])}
+//-- ## orderDroidBuild(droid, order, structure type, x, y[, direction])
+//--
 //-- Give a droid an order to build something at the given position. Returns true if allowed.
+//--
 static QScriptValue js_orderDroidBuild(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue droidVal = context->argument(0);
@@ -2592,7 +2828,7 @@ static QScriptValue js_orderDroidBuild(QScriptContext *context, QScriptEngine *)
 	DROID *psDroid = IdToDroid(id, player);
 	DROID_ORDER order = (DROID_ORDER)context->argument(1).toInt32();
 	QString statName = context->argument(2).toString();
-	int index = getStructStatFromName(statName.toUtf8().constData());
+	int index = getStructStatFromName(QStringToWzString(statName));
 	SCRIPT_ASSERT(context, index >= 0, "%s not found", statName.toUtf8().constData());
 	STRUCTURE_STATS	*psStats = &asStructureStats[index];
 	int x = context->argument(3).toInt32();
@@ -2605,12 +2841,19 @@ static QScriptValue js_orderDroidBuild(QScriptContext *context, QScriptEngine *)
 	{
 		direction = DEG(context->argument(5).toNumber());
 	}
+	DROID_ORDER_DATA *droidOrder = &psDroid->order;
+	if (droidOrder->type == order && psDroid->actionPos.x == world_coord(x) && psDroid->actionPos.y == world_coord(y))
+	{
+		return QScriptValue(true);
+	}
 	orderDroidStatsLocDir(psDroid, order, psStats, world_coord(x) + TILE_UNITS / 2, world_coord(y) + TILE_UNITS / 2, direction, ModeQueue);
 	return QScriptValue(true);
 }
 
-//-- \subsection{orderDroidLoc(droid, order, x, y)}
+//-- ## orderDroidLoc(droid, order, x, y)
+//--
 //-- Give a droid an order to do something at the given location.
+//--
 static QScriptValue js_orderDroidLoc(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue droidVal = context->argument(0);
@@ -2624,11 +2867,19 @@ static QScriptValue js_orderDroidLoc(QScriptContext *context, QScriptEngine *)
 	DROID *psDroid = IdToDroid(id, player);
 	SCRIPT_ASSERT(context, psDroid, "Droid id %d not found belonging to player %d", id, player);
 	SCRIPT_ASSERT(context, tileOnMap(x, y), "Outside map bounds (%d, %d)", x, y);
+	DROID_ORDER_DATA *droidOrder = &psDroid->order;
+	if (droidOrder->type == order && psDroid->actionPos.x == world_coord(x) && psDroid->actionPos.y == world_coord(y))
+	{
+		return QScriptValue();
+	}
 	orderDroidLoc(psDroid, order, world_coord(x), world_coord(y), ModeQueue);
 	return QScriptValue();
 }
 
-//-- \subsection{setMissionTime(time)} Set mission countdown in seconds.
+//-- ## setMissionTime(time)
+//--
+//-- Set mission countdown in seconds.
+//--
 static QScriptValue js_setMissionTime(QScriptContext *context, QScriptEngine *)
 {
 	int value = context->argument(0).toInt32() * GAME_TICKS_PER_SEC;
@@ -2648,14 +2899,19 @@ static QScriptValue js_setMissionTime(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{getMissionTime()} Get time remaining on mission countdown in seconds. (3.2+ only)
+//-- ## getMissionTime()
+//--
+//-- Get time remaining on mission countdown in seconds. (3.2+ only)
+//--
 static QScriptValue js_getMissionTime(QScriptContext *, QScriptEngine *)
 {
 	return QScriptValue((mission.time - (gameTime - mission.startTime)) / GAME_TICKS_PER_SEC);
 }
 
-//-- \subsection{setTransporterExit(x, y, player)}
+//-- ## setTransporterExit(x, y, player)
+//--
 //-- Set the exit position for the mission transporter. (3.2+ only)
+//--
 static QScriptValue js_setTransporterExit(QScriptContext *context, QScriptEngine *)
 {
 	int x = context->argument(0).toInt32();
@@ -2666,11 +2922,13 @@ static QScriptValue js_setTransporterExit(QScriptContext *context, QScriptEngine
 	return QScriptValue();
 }
 
-//-- \subsection{startTransporterEntry(x, y, player)}
+//-- ## startTransporterEntry(x, y, player)
+//--
 //-- Set the entry position for the mission transporter, and make it start flying in
 //-- reinforcements. If you want the camera to follow it in, use cameraTrack() on it.
 //-- The transport needs to be set up with the mission droids, and the first transport
 //-- found will be used. (3.2+ only)
+//--
 static QScriptValue js_startTransporterEntry(QScriptContext *context, QScriptEngine *)
 {
 	int x = context->argument(0).toInt32();
@@ -2682,10 +2940,12 @@ static QScriptValue js_startTransporterEntry(QScriptContext *context, QScriptEng
 	return QScriptValue();
 }
 
-//-- \subsection{useSafetyTransport(flag)}
+//-- ## useSafetyTransport(flag)
+//--
 //-- Change if the mission transporter will fetch droids in non offworld missions
 //-- setReinforcementTime() is be used to hide it before coming back after the set time
-//-- which is handled by the campaign library in the victory data section (3.2.4+ only).
+//-- which is handled by the campaign library in the victory data section (3.3+ only).
+//--
 static QScriptValue js_useSafetyTransport(QScriptContext *context, QScriptEngine *)
 {
 	bool flag = context->argument(0).toBool();
@@ -2693,20 +2953,25 @@ static QScriptValue js_useSafetyTransport(QScriptContext *context, QScriptEngine
 	return QScriptValue();
 }
 
-//-- \subsection{restoreLimboMissionData()}
+//-- ## restoreLimboMissionData()
+//--
 //-- Swap mission type and bring back units previously stored at the start
-//-- of the mission (see cam3-c mission). (3.2.4+ only).
+//-- of the mission (see cam3-c mission). (3.3+ only).
+//--
 static QScriptValue js_restoreLimboMissionData(QScriptContext *context, QScriptEngine *)
 {
 	resetLimboMission();
 	return QScriptValue();
 }
 
-//-- \subsection{setReinforcementTime(time)} Set time for reinforcements to arrive. If time is
-//-- negative, the reinforcement GUI is removed and the timer stopped. Time is in seconds.
+//-- ## setReinforcementTime(time)
+//--
+//-- Set time for reinforcements to arrive. If time is negative, the reinforcement GUI
+//-- is removed and the timer stopped. Time is in seconds.
 //-- If time equals to the magic LZ_COMPROMISED_TIME constant, reinforcement GUI ticker
 //-- is set to "--:--" and reinforcements are suppressed until this function is called
 //-- again with a regular time value.
+//--
 static QScriptValue js_setReinforcementTime(QScriptContext *context, QScriptEngine *)
 {
 	int value = context->argument(0).toInt32() * GAME_TICKS_PER_SEC;
@@ -2740,13 +3005,16 @@ static QScriptValue js_setReinforcementTime(QScriptContext *context, QScriptEngi
 	return QScriptValue();
 }
 
-//-- \subsection{setStructureLimits(structure type, limit[, player])} Set build limits for a structure.
+//-- ## setStructureLimits(structure type, limit[, player])
+//--
+//-- Set build limits for a structure.
+//--
 static QScriptValue js_setStructureLimits(QScriptContext *context, QScriptEngine *engine)
 {
 	QString building = context->argument(0).toString();
 	int limit = context->argument(1).toInt32();
 	int player;
-	int structInc = getStructStatFromName(building.toUtf8().constData());
+	int structInc = getStructStatFromName(QStringToWzString(building));
 	if (context->argumentCount() > 2)
 	{
 		player = context->argument(2).toInt32();
@@ -2759,15 +3027,15 @@ static QScriptValue js_setStructureLimits(QScriptContext *context, QScriptEngine
 	SCRIPT_ASSERT(context, limit < LOTS_OF && limit >= 0, "Invalid limit");
 	SCRIPT_ASSERT(context, structInc < numStructureStats && structInc >= 0, "Invalid structure");
 
-	STRUCTURE_LIMITS *psStructLimits = asStructLimits[player];
-	psStructLimits[structInc].limit = limit;
-	psStructLimits[structInc].globalLimit = limit;
+	asStructureStats[structInc].upgrade[player].limit = limit;
 
 	return QScriptValue();
 }
 
-//-- \subsection{centreView(x, y)}
+//-- ## centreView(x, y)
+//--
 //-- Center the player's camera at the given position.
+//--
 static QScriptValue js_centreView(QScriptContext *context, QScriptEngine *)
 {
 	int x = context->argument(0).toInt32();
@@ -2776,8 +3044,32 @@ static QScriptValue js_centreView(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{playSound(sound[, x, y, z])}
+//-- ## hackPlayIngameAudio()
+//--
+//-- (3.3+ only)
+//--
+static QScriptValue js_hackPlayIngameAudio(QScriptContext *context, QScriptEngine *)
+{
+	debug(LOG_SOUND, "Script wanted music to start");
+	cdAudio_PlayTrack(SONG_INGAME);
+	return QScriptValue();
+}
+
+//-- ## hackStopIngameAudio()
+//--
+//-- (3.3+ only)
+//--
+static QScriptValue js_hackStopIngameAudio(QScriptContext *context, QScriptEngine *)
+{
+	debug(LOG_SOUND, "Script wanted music to stop");
+	cdAudio_Stop();
+	return QScriptValue();
+}
+
+//-- ## playSound(sound[, x, y, z])
+//--
 //-- Play a sound, optionally at a location.
+//--
 static QScriptValue js_playSound(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = engine->globalObject().property("me").toInt32();
@@ -2801,27 +3093,28 @@ static QScriptValue js_playSound(QScriptContext *context, QScriptEngine *engine)
 	else
 	{
 		audio_QueueTrack(soundID);
-		/*  -- FIXME properly (from original script func)
-		if(bInTutorial)
-		{
-			audio_QueueTrack(ID_SOUND_OF_SILENCE);
-		}
-		*/
 	}
 	return QScriptValue();
 }
 
-//-- \subsection{gameOverMessage(won, showOutro)}
+//-- ## gameOverMessage(won, showBackDrop, showOutro)
+//--
 //-- End game in victory or defeat.
+//--
 static QScriptValue js_gameOverMessage(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = engine->globalObject().property("me").toInt32();
 	const MESSAGE_TYPE msgType = MSG_MISSION;	// always
 	bool gameWon = context->argument(0).toBool();
 	bool showOutro = false;
+	bool showBackDrop = true;
 	if (context->argumentCount() > 1)
 	{
-		showOutro = context->argument(1).toBool();
+		showBackDrop = context->argument(1).toBool();
+	}
+	if (context->argumentCount() > 2)
+	{
+		showOutro = context->argument(2).toBool();
 	}
 	VIEWDATA *psViewData;
 	if (gameWon)
@@ -2844,6 +3137,7 @@ static QScriptValue js_gameOverMessage(QScriptContext *context, QScriptEngine *e
 		seq_ClearSeqList();
 		if (gameWon && showOutro)
 		{
+			showBackDrop = false;
 			seq_AddSeqToList("outro.ogg", nullptr, "outro.txa", false);
 			seq_StartNextFullScreenVideo();
 		}
@@ -2856,7 +3150,7 @@ static QScriptValue js_gameOverMessage(QScriptContext *context, QScriptEngine *e
 		}
 	}
 	jsDebugMessageUpdate();
-	displayGameOver(gameWon);
+	displayGameOver(gameWon, showBackDrop);
 	if (challengeActive)
 	{
 		updateChallenge(gameWon);
@@ -2869,12 +3163,16 @@ static QScriptValue js_gameOverMessage(QScriptContext *context, QScriptEngine *e
 	return QScriptValue();
 }
 
-//-- \subsection{completeResearch(research[, player])}
+//-- ## completeResearch(research[, player [, forceResearch]])
+//--
 //-- Finish a research for the given player.
+//-- forceResearch will allow a research topic to be researched again. 3.3+
+//--
 static QScriptValue js_completeResearch(QScriptContext *context, QScriptEngine *engine)
 {
 	QString researchName = context->argument(0).toString();
 	int player;
+	bool forceIt = false;
 	if (context->argumentCount() > 1)
 	{
 		player = context->argument(1).toInt32();
@@ -2883,14 +3181,18 @@ static QScriptValue js_completeResearch(QScriptContext *context, QScriptEngine *
 	{
 		player = engine->globalObject().property("me").toInt32();
 	}
-	RESEARCH *psResearch = getResearch(researchName.toUtf8().constData());
-	PLAYER_RESEARCH *plrRes = &asPlayerResList[player][psResearch->index];
-	if (IsResearchCompleted(plrRes))
+	if (context->argumentCount() > 2)
 	{
-		return QScriptValue(false);
+		forceIt = context->argument(2).toBool();
 	}
+	RESEARCH *psResearch = getResearch(researchName.toUtf8().constData());
 	SCRIPT_ASSERT(context, psResearch, "No such research %s for player %d", researchName.toUtf8().constData(), player);
 	SCRIPT_ASSERT(context, psResearch->index < asResearch.size(), "Research index out of bounds");
+	PLAYER_RESEARCH *plrRes = &asPlayerResList[player][psResearch->index];
+	if (!forceIt && IsResearchCompleted(plrRes))
+	{
+		return QScriptValue();
+	}
 	if (bMultiMessages && (gameTime > 2))
 	{
 		SendResearch(player, psResearch->index, false);
@@ -2903,8 +3205,45 @@ static QScriptValue js_completeResearch(QScriptContext *context, QScriptEngine *
 	return QScriptValue();
 }
 
-//-- \subsection{enableResearch(research[, player])}
+//-- ## completeAllResearch([player])
+//--
+//-- Finish all researches for the given player.
+//--
+static QScriptValue js_completeAllResearch(QScriptContext *context, QScriptEngine *engine)
+{
+	int player;
+	if (context->argumentCount() > 0)
+	{
+		player = context->argument(0).toInt32();
+	}
+	else
+	{
+		player = engine->globalObject().property("me").toInt32();
+	}
+	for (int i = 0; i < asResearch.size(); i++)
+	{
+		RESEARCH *psResearch = &asResearch[i];
+		PLAYER_RESEARCH *plrRes = &asPlayerResList[player][psResearch->index];
+		if (!IsResearchCompleted(plrRes))
+		{
+			if (bMultiMessages && (gameTime > 2))
+			{
+				SendResearch(player, psResearch->index, false);
+				// Wait for our message before doing anything.
+			}
+			else
+			{
+				researchResult(psResearch->index, player, false, nullptr, false);
+			}
+		}
+	}
+	return QScriptValue();
+}
+
+//-- ## enableResearch(research[, player])
+//--
 //-- Enable a research for the given player, allowing it to be researched.
+//--
 static QScriptValue js_enableResearch(QScriptContext *context, QScriptEngine *engine)
 {
 	QString researchName = context->argument(0).toString();
@@ -2926,9 +3265,11 @@ static QScriptValue js_enableResearch(QScriptContext *context, QScriptEngine *en
 	return QScriptValue();
 }
 
-//-- \subsection{extraPowerTime(time, player)}
+//-- ## extraPowerTime(time, player)
+//--
 //-- Increase a player's power as if that player had power income equal to current income
 //-- over the given amount of extra time. (3.2+ only)
+//--
 static QScriptValue js_extraPowerTime(QScriptContext *context, QScriptEngine *engine)
 {
 	int ticks = context->argument(0).toInt32() * GAME_UPDATES_PER_SEC;
@@ -2946,8 +3287,10 @@ static QScriptValue js_extraPowerTime(QScriptContext *context, QScriptEngine *en
 	return QScriptValue();
 }
 
-//-- \subsection{setPower(power[, player])}
+//-- ## setPower(power[, player])
+//--
 //-- Set a player's power directly. (Do not use this in an AI script.)
+//--
 static QScriptValue js_setPower(QScriptContext *context, QScriptEngine *engine)
 {
 	int power = context->argument(0).toInt32();
@@ -2965,8 +3308,10 @@ static QScriptValue js_setPower(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue();
 }
 
-//-- \subsection{setPowerModifier(power[, player])}
+//-- ## setPowerModifier(power[, player])
+//--
 //-- Set a player's power modifier percentage. (Do not use this in an AI script.) (3.2+ only)
+//--
 static QScriptValue js_setPowerModifier(QScriptContext *context, QScriptEngine *engine)
 {
 	int power = context->argument(0).toInt32();
@@ -2984,8 +3329,10 @@ static QScriptValue js_setPowerModifier(QScriptContext *context, QScriptEngine *
 	return QScriptValue();
 }
 
-//-- \subsection{setPowerStorageMaximum(maximum[, player])}
+//-- ## setPowerStorageMaximum(maximum[, player])
+//--
 //-- Set a player's power storage maximum. (Do not use this in an AI script.) (3.2+ only)
+//--
 static QScriptValue js_setPowerStorageMaximum(QScriptContext *context, QScriptEngine *engine)
 {
 	int power = context->argument(0).toInt32();
@@ -3003,13 +3350,15 @@ static QScriptValue js_setPowerStorageMaximum(QScriptContext *context, QScriptEn
 	return QScriptValue();
 }
 
-//-- \subsection{enableStructure(structure type[, player])}
+//-- ## enableStructure(structure type[, player])
+//--
 //-- The given structure type is made available to the given player. It will appear in the
 //-- player's build list.
+//--
 static QScriptValue js_enableStructure(QScriptContext *context, QScriptEngine *engine)
 {
 	QString building = context->argument(0).toString();
-	int index = getStructStatFromName(building.toUtf8().constData());
+	int index = getStructStatFromName(QStringToWzString(building));
 	int player;
 	if (context->argumentCount() > 1)
 	{
@@ -3026,21 +3375,30 @@ static QScriptValue js_enableStructure(QScriptContext *context, QScriptEngine *e
 	return QScriptValue();
 }
 
-//-- \subsection{setTutorialMode(bool)} Sets a number of restrictions appropriate for tutorial if set to true.
+//-- ## setTutorialMode(bool)
+//--
+//-- Sets a number of restrictions appropriate for tutorial if set to true.
+//--
 static QScriptValue js_setTutorialMode(QScriptContext *context, QScriptEngine *engine)
 {
 	bInTutorial = context->argument(0).toBool();
 	return QScriptValue();
 }
 
-//-- \subsection{setMiniMap(bool)} Turns visible minimap on or off in the GUI.
+//-- ## setMiniMap(bool)
+//--
+//-- Turns visible minimap on or off in the GUI.
+//--
 static QScriptValue js_setMiniMap(QScriptContext *context, QScriptEngine *engine)
 {
 	radarPermitted = context->argument(0).toBool();
 	return QScriptValue();
 }
 
-//-- \subsection{setDesign(bool)} Whether to allow player to design stuff.
+//-- ## setDesign(bool)
+//--
+//-- Whether to allow player to design stuff.
+//--
 static QScriptValue js_setDesign(QScriptContext *context, QScriptEngine *engine)
 {
 	DROID_TEMPLATE *psCurr;
@@ -3049,23 +3407,26 @@ static QScriptValue js_setDesign(QScriptContext *context, QScriptEngine *engine)
 	// FIXME: This dual data structure for templates is just plain insane.
 	for (auto &keyvaluepair : droidTemplates[selectedPlayer])
 	{
-		bool researched = researchedTemplate(keyvaluepair.second, selectedPlayer);
+		bool researched = researchedTemplate(keyvaluepair.second, selectedPlayer, true);
 		keyvaluepair.second->enabled = (researched || allowDesign);
 	}
 	for (auto &localTemplate : localTemplates)
 	{
 		psCurr = &localTemplate;
-		bool researched = researchedTemplate(psCurr, selectedPlayer);
+		bool researched = researchedTemplate(psCurr, selectedPlayer, true);
 		psCurr->enabled = (researched || allowDesign);
 	}
 	return QScriptValue();
 }
 
-//-- \subsection{enableTemplate(template name)} Enable a specific template (even if design is disabled).
+//-- ## enableTemplate(template name)
+//--
+//-- Enable a specific template (even if design is disabled).
+//--
 static QScriptValue js_enableTemplate(QScriptContext *context, QScriptEngine *engine)
 {
 	DROID_TEMPLATE *psCurr;
-	QString templateName = context->argument(0).toString();
+	WzString templateName = WzString::fromUtf8(context->argument(0).toString().toUtf8().constData());
 	bool found = false;
 	// FIXME: This dual data structure for templates is just plain insane.
 	for (auto &keyvaluepair : droidTemplates[selectedPlayer])
@@ -3079,7 +3440,7 @@ static QScriptValue js_enableTemplate(QScriptContext *context, QScriptEngine *en
 	}
 	if (!found)
 	{
-		debug(LOG_ERROR, "Template %s was not found!", templateName.toUtf8().constData());
+		debug(LOG_ERROR, "Template %s was not found!", templateName.toUtf8().c_str());
 		return QScriptValue(false);
 	}
 	for (auto &localTemplate : localTemplates)
@@ -3094,11 +3455,14 @@ static QScriptValue js_enableTemplate(QScriptContext *context, QScriptEngine *en
 	return QScriptValue();
 }
 
-//-- \subsection{removeTemplate(template name)} Remove a template.
+//-- ## removeTemplate(template name)
+//--
+//-- Remove a template.
+//--
 static QScriptValue js_removeTemplate(QScriptContext *context, QScriptEngine *engine)
 {
 	DROID_TEMPLATE *psCurr;
-	QString templateName = context->argument(0).toString();
+	WzString templateName = WzString::fromUtf8(context->argument(0).toString().toUtf8().constData());
 	bool found = false;
 	// FIXME: This dual data structure for templates is just plain insane.
 	for (auto &keyvaluepair : droidTemplates[selectedPlayer])
@@ -3112,7 +3476,7 @@ static QScriptValue js_removeTemplate(QScriptContext *context, QScriptEngine *en
 	}
 	if (!found)
 	{
-		debug(LOG_ERROR, "Template %s was not found!", templateName.toUtf8().constData());
+		debug(LOG_ERROR, "Template %s was not found!", templateName.toUtf8().c_str());
 		return QScriptValue(false);
 	}
 	for (std::list<DROID_TEMPLATE>::iterator i = localTemplates.begin(); i != localTemplates.end(); ++i)
@@ -3127,28 +3491,58 @@ static QScriptValue js_removeTemplate(QScriptContext *context, QScriptEngine *en
 	return QScriptValue();
 }
 
-//-- \subsection{setReticuleButton(id, filename, filenameHigh, tooltip, callback)} Add reticule button. id is which
-//-- button to change, where zero is zero is the middle button, then going clockwise from the uppermost
-//-- button. filename is button graphics and filenameHigh is for highlighting. The tooltip is the text you see when you
-//-- mouse over the button. Finally, the callback is which scripting function to call. Hide and show the user interface
+//-- ## setReticuleButton(id, filename, filenameHigh, tooltip, callback)
+//--
+//-- Add reticule button. id is which button to change, where zero is zero is the middle button, then going clockwise from the
+//-- uppermost button. filename is button graphics and filenameHigh is for highlighting. The tooltip is the text you see when
+//-- you mouse over the button. Finally, the callback is which scripting function to call. Hide and show the user interface
 //-- for such changes to take effect. (3.2+ only)
+//--
 static QScriptValue js_setReticuleButton(QScriptContext *context, QScriptEngine *engine)
 {
 	int button = context->argument(0).toInt32();
 	SCRIPT_ASSERT(context, button >= 0 && button <= 6, "Invalid button %d", button);
-	QString tip = context->argument(1).toString();
-	QString file = context->argument(2).toString();
-	QString fileDown = context->argument(3).toString();
-	QString func;
+	std::string tip = std::string(context->argument(1).toString().toUtf8().constData());
+	std::string file = std::string(context->argument(2).toString().toUtf8().constData());
+	std::string fileDown = std::string(context->argument(3).toString().toUtf8().constData());
+	WzString func;
 	if (context->argumentCount() > 4)
 	{
-		func = context->argument(4).toString();
+		func = QStringToWzString(context->argument(4).toString());
 	}
 	setReticuleStats(button, tip, file, fileDown, func, engine);
 	return QScriptValue();
 }
 
-//-- \subsection{showInterface()} Show user interface. (3.2+ only)
+//-- ## showReticuleWidget(id)
+//--
+//-- Open the reticule menu widget. (3.3+ only)
+//--
+static QScriptValue js_showReticuleWidget(QScriptContext *context, QScriptEngine *engine)
+{
+	int button = context->argument(0).toInt32();
+	SCRIPT_ASSERT(context, button >= 0 && button <= 6, "Invalid button %d", button);
+	intShowWidget(button);
+	return QScriptValue();
+}
+
+//-- ## setReticuleFlash(id, flash)
+//--
+//-- Set reticule flash on or off. (3.2.3+ only)
+//--
+static QScriptValue js_setReticuleFlash(QScriptContext *context, QScriptEngine *engine)
+{
+	int button = context->argument(0).toInt32();
+	SCRIPT_ASSERT(context, button >= 0 && button <= 6, "Invalid button %d", button);
+	bool flash = context->argument(1).toBoolean();
+	setReticuleFlash(button, flash);
+	return QScriptValue();
+}
+
+//-- ## showInterface()
+//--
+//-- Show user interface. (3.2+ only)
+//--
 static QScriptValue js_showInterface(QScriptContext *context, QScriptEngine *engine)
 {
 	intAddReticule();
@@ -3156,7 +3550,10 @@ static QScriptValue js_showInterface(QScriptContext *context, QScriptEngine *eng
 	return QScriptValue();
 }
 
-//-- \subsection{hideInterface(button type)} Hide user interface. (3.2+ only)
+//-- ## hideInterface(button type)
+//--
+//-- Hide user interface. (3.2+ only)
+//--
 static QScriptValue js_hideInterface(QScriptContext *context, QScriptEngine *engine)
 {
 	intRemoveReticule();
@@ -3164,13 +3561,19 @@ static QScriptValue js_hideInterface(QScriptContext *context, QScriptEngine *eng
 	return QScriptValue();
 }
 
-//-- \subsection{removeReticuleButton(button type)} Remove reticule button. DO NOT USE FOR ANYTHING.
+//-- ## removeReticuleButton(button type)
+//--
+//-- Remove reticule button. DO NOT USE FOR ANYTHING.
+//--
 static QScriptValue js_removeReticuleButton(QScriptContext *context, QScriptEngine *engine)
 {
 	return QScriptValue();
 }
 
-//-- \subsection{applyLimitSet()} Mix user set limits with script set limits and defaults.
+//-- ## applyLimitSet()
+//--
+//-- Mix user set limits with script set limits and defaults.
+//--
 static QScriptValue js_applyLimitSet(QScriptContext *context, QScriptEngine *engine)
 {
 	Q_UNUSED(context);
@@ -3181,13 +3584,15 @@ static QScriptValue js_applyLimitSet(QScriptContext *context, QScriptEngine *eng
 
 static void setComponent(const QString& name, int player, int value)
 {
-	COMPONENT_STATS *psComp = getCompStatsFromName(name);
+	COMPONENT_STATS *psComp = getCompStatsFromName(WzString::fromUtf8(name.toUtf8().constData()));
 	ASSERT_OR_RETURN(, psComp, "Bad component %s", name.toUtf8().constData());
 	apCompLists[player][psComp->compType][psComp->index] = value;
 }
 
-//-- \subsection{enableComponent(component, player)}
+//-- ## enableComponent(component, player)
+//--
 //-- The given component is made available for research for the given player.
+//--
 static QScriptValue js_enableComponent(QScriptContext *context, QScriptEngine *engine)
 {
 	QString componentName = context->argument(0).toString();
@@ -3198,9 +3603,11 @@ static QScriptValue js_enableComponent(QScriptContext *context, QScriptEngine *e
 	return QScriptValue();
 }
 
-//-- \subsection{makeComponentAvailable(component, player)}
+//-- ## makeComponentAvailable(component, player)
+//--
 //-- The given component is made available to the given player. This means the player can
 //-- actually build designs with it.
+//--
 static QScriptValue js_makeComponentAvailable(QScriptContext *context, QScriptEngine *engine)
 {
 	QString componentName = context->argument(0).toString();
@@ -3211,8 +3618,10 @@ static QScriptValue js_makeComponentAvailable(QScriptContext *context, QScriptEn
 	return QScriptValue();
 }
 
-//-- \subsection{allianceExistsBetween(player, player)}
+//-- ## allianceExistsBetween(player, player)
+//--
 //-- Returns true if an alliance exists between the two players, or they are the same player.
+//--
 static QScriptValue js_allianceExistsBetween(QScriptContext *context, QScriptEngine *engine)
 {
 	int player1 = context->argument(0).toInt32();
@@ -3222,16 +3631,20 @@ static QScriptValue js_allianceExistsBetween(QScriptContext *context, QScriptEng
 	return QScriptValue(alliances[player1][player2] == ALLIANCE_FORMED);
 }
 
-//-- \subsection{_(string)}
+//-- ## _(string)
+//--
 //-- Mark string for translation.
+//--
 static QScriptValue js_translate(QScriptContext *context, QScriptEngine *engine)
 {
 	// The redundant QString cast is a workaround for a Qt5 bug, the QScriptValue(char const *) constructor interprets as Latin1 instead of UTF-8!
 	return QScriptValue(QString(gettext(context->argument(0).toString().toUtf8().constData())));
 }
 
-//-- \subsection{playerPower(player)}
+//-- ## playerPower(player)
+//--
 //-- Return amount of power held by the given player.
+//--
 static QScriptValue js_playerPower(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = context->argument(0).toInt32();
@@ -3239,8 +3652,10 @@ static QScriptValue js_playerPower(QScriptContext *context, QScriptEngine *engin
 	return QScriptValue(getPower(player));
 }
 
-//-- \subsection{queuedPower(player)}
+//-- ## queuedPower(player)
+//--
 //-- Return amount of power queued up for production by the given player. (3.2+ only)
+//--
 static QScriptValue js_queuedPower(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = context->argument(0).toInt32();
@@ -3248,12 +3663,14 @@ static QScriptValue js_queuedPower(QScriptContext *context, QScriptEngine *engin
 	return QScriptValue(getQueuedPower(player));
 }
 
-//-- \subsection{isStructureAvailable(structure type[, player])}
+//-- ## isStructureAvailable(structure type[, player])
+//--
 //-- Returns true if given structure can be built. It checks both research and unit limits.
+//--
 static QScriptValue js_isStructureAvailable(QScriptContext *context, QScriptEngine *engine)
 {
 	QString building = context->argument(0).toString();
-	int index = getStructStatFromName(building.toUtf8().constData());
+	int index = getStructStatFromName(QStringToWzString(building));
 	SCRIPT_ASSERT(context, index >= 0, "%s not found", building.toUtf8().constData());
 	int player;
 	if (context->argumentCount() > 1)
@@ -3264,12 +3681,15 @@ static QScriptValue js_isStructureAvailable(QScriptContext *context, QScriptEngi
 	{
 		player = engine->globalObject().property("me").toInt32();
 	}
-	return QScriptValue(apStructTypeLists[player][index] == AVAILABLE
-	                    && asStructLimits[player][index].currentQuantity < asStructLimits[player][index].limit);
+	int status = apStructTypeLists[player][index];
+	return QScriptValue((status == AVAILABLE || status == REDUNDANT)
+	                    && asStructureStats[index].curCount[player] < asStructureStats[index].upgrade[player].limit);
 }
 
-//-- \subsection{isVTOL(droid)}
+//-- ## isVTOL(droid)
+//--
 //-- Returns true if given droid is a VTOL (not including transports).
+//--
 static QScriptValue js_isVTOL(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue droidVal = context->argument(0);
@@ -3280,9 +3700,11 @@ static QScriptValue js_isVTOL(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue(isVtolDroid(psDroid));
 }
 
-//-- \subsection{hackGetObj(type, player, id)}
+//-- ## hackGetObj(type, player, id)
+//--
 //-- Function to find and return a game object of DROID, FEATURE or STRUCTURE types, if it exists.
 //-- Otherwise, it will return null. This function is deprecated by getObject(). (3.2+ only)
+//--
 static QScriptValue js_hackGetObj(QScriptContext *context, QScriptEngine *engine)
 {
 	OBJECT_TYPE type = (OBJECT_TYPE)context->argument(0).toInt32();
@@ -3292,9 +3714,11 @@ static QScriptValue js_hackGetObj(QScriptContext *context, QScriptEngine *engine
 	return QScriptValue(convMax(IdToObject(type, id, player), engine));
 }
 
-//-- \subsection{hackChangeMe(player)}
+//-- ## hackChangeMe(player)
+//--
 //-- Change the 'me' who owns this script to the given player. This needs to be run
-//-- first in \emph{eventGameInit} to make sure things do not get out of control.
+//-- first in ```eventGameInit``` to make sure things do not get out of control.
+//--
 // This is only intended for use in campaign scripts until we get a way to add
 // scripts for each player. (3.2+ only)
 static QScriptValue js_hackChangeMe(QScriptContext *context, QScriptEngine *engine)
@@ -3305,8 +3729,10 @@ static QScriptValue js_hackChangeMe(QScriptContext *context, QScriptEngine *engi
 	return QScriptValue();
 }
 
-//-- \subsection{receiveAllEvents(bool)}
+//-- ## receiveAllEvents(bool)
+//--
 //-- Make the current script receive all events, even those not meant for 'me'. (3.2+ only)
+//--
 static QScriptValue js_receiveAllEvents(QScriptContext *context, QScriptEngine *engine)
 {
 	if (context->argumentCount() > 0)
@@ -3317,8 +3743,10 @@ static QScriptValue js_receiveAllEvents(QScriptContext *context, QScriptEngine *
 	return engine->globalObject().property("isReceivingAllEvents");
 }
 
-//-- \subsection{hackAssert(condition, message...)}
+//-- ## hackAssert(condition, message...)
+//--
 //-- Function to perform unit testing. It will throw a script error and a game assert. (3.2+ only)
+//--
 static QScriptValue js_hackAssert(QScriptContext *context, QScriptEngine *engine)
 {
 	bool condition = context->argument(0).toBool();
@@ -3345,9 +3773,11 @@ static QScriptValue js_hackAssert(QScriptContext *context, QScriptEngine *engine
 	return QScriptValue();
 }
 
-//-- \subsection{objFromId(fake game object)}
+//-- ## objFromId(fake game object)
+//--
 //-- Broken function meant to make porting from the old scripting system easier. Do not use for new code.
 //-- Instead, use labels.
+//--
 static QScriptValue js_objFromId(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue droidVal = context->argument(0);
@@ -3357,8 +3787,10 @@ static QScriptValue js_objFromId(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue(convMax(psObj, engine));
 }
 
-//-- \subsection{setDroidExperience(droid, experience)}
+//-- ## setDroidExperience(droid, experience)
+//--
 //-- Set the amount of experience a droid has. Experience is read using floating point precision.
+//--
 static QScriptValue js_setDroidExperience(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue droidVal = context->argument(0);
@@ -3370,10 +3802,12 @@ static QScriptValue js_setDroidExperience(QScriptContext *context, QScriptEngine
 	return QScriptValue();
 }
 
-//-- \subsection{donateObject(object, to)}
+//-- ## donateObject(object, to)
+//--
 //-- Donate a game object (restricted to droids before 3.2.3) to another player. Returns true if
 //-- donation was successful. May return false if this donation would push the receiving player
 //-- over unit limits. (3.2+ only)
+//--
 static QScriptValue js_donateObject(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue val = context->argument(0);
@@ -3399,8 +3833,8 @@ static QScriptValue js_donateObject(QScriptContext *context, QScriptEngine *engi
 	{
 		STRUCTURE *psStruct = IdToStruct(id, player);
 		SCRIPT_ASSERT(context, psStruct, "No such struct id %u belonging to player %u", id, player);
-		int max = psStruct->pStructureType - asStructureStats;
-		if (asStructLimits[player][max].currentQuantity + 1 > asStructLimits[player][max].limit)
+		const int statidx = psStruct->pStructureType - asStructureStats;
+		if (asStructureStats[statidx].curCount[to] + 1 > asStructureStats[statidx].upgrade[to].limit)
 		{
 			return QScriptValue(false);
 		}
@@ -3419,8 +3853,10 @@ static QScriptValue js_donateObject(QScriptContext *context, QScriptEngine *engi
 	return QScriptValue(true);
 }
 
-//-- \subsection{donatePower(amount, to)}
+//-- ## donatePower(amount, to)
+//--
 //-- Donate power to another player. Returns true. (3.2+ only)
+//--
 static QScriptValue js_donatePower(QScriptContext *context, QScriptEngine *engine)
 {
 	int amount = context->argument(0).toInt32();
@@ -3430,8 +3866,11 @@ static QScriptValue js_donatePower(QScriptContext *context, QScriptEngine *engin
 	return QScriptValue(true);
 }
 
-//-- \subsection{safeDest(player, x, y)} Returns true if given player is safe from hostile fire at
-//-- the given location, to the best of that player's map knowledge.
+//-- ## safeDest(player, x, y)
+//--
+//-- Returns true if given player is safe from hostile fire at the given location, to
+//-- the best of that player's map knowledge. Does not work in campaign at the moment.
+//--
 static QScriptValue js_safeDest(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = context->argument(0).toInt32();
@@ -3442,12 +3881,16 @@ static QScriptValue js_safeDest(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue(!(auxTile(x, y, player) & AUXBITS_DANGER));
 }
 
-//-- \subsection{addStructure(structure type, player, x, y)}
+//-- ## addStructure(structure id, player, x, y)
+//--
 //-- Create a structure on the given position. Returns the structure on success, null otherwise.
+//-- Position uses world coordinates, if you want use position based on Map Tiles, then
+//-- use as addStructure(structure id, players, x*128, y*128)
+//--
 static QScriptValue js_addStructure(QScriptContext *context, QScriptEngine *engine)
 {
 	QString building = context->argument(0).toString();
-	int index = getStructStatFromName(building.toUtf8().constData());
+	int index = getStructStatFromName(QStringToWzString(building));
 	SCRIPT_ASSERT(context, index >= 0, "%s not found", building.toUtf8().constData());
 	int player = context->argument(1).toInt32();
 	SCRIPT_ASSERT_PLAYER(context, player);
@@ -3464,12 +3907,14 @@ static QScriptValue js_addStructure(QScriptContext *context, QScriptEngine *engi
 	return QScriptValue::NullValue;
 }
 
-//-- \subsection{getStructureLimit(structure type[, player])}
+//-- ## getStructureLimit(structure type[, player])
+//--
 //-- Returns build limits for a structure.
+//--
 static QScriptValue js_getStructureLimit(QScriptContext *context, QScriptEngine *engine)
 {
 	QString building = context->argument(0).toString();
-	int index = getStructStatFromName(building.toUtf8().constData());
+	int index = getStructStatFromName(QStringToWzString(building));
 	SCRIPT_ASSERT(context, index >= 0, "%s not found", building.toUtf8().constData());
 	int player;
 	if (context->argumentCount() > 1)
@@ -3480,16 +3925,18 @@ static QScriptValue js_getStructureLimit(QScriptContext *context, QScriptEngine 
 	{
 		player = engine->globalObject().property("me").toInt32();
 	}
-	return QScriptValue(asStructLimits[player][index].limit);
+	return QScriptValue(asStructureStats[index].upgrade[player].limit);
 }
 
-//-- \subsection{countStruct(structure type[, player])}
+//-- ## countStruct(structure type[, player])
+//--
 //-- Count the number of structures of a given type.
 //-- The player parameter can be a specific player, ALL_PLAYERS, ALLIES or ENEMIES.
+//--
 static QScriptValue js_countStruct(QScriptContext *context, QScriptEngine *engine)
 {
 	QString building = context->argument(0).toString();
-	int index = getStructStatFromName(building.toUtf8().constData());
+	int index = getStructStatFromName(QStringToWzString(building));
 	int me = engine->globalObject().property("me").toInt32();
 	int player = me;
 	int quantity = 0;
@@ -3504,16 +3951,18 @@ static QScriptValue js_countStruct(QScriptContext *context, QScriptEngine *engin
 		    || (player == ALLIES && aiCheckAlliances(i, me))
 		    || (player == ENEMIES && !aiCheckAlliances(i, me)))
 		{
-			quantity += asStructLimits[i][index].currentQuantity;
+			quantity += asStructureStats[index].curCount[i];
 		}
 	}
 	return QScriptValue(quantity);
 }
 
-//-- \subsection{countDroid([droid type[, player]])}
+//-- ## countDroid([droid type[, player]])
+//--
 //-- Count the number of droids that a given player has. Droid type must be either
 //-- DROID_ANY, DROID_COMMAND or DROID_CONSTRUCT.
 //-- The player parameter can be a specific player, ALL_PLAYERS, ALLIES or ENEMIES.
+//--
 static QScriptValue js_countDroid(QScriptContext *context, QScriptEngine *engine)
 {
 	int me = engine->globalObject().property("me").toInt32();
@@ -3552,10 +4001,12 @@ static QScriptValue js_countDroid(QScriptContext *context, QScriptEngine *engine
 	return QScriptValue(quantity);
 }
 
-//-- \subsection{setNoGoArea(x1, y1, x2, y2, player)}
+//-- ## setNoGoArea(x1, y1, x2, y2, player)
+//--
 //-- Creates an area on the map on which nothing can be built. If player is zero,
 //-- then landing lights are placed. If player is -1, then a limbo landing zone
 //-- is created and limbo droids placed.
+//--
 // FIXME: missing a way to call initNoGoAreas(); check if we can call this in
 // every level start instead of through scripts
 static QScriptValue js_setNoGoArea(QScriptContext *context, QScriptEngine *)
@@ -3584,8 +4035,10 @@ static QScriptValue js_setNoGoArea(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{setScrollLimits(x1, y1, x2, y2)}
+//-- ## setScrollLimits(x1, y1, x2, y2)
+//--
 //-- Limit the scrollable area of the map to the given rectangle. (3.2+ only)
+//--
 static QScriptValue js_setScrollLimits(QScriptContext *context, QScriptEngine *)
 {
 	const int minX = context->argument(0).toInt32();
@@ -3619,8 +4072,10 @@ static QScriptValue js_setScrollLimits(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{getScrollLimits()}
+//-- ## getScrollLimits()
+//--
 //-- Get the limits of the scrollable area of the map as an area object. (3.2+ only)
+//--
 static QScriptValue js_getScrollLimits(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue ret = engine->newObject();
@@ -3632,8 +4087,10 @@ static QScriptValue js_getScrollLimits(QScriptContext *context, QScriptEngine *e
 	return ret;
 }
 
-//-- \subsection{loadLevel(level name)}
+//-- ## loadLevel(level name)
+//--
 //-- Load the level with the given name.
+//--
 static QScriptValue js_loadLevel(QScriptContext *context, QScriptEngine *)
 {
 	QString level = context->argument(0).toString();
@@ -3650,12 +4107,24 @@ static QScriptValue js_loadLevel(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{enumRange(x, y, range[, filter[, seen]])}
+//-- ## autoSave()
+//--
+//-- Perform automatic save
+//--
+static QScriptValue js_autoSave(QScriptContext *, QScriptEngine *engine)
+{
+	autoSave();
+	return QScriptValue();
+}
+
+//-- ## enumRange(x, y, range[, filter[, seen]])
+//--
 //-- Returns an array of game objects seen within range of given position that passes the optional filter
 //-- which can be one of a player index, ALL_PLAYERS, ALLIES or ENEMIES. By default, filter is
 //-- ALL_PLAYERS. Finally an optional parameter can specify whether only visible objects should be
 //-- returned; by default only visible objects are returned. Calling this function is much faster than
 //-- iterating over all game objects using other enum functions. (3.2+ only)
+//--
 static QScriptValue js_enumRange(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = engine->globalObject().property("me").toInt32();
@@ -3696,13 +4165,15 @@ static QScriptValue js_enumRange(QScriptContext *context, QScriptEngine *engine)
 	return value;
 }
 
-//-- \subsection{enumArea(<x1, y1, x2, y2 | label>[, filter[, seen]])}
+//-- ## enumArea(<x1, y1, x2, y2 | label>[, filter[, seen]])
+//--
 //-- Returns an array of game objects seen within the given area that passes the optional filter
 //-- which can be one of a player index, ALL_PLAYERS, ALLIES or ENEMIES. By default, filter is
 //-- ALL_PLAYERS. Finally an optional parameter can specify whether only visible objects should be
 //-- returned; by default only visible objects are returned. The label can either be actual
 //-- positions or a label to an AREA. Calling this function is much faster than iterating over all
 //-- game objects using other enum functions. (3.2+ only)
+//--
 static QScriptValue js_enumArea(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = engine->globalObject().property("me").toInt32();
@@ -3761,9 +4232,11 @@ static QScriptValue js_enumArea(QScriptContext *context, QScriptEngine *engine)
 	return value;
 }
 
-//-- \subsection{addBeacon(x, y, target player[, message])}
-//-- Send a beacon message to target player. Target may also be \emph{ALLIES}.
+//-- ## addBeacon(x, y, target player[, message])
+//--
+//-- Send a beacon message to target player. Target may also be ```ALLIES```.
 //-- Message is currently unused. Returns a boolean that is true on success. (3.2+ only)
+//--
 static QScriptValue js_addBeacon(QScriptContext *context, QScriptEngine *engine)
 {
 	int x = world_coord(context->argument(0).toInt32());
@@ -3783,9 +4256,11 @@ static QScriptValue js_addBeacon(QScriptContext *context, QScriptEngine *engine)
 	return QScriptValue(true);
 }
 
-//-- \subsection{removeBeacon(target player)}
-//-- Remove a beacon message sent to target player. Target may also be \emph{ALLIES}.
+//-- ## removeBeacon(target player)
+//--
+//-- Remove a beacon message sent to target player. Target may also be ```ALLIES```.
 //-- Returns a boolean that is true on success. (3.2+ only)
+//--
 static QScriptValue js_removeBeacon(QScriptContext *context, QScriptEngine *engine)
 {
 	int me = engine->globalObject().property("me").toInt32();
@@ -3807,9 +4282,11 @@ static QScriptValue js_removeBeacon(QScriptContext *context, QScriptEngine *engi
 	return QScriptValue(true);
 }
 
-//-- \subsection{chat(target player, message)}
-//-- Send a message to target player. Target may also be \emph{ALL_PLAYERS} or \emph{ALLIES}.
+//-- ## chat(target player, message)
+//--
+//-- Send a message to target player. Target may also be ```ALL_PLAYERS``` or ```ALLIES```.
 //-- Returns a boolean that is true on success. (3.2+ only)
+//--
 static QScriptValue js_chat(QScriptContext *context, QScriptEngine *engine)
 {
 	int player = engine->globalObject().property("me").toInt32();
@@ -3831,8 +4308,10 @@ static QScriptValue js_chat(QScriptContext *context, QScriptEngine *engine)
 	}
 }
 
-//-- \subsection{setAlliance(player1, player2, value)}
+//-- ## setAlliance(player1, player2, value)
+//--
 //-- Set alliance status between two players to either true or false. (3.2+ only)
+//--
 static QScriptValue js_setAlliance(QScriptContext *context, QScriptEngine *engine)
 {
 	int player1 = context->argument(0).toInt32();
@@ -3849,8 +4328,25 @@ static QScriptValue js_setAlliance(QScriptContext *context, QScriptEngine *engin
 	return QScriptValue(true);
 }
 
-//-- \subsection{setAssemblyPoint(structure, x, y)}
+//-- ## sendAllianceRequest(player)
+//--
+//-- Send an alliance request to a player. (3.3+ only)
+//--
+static QScriptValue js_sendAllianceRequest(QScriptContext *context, QScriptEngine *engine)
+{
+	if (!alliancesFixed(game.alliance))
+	{
+		int player1 = engine->globalObject().property("me").toInt32();
+		int player2 = context->argument(0).toInt32();
+		requestAlliance(player1, player2, true, true);
+	}
+	return QScriptValue();
+}
+
+//-- ## setAssemblyPoint(structure, x, y)
+//--
 //-- Set the assembly point droids go to when built for the specified structure. (3.2+ only)
+//--
 static QScriptValue js_setAssemblyPoint(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue structVal = context->argument(0);
@@ -3867,8 +4363,10 @@ static QScriptValue js_setAssemblyPoint(QScriptContext *context, QScriptEngine *
 	return QScriptValue(true);
 }
 
-//-- \subsection{hackNetOff()}
+//-- ## hackNetOff()
+//--
 //-- Turn off network transmissions. FIXME - find a better way.
+//--
 static QScriptValue js_hackNetOff(QScriptContext *, QScriptEngine *)
 {
 	bMultiPlayer = false;
@@ -3876,8 +4374,10 @@ static QScriptValue js_hackNetOff(QScriptContext *, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{hackNetOn()}
+//-- ## hackNetOn()
+//--
 //-- Turn on network transmissions. FIXME - find a better way.
+//--
 static QScriptValue js_hackNetOn(QScriptContext *, QScriptEngine *)
 {
 	bMultiPlayer = true;
@@ -3885,9 +4385,11 @@ static QScriptValue js_hackNetOn(QScriptContext *, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{getDroidProduction(factory)}
+//-- ## getDroidProduction(factory)
+//--
 //-- Return droid in production in given factory. Note that this droid is fully
 //-- virtual, and should never be passed anywhere. (3.2+ only)
+//--
 static QScriptValue js_getDroidProduction(QScriptContext *context, QScriptEngine *engine)
 {
 	QScriptValue structVal = context->argument(0);
@@ -3912,12 +4414,14 @@ static QScriptValue js_getDroidProduction(QScriptContext *context, QScriptEngine
 	return convDroid(psDroid, engine);
 }
 
-//-- \subsection{getDroidLimit([player[, unit type]])}
+//-- ## getDroidLimit([player[, unit type]])
+//--
 //-- Return maximum number of droids that this player can produce. This limit is usually
 //-- fixed throughout a game and the same for all players. If no arguments are passed,
 //-- returns general unit limit for the current player. If a second, unit type argument
 //-- is passed, the limit for this unit type is returned, which may be different from
 //-- the general unit limit (eg for commanders and construction droids). (3.2+ only)
+//--
 static QScriptValue js_getDroidLimit(QScriptContext *context, QScriptEngine *engine)
 {
 	if (context->argumentCount() > 1)
@@ -3940,16 +4444,20 @@ static QScriptValue js_getDroidLimit(QScriptContext *context, QScriptEngine *eng
 	return QScriptValue(getMaxDroids(engine->globalObject().property("me").toInt32()));
 }
 
-//-- \subsection{getExperienceModifier(player)}
+//-- ## getExperienceModifier(player)
+//--
 //-- Get the percentage of experience this player droids are going to gain. (3.2+ only)
+//--
 static QScriptValue js_getExperienceModifier(QScriptContext *context, QScriptEngine *)
 {
 	int player = context->argument(0).toInt32();
 	return QScriptValue(getExpGain(player));
 }
 
-//-- \subsection{setExperienceModifier(player, percent)}
+//-- ## setExperienceModifier(player, percent)
+//--
 //-- Set the percentage of experience this player droids are going to gain. (3.2+ only)
+//--
 static QScriptValue js_setExperienceModifier(QScriptContext *context, QScriptEngine *)
 {
 	int player = context->argument(0).toInt32();
@@ -3958,11 +4466,13 @@ static QScriptValue js_setExperienceModifier(QScriptContext *context, QScriptEng
 	return QScriptValue();
 }
 
-//-- \subsection{setDroidLimit(player, value[, droid type])}
+//-- ## setDroidLimit(player, value[, droid type])
+//--
 //-- Set the maximum number of droids that this player can produce. If a third
 //-- parameter is added, this is the droid type to limit. It can be DROID_ANY
 //-- for droids in general, DROID_CONSTRUCT for constructors, or DROID_COMMAND
 //-- for commanders. (3.2+ only)
+//--
 static QScriptValue js_setDroidLimit(QScriptContext *context, QScriptEngine *)
 {
 	int player = context->argument(0).toInt32();
@@ -3988,9 +4498,11 @@ static QScriptValue js_setDroidLimit(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{setCommanderLimit(player, value)}
+//-- ## setCommanderLimit(player, value)
+//--
 //-- Set the maximum number of commanders that this player can produce.
 //-- THIS FUNCTION IS DEPRECATED AND WILL BE REMOVED! (3.2+ only)
+//--
 static QScriptValue js_setCommanderLimit(QScriptContext *context, QScriptEngine *)
 {
 	int player = context->argument(0).toInt32();
@@ -3999,9 +4511,11 @@ static QScriptValue js_setCommanderLimit(QScriptContext *context, QScriptEngine 
 	return QScriptValue();
 }
 
-//-- \subsection{setConstructorLimit(player, value)}
+//-- ## setConstructorLimit(player, value)
+//--
 //-- Set the maximum number of constructors that this player can produce.
 //-- THIS FUNCTION IS DEPRECATED AND WILL BE REMOVED! (3.2+ only)
+//--
 static QScriptValue js_setConstructorLimit(QScriptContext *context, QScriptEngine *)
 {
 	int player = context->argument(0).toInt32();
@@ -4010,8 +4524,10 @@ static QScriptValue js_setConstructorLimit(QScriptContext *context, QScriptEngin
 	return QScriptValue();
 }
 
-//-- \subsection{hackAddMessage(message, type, player, immediate)}
+//-- ## hackAddMessage(message, type, player, immediate)
+//--
 //-- See wzscript docs for info, to the extent any exist. (3.2+ only)
+//--
 static QScriptValue js_hackAddMessage(QScriptContext *context, QScriptEngine *)
 {
 	QString mess = context->argument(0).toString();
@@ -4021,10 +4537,10 @@ static QScriptValue js_hackAddMessage(QScriptContext *context, QScriptEngine *)
 	MESSAGE *psMessage = addMessage(msgType, false, player);
 	if (psMessage)
 	{
-		VIEWDATA *psViewData = getViewData(mess.toUtf8().constData());
+		VIEWDATA *psViewData = getViewData(QStringToWzString(mess));
 		SCRIPT_ASSERT(context, psViewData, "Viewdata not found");
 		psMessage->pViewData = psViewData;
-		debug(LOG_MSG, "Adding %s pViewData=%p", psViewData->name.toUtf8().constData(), psMessage->pViewData);
+		debug(LOG_MSG, "Adding %s pViewData=%p", psViewData->name.toUtf8().c_str(), static_cast<void *>(psMessage->pViewData));
 		if (msgType == MSG_PROXIMITY)
 		{
 			VIEW_PROXIMITY *psProx = (VIEW_PROXIMITY *)psViewData->pData;
@@ -4044,31 +4560,35 @@ static QScriptValue js_hackAddMessage(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{hackRemoveMessage(message, type, player)}
+//-- ## hackRemoveMessage(message, type, player)
+//--
 //-- See wzscript docs for info, to the extent any exist. (3.2+ only)
+//--
 static QScriptValue js_hackRemoveMessage(QScriptContext *context, QScriptEngine *)
 {
 	QString mess = context->argument(0).toString();
 	MESSAGE_TYPE msgType = (MESSAGE_TYPE)context->argument(1).toInt32();
 	int player = context->argument(2).toInt32();
-	VIEWDATA *psViewData = getViewData(mess.toUtf8().constData());
+	VIEWDATA *psViewData = getViewData(QStringToWzString(mess));
 	SCRIPT_ASSERT(context, psViewData, "Viewdata not found");
 	MESSAGE *psMessage = findMessage(psViewData, msgType, player);
 	if (psMessage)
 	{
-		debug(LOG_MSG, "Removing %s", psViewData->name.toUtf8().constData());
+		debug(LOG_MSG, "Removing %s", psViewData->name.toUtf8().c_str());
 		removeMessage(psMessage, player);
 	}
 	else
 	{
-		debug(LOG_ERROR, "cannot find message - %s", psViewData->name.toUtf8().constData());
+		debug(LOG_ERROR, "cannot find message - %s", psViewData->name.toUtf8().c_str());
 	}
 	jsDebugMessageUpdate();
 	return QScriptValue();
 }
 
-//-- \subsection{setSunPosition(x, y, z)}
+//-- ## setSunPosition(x, y, z)
+//--
 //-- Move the position of the Sun, which in turn moves where shadows are cast. (3.2+ only)
+//--
 static QScriptValue js_setSunPosition(QScriptContext *context, QScriptEngine *)
 {
 	float x = context->argument(0).toNumber();
@@ -4078,8 +4598,10 @@ static QScriptValue js_setSunPosition(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{setSunIntensity(ambient r, g, b, diffuse r, g, b, specular r, g, b)}
+//-- ## setSunIntensity(ambient r, g, b, diffuse r, g, b, specular r, g, b)
+//--
 //-- Set the ambient, diffuse and specular colour intensities of the Sun lighting source. (3.2+ only)
+//--
 static QScriptValue js_setSunIntensity(QScriptContext *context, QScriptEngine *)
 {
 	float ambient[4];
@@ -4103,8 +4625,10 @@ static QScriptValue js_setSunIntensity(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{setWeather(weather type)}
+//-- ## setWeather(weather type)
+//--
 //-- Set the current weather. This should be one of WEATHER_RAIN, WEATHER_SNOW or WEATHER_CLEAR. (3.2+ only)
+//--
 static QScriptValue js_setWeather(QScriptContext *context, QScriptEngine *)
 {
 	WT_CLASS weather = (WT_CLASS)context->argument(0).toInt32();
@@ -4113,8 +4637,10 @@ static QScriptValue js_setWeather(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{setSky(texture file, wind speed, skybox scale)}
+//-- ## setSky(texture file, wind speed, skybox scale)
+//--
 //-- Change the skybox. (3.2+ only)
+//--
 static QScriptValue js_setSky(QScriptContext *context, QScriptEngine *)
 {
 	QString page = context->argument(0).toString();
@@ -4124,9 +4650,11 @@ static QScriptValue js_setSky(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{hackDoNotSave(name)}
+//-- ## hackDoNotSave(name)
+//--
 //-- Do not save the given global given by name to savegames. Must be
 //-- done again each time game is loaded, since this too is not saved.
+//--
 static QScriptValue js_hackDoNotSave(QScriptContext *context, QScriptEngine *)
 {
 	QString name = context->argument(0).toString();
@@ -4134,10 +4662,12 @@ static QScriptValue js_hackDoNotSave(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{hackMarkTiles([label | x, y[, x2, y2]])}
+//-- ## hackMarkTiles([label | x, y[, x2, y2]])
+//--
 //-- Mark the given tile(s) on the map. Either give a POSITION or AREA label,
 //-- or a tile x, y position, or four positions for a square area. If no parameter
 //-- is given, all marked tiles are cleared. (3.2+ only)
+//--
 static QScriptValue js_hackMarkTiles(QScriptContext *context, QScriptEngine *)
 {
 	if (context->argumentCount() == 4) // square area
@@ -4200,8 +4730,10 @@ static QScriptValue js_hackMarkTiles(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{cameraSlide(x, y)}
+//-- ## cameraSlide(x, y)
+//--
 //-- Slide the camera over to the given position on the map. (3.2+ only)
+//--
 static QScriptValue js_cameraSlide(QScriptContext *context, QScriptEngine *)
 {
 	float x = context->argument(0).toNumber();
@@ -4210,8 +4742,10 @@ static QScriptValue js_cameraSlide(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{cameraZoom(z, speed)}
+//-- ## cameraZoom(z, speed)
+//--
 //-- Slide the camera to the given zoom distance. Normal camera zoom ranges between 500 and 5000. (3.2+ only)
+//--
 static QScriptValue js_cameraZoom(QScriptContext *context, QScriptEngine *)
 {
 	float z = context->argument(0).toNumber();
@@ -4220,8 +4754,10 @@ static QScriptValue js_cameraZoom(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{cameraTrack(droid)}
+//-- ## cameraTrack(droid)
+//--
 //-- Make the camera follow the given droid object around. Pass in a null object to stop. (3.2+ only)
+//--
 static QScriptValue js_cameraTrack(QScriptContext *context, QScriptEngine *)
 {
 	if (context->argument(0).isNull())
@@ -4244,9 +4780,11 @@ static QScriptValue js_cameraTrack(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{setHealth(object, health)}
+//-- ## setHealth(object, health)
+//--
 //-- Change the health of the given game object, in percentage. Does not take care of network sync, so for multiplayer games,
 //-- needs wrapping in a syncRequest. (3.2.3+ only.)
+//--
 static QScriptValue js_setHealth(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue objVal = context->argument(0);
@@ -4277,10 +4815,12 @@ static QScriptValue js_setHealth(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{setObjectFlag(object, flag, value)}
+//-- ## setObjectFlag(object, flag, value)
+//--
 //-- Set or unset an object flag on a given game object. Does not take care of network sync, so for multiplayer games,
-//-- needs wrapping in a syncRequest. (3.2.4+ only.)
+//-- needs wrapping in a syncRequest. (3.3+ only.)
 //-- Recognized object flags: OBJECT_FLAG_UNSELECTABLE - makes object unavailable for selection from player UI.
+//--
 static QScriptValue js_setObjectFlag(QScriptContext *context, QScriptEngine *)
 {
 	QScriptValue obj = context->argument(0);
@@ -4297,11 +4837,13 @@ static QScriptValue js_setObjectFlag(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{addSpotter(x, y, player, range, type, expiry)}
-//-- Add an invisible viewer at a given position for given player that shows map in given range. \emph{type}
+//-- ## addSpotter(x, y, player, range, type, expiry)
+//--
+//-- Add an invisible viewer at a given position for given player that shows map in given range. ```type```
 //-- is zero for vision reveal, or one for radar reveal. The difference is that a radar reveal can be obstructed
-//-- by ECM jammers. \emph{expiry}, if non-zero, is the game time at which the spotter shall automatically be
-//-- removed. The function returns a unique ID that can be used to remove the spotter with \emph{removeSpotter}. (3.2+ only)
+//-- by ECM jammers. ```expiry```, if non-zero, is the game time at which the spotter shall automatically be
+//-- removed. The function returns a unique ID that can be used to remove the spotter with ```removeSpotter```. (3.2+ only)
+//--
 static QScriptValue js_addSpotter(QScriptContext *context, QScriptEngine *)
 {
 	int x = context->argument(0).toInt32();
@@ -4314,8 +4856,10 @@ static QScriptValue js_addSpotter(QScriptContext *context, QScriptEngine *)
 	return QScriptValue(id);
 }
 
-//-- \subsection{removeSpotter(id)}
+//-- ## removeSpotter(id)
+//--
 //-- Remove a spotter given its unique ID. (3.2+ only)
+//--
 static QScriptValue js_removeSpotter(QScriptContext *context, QScriptEngine *)
 {
 	uint32_t id = context->argument(0).toUInt32();
@@ -4323,20 +4867,24 @@ static QScriptValue js_removeSpotter(QScriptContext *context, QScriptEngine *)
 	return QScriptValue();
 }
 
-//-- \subsection{syncRandom(limit)}
+//-- ## syncRandom(limit)
+//--
 //-- Generate a synchronized random number in range 0...(limit - 1) that will be the same if this function is
 //-- run on all network peers in the same game frame. If it is called on just one peer (such as would be
 //-- the case for AIs, for instance), then game sync will break. (3.2+ only)
+//--
 static QScriptValue js_syncRandom(QScriptContext *context, QScriptEngine *)
 {
 	uint32_t limit = context->argument(0).toInt32();
 	return QScriptValue(gameRand(limit));
 }
 
-//-- \subsection{syncRequest(req_id, x, y[, obj[, obj2]])}
+//-- ## syncRequest(req_id, x, y[, obj[, obj2]])
+//--
 //-- Generate a synchronized event request that is sent over the network to all clients and executed simultaneously.
 //-- Must be caught in an eventSyncRequest() function. All sync requests must be validated when received, and always
 //-- take care only to define sync requests that can be validated against cheating. (3.2+ only)
+//--
 static QScriptValue js_syncRequest(QScriptContext *context, QScriptEngine *)
 {
 	int32_t req_id = context->argument(0).toInt32();
@@ -4349,8 +4897,8 @@ static QScriptValue js_syncRequest(QScriptContext *context, QScriptEngine *)
 		int oid = objVal.property("id").toInt32();
 		int oplayer = objVal.property("player").toInt32();
 		OBJECT_TYPE otype = (OBJECT_TYPE)objVal.property("type").toInt32();
-		SCRIPT_ASSERT(context, psObj, "No such object id %d belonging to player %d", oid, oplayer);
 		psObj = IdToObject(otype, oid, oplayer);
+		SCRIPT_ASSERT(context, psObj, "No such object id %d belonging to player %d", oid, oplayer);
 	}
 	if (context->argumentCount() > 4)
 	{
@@ -4358,34 +4906,50 @@ static QScriptValue js_syncRequest(QScriptContext *context, QScriptEngine *)
 		int oid = objVal.property("id").toInt32();
 		int oplayer = objVal.property("player").toInt32();
 		OBJECT_TYPE otype = (OBJECT_TYPE)objVal.property("type").toInt32();
-		SCRIPT_ASSERT(context, psObj, "No such object id %d belonging to player %d", oid, oplayer);
 		psObj2 = IdToObject(otype, oid, oplayer);
+		SCRIPT_ASSERT(context, psObj2, "No such object id %d belonging to player %d", oid, oplayer);
 	}
 	sendSyncRequest(req_id, x, y, psObj, psObj2);
 	return QScriptValue();
 }
 
-//-- \subsection{replaceTexture(old_filename, new_filename)}
+//-- ## replaceTexture(old_filename, new_filename)
+//--
 //-- Replace one texture with another. This can be used to for example give buildings on a specific tileset different
 //-- looks, or to add variety to the looks of droids in campaign missions. (3.2+ only)
+//--
 static QScriptValue js_replaceTexture(QScriptContext *context, QScriptEngine *)
 {
 	QString oldfile = context->argument(0).toString();
 	QString newfile = context->argument(1).toString();
-	replaceTexture(oldfile, newfile);
+	replaceTexture(WzString::fromUtf8(oldfile.toUtf8().constData()), WzString::fromUtf8(newfile.toUtf8().constData()));
 	return QScriptValue();
 }
 
-//-- \subsection{fireWeaponAtLoc(x, y, weapon_name)}
-//-- Fires a weapon at the given coordinates (3.2.4+ only).
-static QScriptValue js_fireWeaponAtLoc(QScriptContext *context, QScriptEngine *)
+//-- ## fireWeaponAtLoc(weapon, x, y[, player])
+//--
+//-- Fires a weapon at the given coordinates (3.3+ only). The player is who owns the projectile.
+//-- Please use fireWeaponAtObj() to damage objects as multiplayer and campaign
+//-- may have different friendly fire logic for a few weapons (like the lassat).
+//--
+static QScriptValue js_fireWeaponAtLoc(QScriptContext *context, QScriptEngine *engine)
 {
-	int xLocation = context->argument(0).toInt32();
-	int yLocation = context->argument(1).toInt32();
-
-	QScriptValue weaponValue = context->argument(2);
-	int weapon = getCompFromName(COMP_WEAPON, weaponValue.toString());
+	QScriptValue weaponValue = context->argument(0);
+	int weapon = getCompFromName(COMP_WEAPON, QStringToWzString(weaponValue.toString()));
 	SCRIPT_ASSERT(context, weapon > 0, "No such weapon: %s", weaponValue.toString().toUtf8().constData());
+
+	int xLocation = context->argument(1).toInt32();
+	int yLocation = context->argument(2).toInt32();
+
+	int player;
+	if (context->argumentCount() > 3)
+	{
+		player = context->argument(3).toInt32();
+	}
+	else
+	{
+		player = engine->globalObject().property("me").toInt32();
+	}
 
 	Vector3i target;
 	target.x = world_coord(xLocation);
@@ -4394,19 +4958,107 @@ static QScriptValue js_fireWeaponAtLoc(QScriptContext *context, QScriptEngine *)
 
 	WEAPON sWeapon;
 	sWeapon.nStat = weapon;
-	// send the projectile using the selectedPlayer so that it can always be seen
-	proj_SendProjectile(&sWeapon, nullptr, selectedPlayer, target, nullptr, true, 0);
+
+	proj_SendProjectile(&sWeapon, nullptr, player, target, nullptr, true, 0);
 	return QScriptValue();
 }
 
-//-- \subsection{changePlayerColour(player, colour)}
-//-- Change a player's colour slot. The current player colour can be read from the playerData array. There are as many
+//-- ## fireWeaponAtObj(weapon, game object[, player])
+//--
+//-- Fires a weapon at a game object (3.3+ only). The player is who owns the projectile.
+//--
+static QScriptValue js_fireWeaponAtObj(QScriptContext *context, QScriptEngine *engine)
+{
+	QScriptValue weaponValue = context->argument(0);
+	int weapon = getCompFromName(COMP_WEAPON, QStringToWzString(weaponValue.toString()));
+	SCRIPT_ASSERT(context, weapon > 0, "No such weapon: %s", weaponValue.toString().toUtf8().constData());
+
+	BASE_OBJECT *psObj = nullptr;
+	QScriptValue objVal = context->argument(1);
+	int oid = objVal.property("id").toInt32();
+	int oplayer = objVal.property("player").toInt32();
+	OBJECT_TYPE otype = (OBJECT_TYPE)objVal.property("type").toInt32();
+	psObj = IdToObject(otype, oid, oplayer);
+	SCRIPT_ASSERT(context, psObj, "No such object id %d belonging to player %d", oid, oplayer);
+
+	int player;
+	if (context->argumentCount() > 3)
+	{
+		player = context->argument(3).toInt32();
+	}
+	else
+	{
+		player = engine->globalObject().property("me").toInt32();
+	}
+
+	Vector3i target = psObj->pos;
+
+	WEAPON sWeapon;
+	sWeapon.nStat = weapon;
+
+	proj_SendProjectile(&sWeapon, nullptr, player, target, psObj, true, 0);
+	return QScriptValue();
+}
+
+//-- ## changePlayerColour(player, colour)
+//--
+//-- Change a player's colour slot. The current player colour can be read from the ```playerData``` array. There are as many
 //-- colour slots as the maximum number of players. (3.2.3+ only)
+//--
 static QScriptValue js_changePlayerColour(QScriptContext *context, QScriptEngine *)
 {
 	int player = context->argument(0).toInt32();
 	int colour = context->argument(1).toInt32();
 	setPlayerColour(player, colour);
+	return QScriptValue();
+}
+
+//-- ## getMultiTechLevel()
+//--
+//-- Returns the current multiplayer tech level. (3.3+ only)
+//--
+static QScriptValue js_getMultiTechLevel(QScriptContext *context, QScriptEngine *)
+{
+	return QScriptValue(game.techLevel);
+}
+
+//-- ## setCampaignNumber(num)
+//--
+//-- Set the campaign number. (3.3+ only)
+//--
+static QScriptValue js_setCampaignNumber(QScriptContext *context, QScriptEngine *)
+{
+	int num = context->argument(0).toInt32();
+	setCampaignNumber(num);
+	return QScriptValue();
+}
+
+//-- ## getMissionType()
+//--
+//-- Return the current mission type. (3.3+ only)
+//--
+static QScriptValue js_getMissionType(QScriptContext *context, QScriptEngine *)
+{
+	return (int)mission.type;
+}
+
+//-- ## getRevealStatus()
+//--
+//-- Return the current fog reveal status. (3.3+ only)
+//--
+static QScriptValue js_getRevealStatus(QScriptContext *context, QScriptEngine *)
+{
+	return QScriptValue(getRevealStatus());
+}
+
+//-- ## setRevealStatus(bool)
+//--
+//-- Set the fog reveal status. (3.3+ only)
+static QScriptValue js_setRevealStatus(QScriptContext *context, QScriptEngine *)
+{
+	bool status = context->argument(0).toBool();
+	setRevealStatus(status);
+	preProcessVisibility();
 	return QScriptValue();
 }
 
@@ -4664,6 +5316,29 @@ QScriptValue js_stats(QScriptContext *context, QScriptEngine *engine)
 				SCRIPT_ASSERT(context, false, "Upgrade component %s not found", name.toUtf8().constData());
 			}
 		}
+		else if (type == COMP_REPAIRUNIT)
+		{
+			SCRIPT_ASSERT(context, index < numRepairStats, "Bad index");
+			REPAIR_STATS *psStats = asRepairStats + index;
+			if (name == "RepairPoints")
+			{
+				psStats->upgrade[player].repairPoints = value;
+			}
+			else if (name == "HitPoints")
+			{
+				psStats->upgrade[player].hitpoints = value;
+				dirtyAllDroids(player);
+			}
+			else if (name == "HitPointPct")
+			{
+				psStats->upgrade[player].hitpointPct = value;
+				dirtyAllDroids(player);
+			}
+			else
+			{
+				SCRIPT_ASSERT(context, false, "Upgrade component %s not found", name.toUtf8().constData());
+			}
+		}
 		else if (type == COMP_WEAPON)
 		{
 			SCRIPT_ASSERT(context, index < numWeaponStats, "Bad index");
@@ -4672,6 +5347,10 @@ QScriptValue js_stats(QScriptContext *context, QScriptEngine *engine)
 			{
 				psStats->upgrade[player].maxRange = value;
 			}
+			else if (name == "ShortRange")
+			{
+				psStats->upgrade[player].shortRange = value;
+			}
 			else if (name == "MinRange")
 			{
 				psStats->upgrade[player].minRange = value;
@@ -4679,6 +5358,10 @@ QScriptValue js_stats(QScriptContext *context, QScriptEngine *engine)
 			else if (name == "HitChance")
 			{
 				psStats->upgrade[player].hitChance = value;
+			}
+			else if (name == "ShortHitChance")
+			{
+				psStats->upgrade[player].shortHitChance = value;
 			}
 			else if (name == "FirePause")
 			{
@@ -4790,6 +5473,8 @@ QScriptValue js_stats(QScriptContext *context, QScriptEngine *engine)
 				}
 				psStats->upgrade[player].hitpoints = value;
 				break;
+			case SCRCB_LIMIT:
+				psStats->upgrade[player].limit = value; break;
 			}
 		}
 		else
@@ -4950,6 +5635,27 @@ QScriptValue js_stats(QScriptContext *context, QScriptEngine *engine)
 			SCRIPT_ASSERT(context, false, "Upgrade component %s not found", name.toUtf8().constData());
 		}
 	}
+	else if (type == COMP_REPAIRUNIT)
+	{
+		SCRIPT_ASSERT(context, index < numRepairStats, "Bad index");
+		const REPAIR_STATS *psStats = asRepairStats + index;
+		if (name == "RepairPoints")
+		{
+			return psStats->upgrade[player].repairPoints;
+		}
+		else if (name == "HitPoints")
+		{
+			return psStats->upgrade[player].hitpoints;
+		}
+		else if (name == "HitPointPct")
+		{
+			return psStats->upgrade[player].hitpointPct;
+		}
+		else
+		{
+			SCRIPT_ASSERT(context, false, "Upgrade component %s not found", name.toUtf8().constData());
+		}
+	}
 	else if (type == COMP_WEAPON)
 	{
 		SCRIPT_ASSERT(context, index < numWeaponStats, "Bad index");
@@ -4958,6 +5664,10 @@ QScriptValue js_stats(QScriptContext *context, QScriptEngine *engine)
 		{
 			return psStats->upgrade[player].maxRange;
 		}
+		else if (name == "ShortRange")
+		{
+			return psStats->upgrade[player].shortRange;
+		}
 		else if (name == "MinRange")
 		{
 			return psStats->upgrade[player].minRange;
@@ -4965,6 +5675,10 @@ QScriptValue js_stats(QScriptContext *context, QScriptEngine *engine)
 		else if (name == "HitChance")
 		{
 			return psStats->upgrade[player].hitChance;
+		}
+		else if (name == "ShortHitChance")
+		{
+			return psStats->upgrade[player].shortHitChance;
 		}
 		else if (name == "FirePause")
 		{
@@ -5037,6 +5751,7 @@ QScriptValue js_stats(QScriptContext *context, QScriptEngine *engine)
 		case SCRCB_HEA: return psStats->upgrade[player].thermal; break;
 		case SCRCB_ARM: return psStats->upgrade[player].armour; break;
 		case SCRCB_HIT: return psStats->upgrade[player].hitpoints;
+		case SCRCB_LIMIT: return psStats->upgrade[player].limit;
 		default: SCRIPT_ASSERT(context, false, "Component type not found for upgrade"); break;
 		}
 	}
@@ -5056,7 +5771,7 @@ static void setStatsFunc(QScriptValue &base, QScriptEngine *engine, const QStrin
 QScriptValue register_common(QScriptEngine *engine, COMPONENT_STATS *psStats)
 {
 	QScriptValue v = engine->newObject();
-	v.setProperty("Id", psStats->id, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+	v.setProperty("Id", WzStringToQScriptValue(engine, psStats->id), QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	v.setProperty("Weight", psStats->weight, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	v.setProperty("BuildPower", psStats->buildPower, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	v.setProperty("BuildTime", psStats->buildPoints, QScriptValue::ReadOnly | QScriptValue::Undeletable);
@@ -5067,21 +5782,20 @@ QScriptValue register_common(QScriptEngine *engine, COMPONENT_STATS *psStats)
 
 bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 {
-	debug(LOG_WZ, "Loading functions for engine %p, script %s", engine, scriptName.toUtf8().constData());
+	debug(LOG_WZ, "Loading functions for engine %p, script %s", static_cast<void *>(engine), scriptName.toUtf8().constData());
 
 	// Create group map
 	GROUPMAP *psMap = new GROUPMAP;
 	groups.insert(engine, psMap);
 
 	/// Register 'Stats' object. It is a read-only representation of basic game component states.
-	//== \item[Stats] A sparse, read-only array containing rules information for game entity types.
+	//== * ```Stats``` A sparse, read-only array containing rules information for game entity types.
 	//== (For now only the highest level member attributes are documented here. Use the 'jsdebug' cheat
 	//== to see them all.)
 	//== These values are defined:
-	//== \begin{description}
 	QScriptValue stats = engine->newObject();
 	{
-		//== \item[Body] Droid bodies
+		//==   * ```Body``` Droid bodies
 		QScriptValue bodybase = engine->newObject();
 		for (int j = 0; j < numBodyStats; j++)
 		{
@@ -5093,40 +5807,40 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			body.setProperty("Resistance", psStats->base.resistance, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			body.setProperty("Size", psStats->size, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			body.setProperty("WeaponSlots", psStats->weaponSlots, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-			body.setProperty("BodyClass", psStats->bodyClass, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-			bodybase.setProperty(psStats->name, body, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			body.setProperty("BodyClass", QString::fromUtf8(psStats->bodyClass.toUtf8().c_str()), QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			bodybase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), body, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		stats.setProperty("Body", bodybase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Sensor] Sensor turrets
+		//==   * ```Sensor``` Sensor turrets
 		QScriptValue sensorbase = engine->newObject();
 		for (int j = 0; j < numSensorStats; j++)
 		{
 			SENSOR_STATS *psStats = asSensorStats + j;
 			QScriptValue sensor = register_common(engine, psStats);
 			sensor.setProperty("Range", psStats->base.range, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-			sensorbase.setProperty(psStats->name, sensor, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			sensorbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), sensor, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		stats.setProperty("Sensor", sensorbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[ECM] ECM (Electronic Counter-Measure) turrets
+		//==   * ```ECM``` ECM (Electronic Counter-Measure) turrets
 		QScriptValue ecmbase = engine->newObject();
 		for (int j = 0; j < numECMStats; j++)
 		{
 			ECM_STATS *psStats = asECMStats + j;
 			QScriptValue ecm = register_common(engine, psStats);
 			ecm.setProperty("Range", psStats->base.range, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-			ecmbase.setProperty(psStats->name, ecm, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			ecmbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), ecm, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		stats.setProperty("ECM", ecmbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Propulsion] Propulsions
+		//==   * ```Propulsion``` Propulsions
 		QScriptValue propbase = engine->newObject();
 		for (int j = 0; j < numPropulsionStats; j++)
 		{
 			PROPULSION_STATS *psStats = asPropulsionStats + j;
 			QScriptValue v = register_common(engine, psStats);
-			v.setProperty("HitpointPctOfBody", psStats->maxSpeed, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			v.setProperty("HitpointPctOfBody", psStats->base.hitpointPctOfBody, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			v.setProperty("MaxSpeed", psStats->maxSpeed, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			v.setProperty("TurnSpeed", psStats->turnSpeed, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			v.setProperty("SpinSpeed", psStats->spinSpeed, QScriptValue::ReadOnly | QScriptValue::Undeletable);
@@ -5134,33 +5848,33 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			v.setProperty("SkidDeceleration", psStats->skidDeceleration, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			v.setProperty("Acceleration", psStats->acceleration, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			v.setProperty("Deceleration", psStats->deceleration, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-			propbase.setProperty(psStats->name, v, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			propbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), v, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		stats.setProperty("Propulsion", propbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Repair] Repair turrets (not used, incidentally, for repair centers)
+		//==   * ```Repair``` Repair turrets (not used, incidentally, for repair centers)
 		QScriptValue repairbase = engine->newObject();
 		for (int j = 0; j < numRepairStats; j++)
 		{
 			REPAIR_STATS *psStats = asRepairStats + j;
 			QScriptValue repair = register_common(engine, psStats);
 			repair.setProperty("RepairPoints", psStats->base.repairPoints, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-			repairbase.setProperty(psStats->name, repair, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			repairbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), repair, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		stats.setProperty("Repair", repairbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Construct] Constructor turrets (eg for trucks)
+		//==   * ```Construct``` Constructor turrets (eg for trucks)
 		QScriptValue conbase = engine->newObject();
 		for (int j = 0; j < numConstructStats; j++)
 		{
 			CONSTRUCT_STATS *psStats = asConstructStats + j;
 			QScriptValue con = register_common(engine, psStats);
 			con.setProperty("ConstructorPoints", psStats->base.constructPoints, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-			conbase.setProperty(psStats->name, con, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			conbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), con, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		stats.setProperty("Construct", conbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Brain] Brains
+		//==   * ```Brain``` Brains
 		QScriptValue brainbase = engine->newObject();
 		for (int j = 0; j < numBrainStats; j++)
 		{
@@ -5180,19 +5894,21 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 				ranks.setProperty(x, QString::fromStdString(psStats->rankNames.at(x)), QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			}
 			br.setProperty("RankNames", ranks, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-			brainbase.setProperty(psStats->name, br, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			brainbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), br, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		stats.setProperty("Brain", brainbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Weapon] Weapon turrets
+		//==   * ```Weapon``` Weapon turrets
 		QScriptValue wbase = engine->newObject();
 		for (int j = 0; j < numWeaponStats; j++)
 		{
 			WEAPON_STATS *psStats = asWeaponStats + j;
 			QScriptValue weap = register_common(engine, psStats);
 			weap.setProperty("MaxRange", psStats->base.maxRange, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			weap.setProperty("ShortRange", psStats->base.shortRange, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			weap.setProperty("MinRange", psStats->base.minRange, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			weap.setProperty("HitChance", psStats->base.hitChance, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			weap.setProperty("ShortHitChance", psStats->base.shortHitChance, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			weap.setProperty("FirePause", psStats->base.firePause, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			weap.setProperty("ReloadTime", psStats->base.reloadTime, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			weap.setProperty("Rounds", psStats->base.numRounds, QScriptValue::ReadOnly | QScriptValue::Undeletable);
@@ -5212,11 +5928,11 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			weap.setProperty("RepeatClass", getWeaponSubClass(psStats->periodicalDamageWeaponSubClass),
 			                 QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			weap.setProperty("FireOnMove", psStats->fireOnMove, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-			wbase.setProperty(psStats->name, weap, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			wbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), weap, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		stats.setProperty("Weapon", wbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[WeaponClass] Defined weapon classes
+		//==   * ```WeaponClass``` Defined weapon classes
 		QScriptValue weaptypes = engine->newArray(WSC_NUM_WEAPON_SUBCLASSES);
 		for (int j = 0; j < WSC_NUM_WEAPON_SUBCLASSES; j++)
 		{
@@ -5224,13 +5940,13 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 		}
 		stats.setProperty("WeaponClass", weaptypes, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Building] Buildings
+		//==   * ```Building``` Buildings
 		QScriptValue structbase = engine->newObject();
 		for (int j = 0; j < numStructureStats; j++)
 		{
 			STRUCTURE_STATS *psStats = asStructureStats + j;
 			QScriptValue strct = engine->newObject();
-			strct.setProperty("Id", psStats->id, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			strct.setProperty("Id", WzStringToQScriptValue(engine, psStats->id), QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			if (psStats->type == REF_DEFENSE || psStats->type == REF_WALL || psStats->type == REF_WALLCORNER
 			    || psStats->type == REF_GENERIC || psStats->type == REF_GATE)
 			{
@@ -5253,24 +5969,22 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			strct.setProperty("Thermal", psStats->base.thermal, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			strct.setProperty("HitPoints", psStats->base.hitpoints, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 			strct.setProperty("Resistance", psStats->base.resistance, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-			structbase.setProperty(psStats->name, strct, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			structbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), strct, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		stats.setProperty("Building", structbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	}
 	engine->globalObject().setProperty("Stats", stats, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-	//== \end{description}
 
-	//== \item[Upgrades] A special array containing per-player rules information for game entity types,
+	//== * ```Upgrades``` A special array containing per-player rules information for game entity types,
 	//== which can be written to in order to implement upgrades and other dynamic rules changes. Each item in the
-	//== array contains a subset of the sparse array of rules information in the \emph{Stats} global.
+	//== array contains a subset of the sparse array of rules information in the ```Stats``` global.
 	//== These values are defined:
-	//== \begin{description}
 	QScriptValue upgrades = engine->newArray(MAX_PLAYERS);
 	for (int i = 0; i < MAX_PLAYERS; i++)
 	{
 		QScriptValue node = engine->newObject();
 
-		//== \item[Body] Droid bodies
+		//==   * ```Body``` Droid bodies
 		QScriptValue bodybase = engine->newObject();
 		for (int j = 0; j < numBodyStats; j++)
 		{
@@ -5282,11 +5996,11 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			setStatsFunc(body, engine, "Armour", i, COMP_BODY, j);
 			setStatsFunc(body, engine, "Thermal", i, COMP_BODY, j);
 			setStatsFunc(body, engine, "Resistance", i, COMP_BODY, j);
-			bodybase.setProperty(psStats->name, body, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			bodybase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), body, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		node.setProperty("Body", bodybase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Sensor] Sensor turrets
+		//==   * ```Sensor``` Sensor turrets
 		QScriptValue sensorbase = engine->newObject();
 		for (int j = 0; j < numSensorStats; j++)
 		{
@@ -5295,11 +6009,11 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			setStatsFunc(sensor, engine, "HitPoints", i, COMP_SENSOR, j);
 			setStatsFunc(sensor, engine, "HitPointPct", i, COMP_SENSOR, j);
 			setStatsFunc(sensor, engine, "Range", i, COMP_SENSOR, j);
-			sensorbase.setProperty(psStats->name, sensor, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			sensorbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), sensor, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		node.setProperty("Sensor", sensorbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Propulsion] Propulsions
+		//==   * ```Propulsion``` Propulsions
 		QScriptValue propbase = engine->newObject();
 		for (int j = 0; j < numPropulsionStats; j++)
 		{
@@ -5308,11 +6022,11 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			setStatsFunc(v, engine, "HitPoints", i, COMP_PROPULSION, j);
 			setStatsFunc(v, engine, "HitPointPct", i, COMP_PROPULSION, j);
 			setStatsFunc(v, engine, "HitPointPctOfBody", i, COMP_PROPULSION, j);
-			propbase.setProperty(psStats->name, v, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			propbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), v, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		node.setProperty("Propulsion", propbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[ECM] ECM (Electronic Counter-Measure) turrets
+		//==   * ```ECM``` ECM (Electronic Counter-Measure) turrets
 		QScriptValue ecmbase = engine->newObject();
 		for (int j = 0; j < numECMStats; j++)
 		{
@@ -5321,11 +6035,11 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			setStatsFunc(ecm, engine, "Range", i, COMP_ECM, j);
 			setStatsFunc(ecm, engine, "HitPoints", i, COMP_ECM, j);
 			setStatsFunc(ecm, engine, "HitPointPct", i, COMP_ECM, j);
-			ecmbase.setProperty(psStats->name, ecm, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			ecmbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), ecm, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		node.setProperty("ECM", ecmbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Repair] Repair turrets (not used, incidentally, for repair centers)
+		//==   * ```Repair``` Repair turrets (not used, incidentally, for repair centers)
 		QScriptValue repairbase = engine->newObject();
 		for (int j = 0; j < numRepairStats; j++)
 		{
@@ -5334,11 +6048,11 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			setStatsFunc(repair, engine, "RepairPoints", i, COMP_REPAIRUNIT, j);
 			setStatsFunc(repair, engine, "HitPoints", i, COMP_REPAIRUNIT, j);
 			setStatsFunc(repair, engine, "HitPointPct", i, COMP_REPAIRUNIT, j);
-			repairbase.setProperty(psStats->name, repair, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			repairbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), repair, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		node.setProperty("Repair", repairbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Construct] Constructor turrets (eg for trucks)
+		//==   * ```Construct``` Constructor turrets (eg for trucks)
 		QScriptValue conbase = engine->newObject();
 		for (int j = 0; j < numConstructStats; j++)
 		{
@@ -5347,11 +6061,11 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			setStatsFunc(con, engine, "ConstructorPoints", i, COMP_CONSTRUCT, j);
 			setStatsFunc(con, engine, "HitPoints", i, COMP_CONSTRUCT, j);
 			setStatsFunc(con, engine, "HitPointPct", i, COMP_CONSTRUCT, j);
-			conbase.setProperty(psStats->name, con, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			conbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), con, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		node.setProperty("Construct", conbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Brain] Brains
+		//==   * ```Brain``` Brains
 		//== BaseCommandLimit: How many droids a commander can command. CommandLimitByLevel: How many extra droids
 		//== a commander can command for each of its rank levels. RankThresholds: An array describing how many
 		//== kills are required for this brain to level up to the next rank. To alter this from scripts, you must
@@ -5366,19 +6080,21 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			setStatsFunc(br, engine, "RankThresholds", i, COMP_BRAIN, j);
 			setStatsFunc(br, engine, "HitPoints", i, COMP_BRAIN, j);
 			setStatsFunc(br, engine, "HitPointPct", i, COMP_BRAIN, j);
-			brainbase.setProperty(psStats->name, br, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			brainbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), br, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		node.setProperty("Brain", brainbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Weapon] Weapon turrets
+		//==   * ```Weapon``` Weapon turrets
 		QScriptValue wbase = engine->newObject();
 		for (int j = 0; j < numWeaponStats; j++)
 		{
 			WEAPON_STATS *psStats = asWeaponStats + j;
 			QScriptValue weap = engine->newObject();
 			setStatsFunc(weap, engine, "MaxRange", i, COMP_WEAPON, j);
+			setStatsFunc(weap, engine, "ShortRange", i, COMP_WEAPON, j);
 			setStatsFunc(weap, engine, "MinRange", i, COMP_WEAPON, j);
 			setStatsFunc(weap, engine, "HitChance", i, COMP_WEAPON, j);
+			setStatsFunc(weap, engine, "ShortHitChance", i, COMP_WEAPON, j);
 			setStatsFunc(weap, engine, "FirePause", i, COMP_WEAPON, j);
 			setStatsFunc(weap, engine, "ReloadTime", i, COMP_WEAPON, j);
 			setStatsFunc(weap, engine, "Rounds", i, COMP_WEAPON, j);
@@ -5391,11 +6107,11 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			setStatsFunc(weap, engine, "RepeatRadius", i, COMP_WEAPON, j);
 			setStatsFunc(weap, engine, "HitPoints", i, COMP_WEAPON, j);
 			setStatsFunc(weap, engine, "HitPointPct", i, COMP_WEAPON, j);
-			wbase.setProperty(psStats->name, weap, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			wbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), weap, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		node.setProperty("Weapon", wbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
-		//== \item[Building] Buildings
+		//==   * ```Building``` Buildings
 		QScriptValue structbase = engine->newObject();
 		for (int j = 0; j < numStructureStats; j++)
 		{
@@ -5413,7 +6129,8 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 			setStatsFunc(strct, engine, "Resistance", i, SCRCB_ELW, j);
 			setStatsFunc(strct, engine, "Thermal", i, SCRCB_HEA, j);
 			setStatsFunc(strct, engine, "HitPoints", i, SCRCB_HIT, j);
-			structbase.setProperty(psStats->name, strct, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+			setStatsFunc(strct, engine, "Limit", i, SCRCB_LIMIT, j);
+			structbase.setProperty(QString::fromUtf8(psStats->name.toUtf8().c_str()), strct, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 		}
 		node.setProperty("Building", structbase, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
@@ -5421,7 +6138,6 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 		upgrades.setProperty(i, node, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	}
 	engine->globalObject().setProperty("Upgrades", upgrades, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-	//== \end{description}
 
 	// Register functions to the script engine here
 	engine->globalObject().setProperty("_", engine->newFunction(js_translate));
@@ -5437,6 +6153,7 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 	engine->globalObject().setProperty("enumTemplates", engine->newFunction(js_enumTemplates));
 	engine->globalObject().setProperty("makeTemplate", engine->newFunction(js_makeTemplate));
 	engine->globalObject().setProperty("setAlliance", engine->newFunction(js_setAlliance));
+	engine->globalObject().setProperty("sendAllianceRequest", engine->newFunction(js_sendAllianceRequest));
 	engine->globalObject().setProperty("setAssemblyPoint", engine->newFunction(js_setAssemblyPoint));
 	engine->globalObject().setProperty("setSunPosition", engine->newFunction(js_setSunPosition));
 	engine->globalObject().setProperty("setSunIntensity", engine->newFunction(js_setSunIntensity));
@@ -5455,6 +6172,12 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 	engine->globalObject().setProperty("setHealth", engine->newFunction(js_setHealth));
 	engine->globalObject().setProperty("useSafetyTransport", engine->newFunction(js_useSafetyTransport));
 	engine->globalObject().setProperty("restoreLimboMissionData", engine->newFunction(js_restoreLimboMissionData));
+	engine->globalObject().setProperty("getMultiTechLevel", engine->newFunction(js_getMultiTechLevel));
+	engine->globalObject().setProperty("setCampaignNumber", engine->newFunction(js_setCampaignNumber));
+	engine->globalObject().setProperty("getMissionType", engine->newFunction(js_getMissionType));
+	engine->globalObject().setProperty("getRevealStatus", engine->newFunction(js_getRevealStatus));
+	engine->globalObject().setProperty("setRevealStatus", engine->newFunction(js_setRevealStatus));
+	engine->globalObject().setProperty("autoSave", engine->newFunction(js_autoSave));
 
 	// horrible hacks follow -- do not rely on these being present!
 	engine->globalObject().setProperty("hackNetOff", engine->newFunction(js_hackNetOff));
@@ -5468,10 +6191,13 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 	engine->globalObject().setProperty("hackMarkTiles", engine->newFunction(js_hackMarkTiles));
 	engine->globalObject().setProperty("receiveAllEvents", engine->newFunction(js_receiveAllEvents));
 	engine->globalObject().setProperty("hackDoNotSave", engine->newFunction(js_hackDoNotSave));
+	engine->globalObject().setProperty("hackPlayIngameAudio", engine->newFunction(js_hackPlayIngameAudio));
+	engine->globalObject().setProperty("hackStopIngameAudio", engine->newFunction(js_hackStopIngameAudio));
 
 	// General functions -- geared for use in AI scripts
 	engine->globalObject().setProperty("debug", engine->newFunction(js_debug));
 	engine->globalObject().setProperty("console", engine->newFunction(js_console));
+	engine->globalObject().setProperty("clearConsole", engine->newFunction(js_clearConsole));
 	engine->globalObject().setProperty("structureIdle", engine->newFunction(js_structureIdle));
 	engine->globalObject().setProperty("enumStruct", engine->newFunction(js_enumStruct));
 	engine->globalObject().setProperty("enumStructOffWorld", engine->newFunction(js_enumStructOffWorld));
@@ -5536,6 +6262,7 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 	engine->globalObject().setProperty("getMissionTime", engine->newFunction(js_getMissionTime));
 	engine->globalObject().setProperty("setReinforcementTime", engine->newFunction(js_setReinforcementTime));
 	engine->globalObject().setProperty("completeResearch", engine->newFunction(js_completeResearch));
+	engine->globalObject().setProperty("completeAllResearch", engine->newFunction(js_completeAllResearch));
 	engine->globalObject().setProperty("enableResearch", engine->newFunction(js_enableResearch));
 	engine->globalObject().setProperty("setPower", engine->newFunction(js_setPower));
 	engine->globalObject().setProperty("setPowerModifier", engine->newFunction(js_setPowerModifier));
@@ -5547,6 +6274,8 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 	engine->globalObject().setProperty("removeTemplate", engine->newFunction(js_removeTemplate));
 	engine->globalObject().setProperty("setMiniMap", engine->newFunction(js_setMiniMap));
 	engine->globalObject().setProperty("setReticuleButton", engine->newFunction(js_setReticuleButton));
+	engine->globalObject().setProperty("setReticuleFlash", engine->newFunction(js_setReticuleFlash));
+	engine->globalObject().setProperty("showReticuleWidget", engine->newFunction(js_showReticuleWidget));
 	engine->globalObject().setProperty("showInterface", engine->newFunction(js_showInterface));
 	engine->globalObject().setProperty("hideInterface", engine->newFunction(js_hideInterface));
 	engine->globalObject().setProperty("addReticuleButton", engine->newFunction(js_removeReticuleButton)); // deprecated!!
@@ -5573,6 +6302,7 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 	engine->globalObject().setProperty("setTransporterExit", engine->newFunction(js_setTransporterExit));
 	engine->globalObject().setProperty("setObjectFlag", engine->newFunction(js_setObjectFlag));
 	engine->globalObject().setProperty("fireWeaponAtLoc", engine->newFunction(js_fireWeaponAtLoc));
+	engine->globalObject().setProperty("fireWeaponAtObj", engine->newFunction(js_fireWeaponAtObj));
 
 	// Set some useful constants
 	engine->globalObject().setProperty("TER_WATER", TER_WATER, QScriptValue::ReadOnly | QScriptValue::Undeletable);
@@ -5589,7 +6319,6 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 	engine->globalObject().setProperty("DORDER_HELPBUILD", DORDER_HELPBUILD, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("DORDER_LINEBUILD", DORDER_LINEBUILD, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("DORDER_REPAIR", DORDER_REPAIR, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-	engine->globalObject().setProperty("DORDER_RETREAT", DORDER_RETREAT, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("DORDER_PATROL", DORDER_PATROL, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("DORDER_DEMOLISH", DORDER_DEMOLISH, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("DORDER_EMBARK", DORDER_EMBARK, QScriptValue::ReadOnly | QScriptValue::Undeletable);
@@ -5638,7 +6367,7 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 	engine->globalObject().setProperty("POWER_GEN", REF_POWER_GEN, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("RESOURCE_EXTRACTOR", REF_RESOURCE_EXTRACTOR, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("DEFENSE", REF_DEFENSE, QScriptValue::ReadOnly | QScriptValue::Undeletable);
-	engine->globalObject().setProperty("LASSAT", FAKE_REF_LASSAT, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+	engine->globalObject().setProperty("LASSAT", REF_LASSAT, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("WALL", REF_WALL, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("RESEARCH_LAB", REF_RESEARCH, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("REPAIR_FACILITY", REF_REPAIR_FACILITY, QScriptValue::ReadOnly | QScriptValue::Undeletable);
@@ -5671,16 +6400,23 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 	engine->globalObject().setProperty("CAMP_MSG", MSG_CAMPAIGN, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("MISS_MSG", MSG_MISSION, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 	engine->globalObject().setProperty("RES_MSG", MSG_RESEARCH, QScriptValue::ReadOnly | QScriptValue::Undeletable);
+	engine->globalObject().setProperty("LDS_EXPAND_LIMBO", LDS_EXPAND_LIMBO, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
 	/// Place to store group sizes
-	//== \item[groupSizes] A sparse array of group sizes. If a group has never been used, the entry in this array will
+	//== * ```groupSizes``` A sparse array of group sizes. If a group has never been used, the entry in this array will
 	//== be undefined.
 	engine->globalObject().setProperty("groupSizes", engine->newObject());
 
 	// Static knowledge about players
-	//== \item[playerData] An array of information about the players in a game. Each item in the array is an object
-	//== containing the following variables: difficulty (see \emph{difficulty} global constant), colour, position,
-	//== isAI (3.2+ only), isHuman (3.2+ only), name (3.2+ only), and team.
+	//== * ```playerData``` An array of information about the players in a game. Each item in the array is an object
+	//== containing the following variables:
+	//==   * ```difficulty``` (see ```difficulty``` global constant)
+	//==   * ```colour``` number describing the colour of the player
+	//==   * ```position``` number describing the position of the player in the game's setup screen
+	//==   * ```isAI``` whether the player is an AI (3.2+ only)
+	//==   * ```isHuman``` whether the player is human (3.2+ only)
+	//==   * ```name``` the name of the player (3.2+ only)
+	//==   * ```team``` the number of the team the player is part of
 	QScriptValue playerData = engine->newArray(game.maxPlayers);
 	for (int i = 0; i < game.maxPlayers; i++)
 	{
@@ -5698,9 +6434,9 @@ bool registerFunctions(QScriptEngine *engine, const QString& scriptName)
 	engine->globalObject().setProperty("playerData", playerData, QScriptValue::ReadOnly | QScriptValue::Undeletable);
 
 	// Static map knowledge about start positions
-	//== \item[derrickPositions] An array of derrick starting positions on the current map. Each item in the array is an
+	//== * ```derrickPositions``` An array of derrick starting positions on the current map. Each item in the array is an
 	//== object containing the x and y variables for a derrick.
-	//== \item[startPositions] An array of player start positions on the current map. Each item in the array is an
+	//== * ```startPositions``` An array of player start positions on the current map. Each item in the array is an
 	//== object containing the x and y variables for a player start position.
 	QScriptValue startPositions = engine->newArray(game.maxPlayers);
 	for (int i = 0; i < game.maxPlayers; i++)

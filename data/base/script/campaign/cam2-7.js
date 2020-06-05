@@ -82,19 +82,8 @@ function enableFactoriesAndHovers()
 		],
 		//fallback: camMakePos("base2HeavyAssembly"),
 		//morale: 10,
-		interval: 22000,
+		interval: camSecondsToMilliseconds(22),
 		regroup: false,
-	});
-}
-
-function enableReinforcements()
-{
-	playSound("pcv440.ogg"); // Reinforcements are available.
-	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "SUB_2_8S", {
-		eliminateBases: true,
-		area: "RTLZ",
-		message: "C27_LZ",
-		reinforcements: 180 //3 min
 	});
 }
 
@@ -104,7 +93,7 @@ function eventStartLevel()
 		eliminateBases: true,
 		area: "RTLZ",
 		message: "C27_LZ",
-		reinforcements: -1,
+		reinforcements: camMinutesToSeconds(3)
 	});
 
 	var startpos = getObject("startPosition");
@@ -116,11 +105,14 @@ function eventStartLevel()
 	startTransporterEntry(tent.x, tent.y, CAM_HUMAN_PLAYER);
 	setTransporterExit(text.x, text.y, CAM_HUMAN_PLAYER);
 
+	var enemyLz = getObject("COLandingZone");
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, THE_COLLECTIVE);
+
 	camSetArtifacts({
 		"COHeavyFac-Arti-b2": { tech: "R-Wpn-Cannon5" },
+		"COTankKillerHardpoint": { tech: "R-Wpn-RocketSlow-ROF03" },
 	});
 
-	setPower(AI_POWER, THE_COLLECTIVE);
 	camCompleteRequiredResearch(COLLECTIVE_RES, THE_COLLECTIVE);
 
 	camSetEnemyBases({
@@ -150,77 +142,77 @@ function eventStartLevel()
 		},
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"COHeavyFac-Arti-b2": {
 			assembly: "base2HeavyAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(60000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(60)),
 			data: {
 				regroup: false,
 				repair: 20,
 				count: -1,
 			},
-			templates: [comagt, cohact, cohhpv, comtath]
+			templates: [cTempl.comagt, cTempl.cohact, cTempl.cohhpv, cTempl.comtath]
 		},
 		"COCyborgFac-b2": {
 			assembly: "base2CybAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [npcybc, cocybag]
+			templates: [cTempl.npcybc, cTempl.cocybag]
 		},
 		"COCyborgFac-b3": {
 			assembly: "base3CybAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [npcybf, npcybr]
+			templates: [cTempl.npcybf, cTempl.npcybr]
 		},
 		"COHeavyFac-b4": {
 			assembly: "base4HeavyAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(70000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(70)),
 			data: {
 				regroup: false,
 				repair: 20,
 				count: -1,
 			},
-			templates: [comrotmh, comhltat, cohct]
+			templates: [cTempl.comrotmh, cTempl.comhltat, cTempl.cohct]
 		},
 		"COCyborgFac-b4": {
 			assembly: "base4CybAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [cocybag, npcybc, npcybr]
+			templates: [cTempl.cocybag, cTempl.npcybc, cTempl.npcybr]
 		},
 		"COVtolFactory-b4": {
 			assembly: "base4VTOLAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(60000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(60)),
 			data: {
 				regroup: false,
 				count: -1,
 			},
-			templates: [colagv, commorv]
+			templates: [cTempl.colagv, cTempl.commorv]
 		},
 	});
 
@@ -232,8 +224,7 @@ function eventStartLevel()
 	hackAddMessage("C27_OBJECTIVE3", PROX_MSG, CAM_HUMAN_PLAYER, true);
 	hackAddMessage("C27_OBJECTIVE4", PROX_MSG, CAM_HUMAN_PLAYER, true);
 
-	queue("enableReinforcements", 20000);
-	queue("baseThreeVtolAttack", 30000);
-	queue("baseFourVtolAttack", 60000);
-	queue("enableFactoriesAndHovers", camChangeOnDiff(90000));
+	queue("baseThreeVtolAttack", camSecondsToMilliseconds(30));
+	queue("baseFourVtolAttack", camMinutesToMilliseconds(1));
+	queue("enableFactoriesAndHovers", camChangeOnDiff(camMinutesToMilliseconds(1.5)));
 }

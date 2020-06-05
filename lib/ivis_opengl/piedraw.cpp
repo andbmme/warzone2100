@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
  *  Render routines for 3D coloured and shaded transparency rendering.
  */
 
+#include <unordered_map>
 #include <string.h>
 
 #include "lib/framework/frame.h"
@@ -44,7 +45,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#define BUFFER_OFFSET(i) ((char *)NULL + (i))
+#define BUFFER_OFFSET(i) (reinterpret_cast<char *>(i))
 #define SHADOW_END_DISTANCE (8000*8000) // Keep in sync with lighting.c:FOG_END
 
 // Shadow stencil stuff
@@ -63,19 +64,20 @@ static GLenum ss_op_depth_pass_back = GL_DECR;
 static unsigned int pieCount = 0;
 static unsigned int polyCount = 0;
 static bool shadows = false;
-static GLfloat lighting0[LIGHT_MAX][4];
+static gfx_api::gfxFloat lighting0[LIGHT_MAX][4];
 
 static std::vector<GLint> enabledAttribArrays;
 
 
-void enableArray(GLint buffer, GLint loc, GLint size, GLenum type, GLboolean normalised, GLsizei stride, std::size_t offset)
+void enableArray(gfx_api::buffer *buffer, GLint loc, GLint size, GLenum type, GLboolean normalised, GLsizei stride, std::size_t offset)
 {
+	ASSERT(buffer, "buffer is NULL");
 	if (loc == -1)
 	{
 		return;
 	}
 
-	glBindBuffer(GL_ARRAY_BUFFER, buffer);
+	buffer->bind();
 	glVertexAttribPointer(loc, size, type, normalised, stride, BUFFER_OFFSET(offset));
 	glEnableVertexAttribArray(loc);
 	enabledAttribArrays.push_back(loc);
@@ -97,7 +99,9 @@ void disableArrays()
 
 void pie_InitLighting()
 {
-	const GLfloat defaultLight[LIGHT_MAX][4] = {{0.0f, 0.0f, 0.0f, 1.0f},  {0.5f, 0.5f, 0.5f, 1.0f},  {0.8f, 0.8f, 0.8f, 1.0f},  {1.0f, 1.0f, 1.0f, 1.0f}};
+	// set scene color, ambient, diffuse and specular light intensities of sun
+	// diffuse lighting is turned off because players dislike it
+	const gfx_api::gfxFloat defaultLight[LIGHT_MAX][4] = {{0.0f, 0.0f, 0.0f, 1.0f},  {1.0f, 1.0f, 1.0f, 1.0f},  {0.0f, 0.0f, 0.0f, 1.0f},  {1.0f, 1.0f, 1.0f, 1.0f}};
 	memcpy(lighting0, defaultLight, sizeof(lighting0));
 }
 
@@ -114,7 +118,7 @@ void pie_setShadows(bool drawShadows)
 	shadows = drawShadows;
 }
 
-static Vector3f currentSunPosition;
+static Vector3f currentSunPosition(0.f, 0.f, 0.f);
 
 void pie_BeginLighting(const Vector3f &light)
 {
@@ -159,16 +163,16 @@ static void pie_Draw3DButton(iIMDShape *shape, PIELIGHT teamcolour, const glm::m
 	const PIELIGHT colour = WZCOL_WHITE;
 	pie_SetDepthBufferStatus(DEPTH_CMP_LEQ_WRT_ON);
 	pie_internal::SHADER_PROGRAM &program = pie_ActivateShaderDeprecated(SHADER_BUTTON, shape, teamcolour, colour, matrix, pie_PerspectiveGet(),
-		glm::vec4(), glm::vec4(), glm::vec4(), glm::vec4(), glm::vec4());
+		glm::vec4(0.f), glm::vec4(0.f), glm::vec4(0.f), glm::vec4(0.f), glm::vec4(0.f));
 	pie_SetRendMode(REND_OPAQUE);
 	pie_SetTexturePage(shape->texpage);
 	enableArray(shape->buffers[VBO_VERTEX], program.locVertex, 3, GL_FLOAT, false, 0, 0);
 	enableArray(shape->buffers[VBO_NORMAL], program.locNormal, 3, GL_FLOAT, false, 0, 0);
 	enableArray(shape->buffers[VBO_TEXCOORD], program.locTexCoord, 2, GL_FLOAT, false, 0, 0);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, shape->buffers[VBO_INDEX]);
-	glDrawElements(GL_TRIANGLES, shape->npolys * 3, GL_UNSIGNED_SHORT, nullptr);
+	shape->buffers[VBO_INDEX]->bind();
+	glDrawElements(GL_TRIANGLES, shape->polys.size() * 3, GL_UNSIGNED_SHORT, nullptr);
 	disableArrays();
-	polyCount += shape->npolys;
+	polyCount += shape->polys.size();
 	pie_DeactivateShader();
 	pie_SetDepthBufferStatus(DEPTH_CMP_ALWAYS_WRT_ON);
 }
@@ -236,14 +240,16 @@ static void pie_Draw3DShape2(const iIMDShape *shape, int frame, PIELIGHT colour,
 	enableArray(shape->buffers[VBO_VERTEX], program.locVertex, 3, GL_FLOAT, false, 0, 0);
 	enableArray(shape->buffers[VBO_NORMAL], program.locNormal, 3, GL_FLOAT, false, 0, 0);
 	enableArray(shape->buffers[VBO_TEXCOORD], program.locTexCoord, 2, GL_FLOAT, false, 0, 0);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, shape->buffers[VBO_INDEX]);
-	glDrawElements(GL_TRIANGLES, shape->npolys * 3, GL_UNSIGNED_SHORT, BUFFER_OFFSET(frame * shape->npolys * 3 * sizeof(uint16_t)));
+	shape->buffers[VBO_INDEX]->bind();
+	glDrawElements(GL_TRIANGLES, shape->polys.size() * 3, GL_UNSIGNED_SHORT, BUFFER_OFFSET(frame * shape->polys.size() * 3 * sizeof(uint16_t)));
 	disableArrays();
 
-	polyCount += shape->npolys;
+	polyCount += shape->polys.size();
 
 	pie_SetShaderEcmEffect(false);
-	pie_DeactivateShader();
+	// NOTE: Do *not* call pie_DeactivateShader() here, to avoid unecessary state transitions.
+	// Avoiding a call to pie_DeactivateShader() here yields a 10%+ CPU usage reduction overall.
+	// (activateShader handles changing the active shader *if necessary*.)
 }
 
 static inline bool edgeLessThan(EDGE const &e1, EDGE const &e2)
@@ -282,26 +288,166 @@ static inline float scale_y(float y, int flag, int flag_data)
 	return tempY;
 }
 
-namespace
+inline void hash_combine(std::size_t& seed) { }
+
+template <typename T, typename... Rest>
+inline void hash_combine(std::size_t& seed, const T& v, Rest... rest) {
+	std::hash<T> hasher;
+#if SIZE_MAX >= UINT64_MAX
+	seed ^= hasher(v) + 0x9e3779b97f4a7c15L + (seed<<6) + (seed>>2);
+#else
+	seed ^= hasher(v) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+#endif
+	hash_combine(seed, rest...);
+}
+
+std::size_t hash_vec4(const glm::vec4& vec)
 {
-	struct glBufferWrapper
+	std::size_t h=0;
+	hash_combine(h, vec[0], vec[1], vec[2], vec[3]);
+	return h;
+}
+
+struct ShadowDrawParameters {
+	int flag;
+	int flag_data;
+	//		glm::mat4 modelViewMatrix; // the modelViewMatrix doesn't change any of the vertex / buffer calculations
+	glm::vec4 light;
+
+	ShadowDrawParameters(int flag, int flag_data, const glm::vec4 &light)
+	: flag(flag)
+	, flag_data(flag_data)
+	, light(light)
+	{ }
+
+	bool operator ==(const ShadowDrawParameters &b) const
 	{
-		GLuint id;
+		return (flag == b.flag) && (flag_data == b.flag_data) && (light == b.light);
+	}
+};
 
-		glBufferWrapper()
+namespace std {
+	template <>
+	struct hash<ShadowDrawParameters>
+	{
+		std::size_t operator()(const ShadowDrawParameters& k) const
 		{
-			glGenBuffers(1, &id);
-		}
-
-		~glBufferWrapper()
-		{
-			glDeleteBuffers(1, &id);
+			std::size_t h = 0;
+			hash_combine(h, k.flag, k.flag_data, hash_vec4(k.light));
+			return h;
 		}
 	};
 }
 
+struct ShadowCache {
+
+	struct CachedShadowData {
+		uint64_t lastQueriedFrameCount = 0;
+		std::vector<Vector3f> vertexes;
+
+		CachedShadowData() { }
+	};
+
+	typedef std::unordered_map<ShadowDrawParameters, CachedShadowData> ShadowDrawParametersToCachedDataMap;
+	typedef std::unordered_map<iIMDShape *, ShadowDrawParametersToCachedDataMap, std::hash<iIMDShape *>> ShapeMap;
+
+	const CachedShadowData* findCacheForShadowDraw(iIMDShape *shape, int flag, int flag_data, const glm::vec4 &light)
+	{
+		auto it = shapeMap.find(shape);
+		if (it == shapeMap.end()) {
+			return nullptr;
+		}
+		auto it_cachedData = it->second.find(ShadowDrawParameters(flag, flag_data, light));
+		if (it_cachedData == it->second.end()) {
+			return nullptr;
+		}
+		// update the frame in which we requested this shadow cache
+		it_cachedData->second.lastQueriedFrameCount = _currentFrame;
+		return &(it_cachedData->second);
+	}
+
+	CachedShadowData& createCacheForShadowDraw(iIMDShape *shape, int flag, int flag_data, const glm::vec4 &light)
+	{
+		auto result = shapeMap[shape].emplace(ShadowDrawParameters(flag, flag_data, light), CachedShadowData());
+		result.first->second.lastQueriedFrameCount = _currentFrame;
+		return result.first->second;
+	}
+
+	void addPremultipliedVertexes(const CachedShadowData& cachedData, const glm::mat4 &modelViewMatrix)
+	{
+		for (auto &vertex : cachedData.vertexes)
+		{
+			vertexes.emplace_back(modelViewMatrix * glm::vec4(vertex, 1.0));
+		}
+	}
+
+	const std::vector<Vector3f>& getPremultipliedVertexes()
+	{
+		return vertexes;
+	}
+
+	void clearPremultipliedVertexes()
+	{
+		vertexes.clear();
+	}
+
+	void setCurrentFrame(uint64_t currentFrame)
+	{
+		_currentFrame = currentFrame;
+	}
+
+	size_t removeUnused()
+	{
+		std::vector<ShapeMap::iterator> unusedShapes;
+		size_t oldItemsRemoved = 0;
+		for (auto it_shape = shapeMap.begin(); it_shape != shapeMap.end(); ++it_shape)
+		{
+			std::vector<ShadowDrawParametersToCachedDataMap::iterator> unusedBuffersForShape;
+			for (auto it_shadowDrawParams = it_shape->second.begin(); it_shadowDrawParams != it_shape->second.end(); ++it_shadowDrawParams)
+			{
+				if (it_shadowDrawParams->second.lastQueriedFrameCount != _currentFrame)
+				{
+					unusedBuffersForShape.push_back(it_shadowDrawParams);
+				}
+			}
+			for (auto &item : unusedBuffersForShape)
+			{
+				it_shape->second.erase(item);
+				++oldItemsRemoved;
+			}
+			if (it_shape->second.empty())
+			{
+				// remove from the root shapeMap
+				unusedShapes.push_back(it_shape);
+			}
+		}
+		for (auto &item : unusedShapes)
+		{
+			shapeMap.erase(item);
+		}
+		return oldItemsRemoved;
+	}
+private:
+	uint64_t _currentFrame = 0;
+	ShapeMap shapeMap;
+	std::vector<Vector3f> vertexes;
+};
+
+enum DrawShadowResult {
+	DRAW_SUCCESS_CACHED,
+	DRAW_SUCCESS_UNCACHED
+};
+
 /// Draw the shadow for a shape
-static void pie_DrawShadow(iIMDShape *shape, int flag, int flag_data, const glm::vec4 &light, const glm::mat4 &modelViewMatrix)
+/// Prequisite:
+///		Caller must call the following before all calls to pie_DrawShadow():
+///			const auto &program = pie_ActivateShader(SHADER_GENERIC_COLOR, pie_PerspectiveGet(), glm::vec4());
+///			glEnableVertexAttribArray(program.locVertex);
+///		and must call the following after all calls to pie_DrawShadow():
+///			glDisableVertexAttribArray(program.locVertex);
+///			pie_DeactivateShader();
+///		The only place this is currently called is pie_ShadowDrawLoop(), which handles this properly.
+static inline DrawShadowResult pie_DrawShadow(ShadowCache &shadowCache, iIMDShape *shape, int flag, int flag_data, const glm::vec4 &light, const glm::mat4 &modelViewMatrix)
 {
 	static std::vector<EDGE> edgelist;  // Static, to save allocations.
 	static std::vector<EDGE> edgelistFlipped;  // Static, to save allocations.
@@ -309,85 +455,94 @@ static void pie_DrawShadow(iIMDShape *shape, int flag, int flag_data, const glm:
 	EDGE *drawlist = nullptr;
 
 	unsigned edge_count;
-	Vector3f *pVertices = shape->points;
-	if (flag & pie_STATIC_SHADOW && shape->shadowEdgeList)
+	DrawShadowResult result;
+
+	// Find cached data (if available)
+	// Note: The modelViewMatrix is not used for calculating the sorted / filtered vertices, so it's not included
+	const ShadowCache::CachedShadowData *pCached = shadowCache.findCacheForShadowDraw(shape, flag, flag_data, light);
+	if (pCached == nullptr)
 	{
-		drawlist = shape->shadowEdgeList;
-		edge_count = shape->nShadowEdges;
+		const Vector3f *pVertices = shape->points.data();
+		if (flag & pie_STATIC_SHADOW && shape->shadowEdgeList)
+		{
+			drawlist = shape->shadowEdgeList;
+			edge_count = shape->nShadowEdges;
+		}
+		else
+		{
+			edgelist.clear();
+			glm::vec3 p[3];
+			for (const iIMDPoly &poly : shape->polys)
+			{
+				for (int j = 0; j < 3; ++j)
+				{
+					int current = poly.pindex[j];
+					p[j] = glm::vec3(pVertices[current].x, scale_y(pVertices[current].y, flag, flag_data), pVertices[current].z);
+				}
+				if (glm::dot(glm::cross(p[2] - p[0], p[1] - p[0]), glm::vec3(light)) > 0.0f)
+				{
+					for (int n = 0; n < 3; ++n)
+					{
+						// Add the edges
+						edgelist.push_back({poly.pindex[n], poly.pindex[(n + 1)%3]});
+					}
+				}
+			}
+
+			// Remove duplicate pairs from the edge list. For example, in the list ((1 2), (2 6), (6 2), (3, 4)), remove (2 6) and (6 2).
+			edgelistFlipped = edgelist;
+			std::for_each(edgelistFlipped.begin(), edgelistFlipped.end(), flipEdge);
+			std::sort(edgelist.begin(), edgelist.end(), edgeLessThan);
+			std::sort(edgelistFlipped.begin(), edgelistFlipped.end(), edgeLessThan);
+			edgelistFiltered.resize(edgelist.size());
+			edgelistFiltered.erase(std::set_difference(edgelist.begin(), edgelist.end(), edgelistFlipped.begin(), edgelistFlipped.end(), edgelistFiltered.begin(), edgeLessThan), edgelistFiltered.end());
+
+			drawlist = &edgelistFiltered[0];
+			edge_count = edgelistFiltered.size();
+			//debug(LOG_WARNING, "we have %i edges", edge_count);
+
+			if (flag & pie_STATIC_SHADOW)
+			{
+				// then store it in the imd
+				shape->nShadowEdges = edge_count;
+				shape->shadowEdgeList = (EDGE *)realloc(shape->shadowEdgeList, sizeof(EDGE) * shape->nShadowEdges);
+				std::copy(drawlist, drawlist + edge_count, shape->shadowEdgeList);
+			}
+		}
+
+		static std::vector<Vector3f> vertexes;
+		vertexes.clear();
+		vertexes.reserve(edge_count * 6);
+		for (unsigned i = 0; i < edge_count; i++)
+		{
+			int a = drawlist[i].from, b = drawlist[i].to;
+
+			glm::vec3 v1(pVertices[b].x, scale_y(pVertices[b].y, flag, flag_data), pVertices[b].z);
+			glm::vec3 v3(pVertices[a].x + light[0], scale_y(pVertices[a].y, flag, flag_data) + light[1], pVertices[a].z + light[2]);
+
+			vertexes.push_back(v1);
+			vertexes.push_back(glm::vec3(pVertices[b].x + light[0], scale_y(pVertices[b].y, flag, flag_data) + light[1], pVertices[b].z + light[2])); //v2
+			vertexes.push_back(v3);
+
+			vertexes.push_back(v3);
+			vertexes.push_back(glm::vec3(pVertices[a].x, scale_y(pVertices[a].y, flag, flag_data), pVertices[a].z)); //v4
+			vertexes.push_back(v1);
+		}
+
+		ShadowCache::CachedShadowData& cache = shadowCache.createCacheForShadowDraw(shape, flag, flag_data, light);
+		cache.vertexes = vertexes;
+		result = DRAW_SUCCESS_UNCACHED;
+		pCached = &cache;
 	}
 	else
 	{
-		edgelist.clear();
-		iIMDPoly *end = shape->polys + shape->npolys;
-		for (iIMDPoly *pPolys = shape->polys; pPolys != end; ++pPolys)
-		{
-			glm::vec3 p[3];
-			for (int j = 0; j < 3; ++j)
-			{
-				int current = pPolys->pindex[j];
-				p[j] = glm::vec3(pVertices[current].x, scale_y(pVertices[current].y, flag, flag_data), pVertices[current].z);
-			}
-			if (glm::dot(glm::cross(p[2] - p[0], p[1] - p[0]), glm::vec3(light)) > 0.0f)
-			{
-				for (int n = 0; n < 3; ++n)
-				{
-					// Add the edges
-					edgelist.push_back({pPolys->pindex[n], pPolys->pindex[(n + 1)%3]});
-				}
-			}
-		}
-
-		// Remove duplicate pairs from the edge list. For example, in the list ((1 2), (2 6), (6 2), (3, 4)), remove (2 6) and (6 2).
-		edgelistFlipped = edgelist;
-		std::for_each(edgelistFlipped.begin(), edgelistFlipped.end(), flipEdge);
-		std::sort(edgelist.begin(), edgelist.end(), edgeLessThan);
-		std::sort(edgelistFlipped.begin(), edgelistFlipped.end(), edgeLessThan);
-		edgelistFiltered.resize(edgelist.size());
-		edgelistFiltered.erase(std::set_difference(edgelist.begin(), edgelist.end(), edgelistFlipped.begin(), edgelistFlipped.end(), edgelistFiltered.begin(), edgeLessThan), edgelistFiltered.end());
-
-		drawlist = &edgelistFiltered[0];
-		edge_count = edgelistFiltered.size();
-		//debug(LOG_WARNING, "we have %i edges", edge_count);
-
-		if (flag & pie_STATIC_SHADOW)
-		{
-			// then store it in the imd
-			shape->nShadowEdges = edge_count;
-			shape->shadowEdgeList = (EDGE *)realloc(shape->shadowEdgeList, sizeof(EDGE) * shape->nShadowEdges);
-			std::copy(drawlist, drawlist + edge_count, shape->shadowEdgeList);
-		}
+		result = DRAW_SUCCESS_CACHED;
 	}
 
-	std::vector<Vector3f> vertexes;
-	for (unsigned i = 0; i < edge_count; i++)
-	{
-		int a = drawlist[i].from, b = drawlist[i].to;
+	// Aggregate the vertexes (pre-computed with the modelViewMatrix)
+	shadowCache.addPremultipliedVertexes(*pCached, modelViewMatrix);
 
-		glm::vec3 v1(pVertices[b].x, scale_y(pVertices[b].y, flag, flag_data), pVertices[b].z);
-		glm::vec3 v2(pVertices[b].x + light[0], scale_y(pVertices[b].y, flag, flag_data) + light[1], pVertices[b].z + light[2]);
-		glm::vec3 v3(pVertices[a].x + light[0], scale_y(pVertices[a].y, flag, flag_data) + light[1], pVertices[a].z + light[2]);
-		glm::vec3 v4(pVertices[a].x, scale_y(pVertices[a].y, flag, flag_data), pVertices[a].z);
-
-		vertexes.push_back(v1);
-		vertexes.push_back(v2);
-		vertexes.push_back(v3);
-
-		vertexes.push_back(v3);
-		vertexes.push_back(v4);
-		vertexes.push_back(v1);
-	}
-
-	// draw the shadow volume
-	const auto &program = pie_ActivateShader(SHADER_GENERIC_COLOR, pie_PerspectiveGet() * modelViewMatrix, glm::vec4());
-	static glBufferWrapper buffer;
-	glBindBuffer(GL_ARRAY_BUFFER, buffer.id);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(Vector3f) * vertexes.size(), vertexes.data(), GL_STREAM_DRAW);
-	glEnableVertexAttribArray(program.locVertex);
-	glVertexAttribPointer(program.locVertex, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-
-	glDrawArrays(GL_TRIANGLES, 0, edge_count * 2 * 3);
-	glDisableVertexAttribArray(program.locVertex);
-	pie_DeactivateShader();
+	return result;
 }
 
 void pie_SetUp()
@@ -425,7 +580,7 @@ void pie_CleanUp()
 	scshapes.clear();
 }
 
-void pie_Draw3DShape(iIMDShape *shape, int frame, int team, PIELIGHT colour, int pieFlag, int pieFlagData, const glm::mat4 &modelView)
+bool pie_Draw3DShape(iIMDShape *shape, int frame, int team, PIELIGHT colour, int pieFlag, int pieFlagData, const glm::mat4 &modelView)
 {
 	pieCount++;
 
@@ -493,20 +648,69 @@ void pie_Draw3DShape(iIMDShape *shape, int frame, int team, PIELIGHT colour, int
 			shapes.push_back(tshape);
 		}
 	}
+
+	return true;
 }
 
-static void pie_ShadowDrawLoop()
+static void pie_ShadowDrawLoop(ShadowCache &shadowCache)
 {
+	// Use several buffers and a round-robin algorithm to attempt to avoid implicit synchronization
+	static std::vector<gfx_api::buffer*> buffers(10, nullptr);
+	static size_t currBuffer = 0;
+
+	size_t cachedShadowDraws = 0;
+	size_t uncachedShadowDraws = 0;
 	for (unsigned i = 0; i < scshapes.size(); i++)
 	{
-		pie_DrawShadow(scshapes[i].shape, scshapes[i].flag, scshapes[i].flag_data, scshapes[i].light, scshapes[i].matrix);
+		DrawShadowResult result = pie_DrawShadow(shadowCache, scshapes[i].shape, scshapes[i].flag, scshapes[i].flag_data, scshapes[i].light, scshapes[i].matrix);
+		if (result == DRAW_SUCCESS_CACHED)
+		{
+			++cachedShadowDraws;
+		}
+		else
+		{
+			++uncachedShadowDraws;
+		}
 	}
+
+	if (!buffers[currBuffer])
+		buffers[currBuffer] = gfx_api::context::get().create_buffer_object(gfx_api::buffer::usage::vertex_buffer, gfx_api::context::buffer_storage_hint::stream_draw);
+
+	// Draw the shadow volume
+	const auto &premultipliedVertexes = shadowCache.getPremultipliedVertexes();
+	// The vertexes returned by shadowCache.getPremultipliedVertexes() are pre-multiplied by the modelViewMatrix
+	// Thus we only need to include the perspective matrix
+	const auto &program = pie_ActivateShader(SHADER_GENERIC_COLOR, pie_PerspectiveGet() /** modelViewMatrix*/, glm::vec4(0.f));
+	buffers[currBuffer]->upload(sizeof(Vector3f) * premultipliedVertexes.size(), premultipliedVertexes.data());
+	buffers[currBuffer]->bind();
+	glVertexAttribPointer(program.locVertex, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+	glEnableVertexAttribArray(program.locVertex);
+
+	// Batch into glDrawArrays calls of <= SHADOW_BATCH_MAX
+	static const size_t SHADOW_BATCH_MAX = 8192 * 3; // must be divisible by 3
+	size_t vertex_count = premultipliedVertexes.size();
+	for (GLint startingIndex = 0; startingIndex < vertex_count; startingIndex += SHADOW_BATCH_MAX)
+	{
+		glDrawArrays(GL_TRIANGLES, startingIndex, std::min(vertex_count - startingIndex, SHADOW_BATCH_MAX));
+	}
+
+	shadowCache.clearPremultipliedVertexes();
+
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glDisableVertexAttribArray(program.locVertex);
+	pie_DeactivateShader();
+//	debug(LOG_INFO, "Cached shadow draws: %lu, uncached shadow draws: %lu", cachedShadowDraws, uncachedShadowDraws);
+	++currBuffer;
+	if (currBuffer >= buffers.size()) { currBuffer = 0; }
 }
 
-static void pie_DrawShadows()
+static ShadowCache shadowCache;
+
+static void pie_DrawShadows(uint64_t currentGameFrame)
 {
 	const float width = pie_GetVideoBufferWidth();
 	const float height = pie_GetVideoBufferHeight();
+	shadowCache.setCurrentFrame(currentGameFrame);
 
 	pie_SetTexturePage(TEXPAGE_NONE);
 
@@ -534,16 +738,11 @@ static void pie_DrawShadows()
 	glDepthMask(GL_TRUE);
 
 	scshapes.resize(0);
+	shadowCache.removeUnused();
 }
 
-void pie_RemainingPasses()
+void pie_RemainingPasses(uint64_t currentGameFrame)
 {
-	GL_DEBUG("Remaining passes - shadows");
-	// Draw shadows
-	if (shadows)
-	{
-		pie_DrawShadows();
-	}
 	// Draw models
 	// TODO, sort list to reduce state changes
 	GL_DEBUG("Remaining passes - opaque models");
@@ -551,6 +750,12 @@ void pie_RemainingPasses()
 	{
 		pie_SetShaderStretchDepth(shape.stretch);
 		pie_Draw3DShape2(shape.shape, shape.frame, shape.colour, shape.teamcolour, shape.flag, shape.flag_data, shape.matrix);
+	}
+	GL_DEBUG("Remaining passes - shadows");
+	// Draw shadows
+	if (shadows)
+	{
+		pie_DrawShadows(currentGameFrame);
 	}
 	// Draw translucent models last
 	// TODO, sort list by Z order to do translucency correctly
@@ -585,7 +790,7 @@ static void ss_GL2_1pass()
 	glStencilOpSeparate(GL_FRONT, GL_KEEP, GL_KEEP, GL_DECR_WRAP);
 	glStencilFunc(GL_ALWAYS, 0, ~0);
 
-	pie_ShadowDrawLoop();
+	pie_ShadowDrawLoop(shadowCache);
 }
 
 // generic 1-pass version
@@ -601,7 +806,7 @@ static void ss_EXT_1pass()
 	glStencilOp(GL_KEEP, GL_KEEP, ss_op_depth_pass_front);
 	glStencilFunc(GL_ALWAYS, 0, ~0);
 
-	pie_ShadowDrawLoop();
+	pie_ShadowDrawLoop(shadowCache);
 
 	glDisable(GL_STENCIL_TEST_TWO_SIDE_EXT);
 }
@@ -615,7 +820,7 @@ static void ss_ATI_1pass()
 	glStencilOpSeparateATI(GL_FRONT, GL_KEEP, GL_KEEP, ss_op_depth_pass_front);
 	glStencilFunc(GL_ALWAYS, 0, ~0);
 
-	pie_ShadowDrawLoop();
+	pie_ShadowDrawLoop(shadowCache);
 }
 
 // generic 2-pass version
@@ -629,11 +834,11 @@ static void ss_2pass()
 	glCullFace(GL_BACK);
 	glStencilOp(GL_KEEP, GL_KEEP, ss_op_depth_pass_front);
 
-	pie_ShadowDrawLoop();
+	pie_ShadowDrawLoop(shadowCache);
 
 	// Setup stencil for back-facing polygons
 	glCullFace(GL_FRONT);
 	glStencilOp(GL_KEEP, GL_KEEP, ss_op_depth_pass_back);
 
-	pie_ShadowDrawLoop();
+	pie_ShadowDrawLoop(shadowCache);
 }

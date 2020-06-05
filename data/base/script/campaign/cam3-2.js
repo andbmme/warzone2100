@@ -16,6 +16,7 @@ const NEXUS_RES = [
 ];
 var edgeMapIndex;
 var alphaUnitIDs;
+var startExtraLoss;
 
 //Remove Nexus VTOL droids.
 camAreaEvent("vtolRemoveZone", function(droid)
@@ -35,47 +36,34 @@ camAreaEvent("vtolRemoveZone", function(droid)
 //groups that are hidden farther south.
 camAreaEvent("rescueTrigger", function(droid)
 {
+	hackRemoveMessage("C3-2_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER);
 	camManageGroup(camMakeGroup("laserTankGroup"), CAM_ORDER_ATTACK, {
 		regroup: true,
 		count: -1,
 		morale: 90,
 		fallback: camMakePos("healthRetreatPos")
 	});
+	//Activate edge map queue and donate all of alpha to the player.
+	phantomFactorySE();
+	setAlliance(ALPHA, NEXUS, false);
+	camAbsorbPlayer(ALPHA, CAM_HUMAN_PLAYER);
+	queue("getAlphaUnitIDs", camSecondsToMilliseconds(2));
+	camPlayVideos("MB3_2_MSG4");
 });
 
-function playVideos()
-{
-	camPlayVideos(["MB3_2_MSG3", "MB3_2_MSG4"]);
-}
-
-//Activate edge map queues and play videos, donate alpha to the player, setup reinforcements.
+//Play videos, donate alpha to the player and setup reinforcements.
 camAreaEvent("phantomFacTrigger", function(droid)
 {
-	sendEdgeMapDroids();
-
-	setAlliance(ALPHA, NEXUS, false);
-	playSound("pcv456.ogg"); //Incoming transmission...
-	queue("playVideos", 2000);
-	//Donate All of alpha to the player.
-	camAbsorbPlayer(ALPHA, CAM_HUMAN_PLAYER);
-
-	hackRemoveMessage("C3-2_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER);
-	queue("getAlphaUnitIDs", 3000);
-	queue("enableReinforcements", 5000);
+	vtolAttack();
+	camPlayVideos(["pcv456.ogg", "MB3_2_MSG3"]); //Warn about VTOLs.
+	queue("enableReinforcements", camSecondsToMilliseconds(5));
 });
 
-//Get the IDs of Alpha units after they were donated to the player. Set Experience
-//while we are at it.
-function getAlphaUnitIDs()
+function setAlphaExp()
 {
 	const DROID_EXP = 512; //Hero rank.
-	if (!camDef(alphaUnitIDs))
-	{
-		alphaUnitIDs = [];
-	}
-
-	var alphaDroids = enumArea("alphaPit", CAM_HUMAN_PLAYER, false).filter(function(obj) {
-		return (obj.type === DROID);
+	var alphaDroids = enumArea("alphaPit", ALPHA, false).filter(function(obj) {
+		return obj.type === DROID;
 	});
 
 	for (var i = 0, l = alphaDroids.length; i < l; ++i)
@@ -85,39 +73,57 @@ function getAlphaUnitIDs()
 		{
 			setDroidExperience(dr, DROID_EXP);
 		}
-		alphaUnitIDs.push(dr.id);
 	}
 }
 
-function sendEdgeMapDroids()
+//Get the IDs of Alpha units after they were donated to the player.
+function getAlphaUnitIDs()
 {
-	const COUNT = 9 + camRand(8); // 9 - 16.
-	const EDGE = ["NE-PhantomFactory", "SW-PhantomFactory", "SE-PhantomFactory"];
-	var list; with (camTemplates) list = [nxcyrail, nxcyscou, nxcylas, nxlflash, nxmrailh, nxmlinkh];
-	if (!camDef(edgeMapIndex))
-	{
-		edgeMapIndex = 0;
-	}
+	alphaUnitIDs = [];
+	var alphaDroids = enumArea("alphaPit", CAM_HUMAN_PLAYER, false).filter(function(obj) {
+		return obj.type === DROID && obj.experience === 512;
+	});
 
+	for (var i = 0, l = alphaDroids.length; i < l; ++i)
+	{
+		var dr = alphaDroids[i];
+		alphaUnitIDs.push(dr.id);
+	}
+	startExtraLoss = true;
+}
+
+function phantomFactoryNE()
+{
+	var list = [cTempl.nxcyrail, cTempl.nxcyscou, cTempl.nxcylas];
+	sendEdgeMapDroids(6, "NE-PhantomFactory", list);
+	queue("phantomFactoryNE", camChangeOnDiff(camMinutesToMilliseconds(2)));
+}
+
+function phantomFactorySW()
+{
+	var list = [cTempl.nxcyrail, cTempl.nxcyscou, cTempl.nxcylas];
+	sendEdgeMapDroids(8, "SW-PhantomFactory", list);
+	queue("phantomFactorySW", camChangeOnDiff(camMinutesToMilliseconds(3)));
+}
+
+function phantomFactorySE()
+{
+	var list = [cTempl.nxcyrail, cTempl.nxcyscou, cTempl.nxcylas, cTempl.nxlflash, cTempl.nxmrailh, cTempl.nxmlinkh];
+	sendEdgeMapDroids(10 + camRand(6), "SE-PhantomFactory", list); //10-15 units
+	queue("phantomFactorySE", camChangeOnDiff(camMinutesToMilliseconds(4)));
+}
+
+function sendEdgeMapDroids(droidCount, location, list)
+{
 	var droids = [];
-	for (var i = 0; i < COUNT; ++i)
+	for (var i = 0; i < droidCount; ++i)
 	{
 		droids.push(list[camRand(list.length)]);
 	}
 
-	camSendReinforcement(NEXUS, camMakePos(EDGE[edgeMapIndex]), droids,
-		CAM_REINFORCE_GROUND, {
-			data: {regroup: true, count: -1}
-		}
-	);
-
-	edgeMapIndex += 1;
-	if (edgeMapIndex === EDGE.length)
-	{
-		edgeMapIndex = 0;
-	}
-
-	queue("sendEdgeMapDroids", camChangeOnDiff(150000)); // ~2.5 min.
+	camSendReinforcement(NEXUS, camMakePos(location), droids, CAM_REINFORCE_GROUND, {
+		data: {regroup: true, count: -1}
+	});
 }
 
 function setupPatrolGroups()
@@ -137,7 +143,7 @@ function setupPatrolGroups()
 			camMakePos("upperMiddleWest"),
 			camMakePos("upperMiddleHill"),
 		],
-		interval: 20000,
+		interval: camSecondsToMilliseconds(20),
 		regroup: true,
 		count: -1
 	});
@@ -149,7 +155,7 @@ function setupPatrolGroups()
 			camMakePos("lowerMiddleEast"),
 			camMakePos("lowerMiddleHill"),
 		],
-		interval: 20000,
+		interval: camSecondsToMilliseconds(20),
 		regroup: true,
 		count: -1
 	});
@@ -162,7 +168,7 @@ function setupPatrolGroups()
 			camMakePos("SWCorner"),
 			camMakePos("alphaDoorway"),
 		],
-		interval: 25000,
+		interval: camSecondsToMilliseconds(25),
 		regroup: true,
 		count: -1
 	});
@@ -183,41 +189,44 @@ function setupPatrolGroups()
 			camMakePos("SW-PhantomFactory"),
 			camMakePos("SE-PhantomFactory"),
 		],
-		interval: 35000,
+		interval: camSecondsToMilliseconds(35),
 		regroup: true,
 		count: -1
 	});
 }
 
-//Setup Nexus VTOL hit and runners. NOTE: These do not go away in this mission.
+//Setup Nexus VTOL hit and runners.
 function vtolAttack()
 {
-	var list; with (camTemplates) list = [nxlscouv, nxmtherv];
-	camSetVtolData(NEXUS, "vtolAppearPos", "vtolRemovePos", list, camChangeOnDiff(240000)); //4 min
+	var list = [cTempl.nxlscouv, cTempl.nxmtherv];
+	var ext = {
+		limit: [2, 4], //paired with template list
+		alternate: true,
+		altIdx: 0
+	};
+	camSetVtolData(NEXUS, "vtolAppearPos", "vtolRemovePos", list, camChangeOnDiff(camMinutesToMilliseconds(2)), undefined, ext);
 }
 
-//reinforcements not available until team Alpha brief about VTOLS.
+//Reinforcements not available until team Alpha brief about VTOLS.
 function enableReinforcements()
 {
-	const REINFORCEMENT_TIME = 180; //3 minute.
 	playSound("pcv440.ogg"); // Reinforcements are available.
 	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "CAM3A-B", {
 		area: "RTLZ",
-		reinforcements: REINFORCEMENT_TIME,
-		callback: "alphaTeamAlive"
+		message: "C32_LZ",
+		reinforcements: camMinutesToSeconds(3),
+		callback: "alphaTeamAlive",
+		retlz: true
 	});
 }
 
 function alphaTeamAlive()
 {
-	if (camDef(alphaUnitIDs))
+	if (camDef(alphaUnitIDs) && startExtraLoss)
 	{
 		var alphaAlive = false;
 		var alive = enumArea(0, 0, mapWidth, mapHeight, CAM_HUMAN_PLAYER, false).filter(function(obj) {
-			return (obj.type === DROID);
-		});
-		var allDroidsAtLZ = enumArea("RTLZ", CAM_HUMAN_PLAYER, false).filter(function(obj) {
-			return (obj.type === DROID);
+			return obj.type === DROID;
 		});
 
 		for (var i = 0, l = alive.length; i < l; ++i)
@@ -232,15 +241,13 @@ function alphaTeamAlive()
 			}
 		}
 
-		if (!alphaAlive)
+		if (alphaAlive === false)
 		{
-			playSound("pcv622.ogg"); //objective destroyed.
 			return false;
 		}
 
-		if (alphaAlive && (alive.length === allDroidsAtLZ.length))
+		if (alphaAlive === true && alive.length > 0)
 		{
-			enableResearch("R-Sys-Resistance-Upgrade01", CAM_HUMAN_PLAYER);
 			return true;
 		}
 	}
@@ -248,16 +255,18 @@ function alphaTeamAlive()
 
 function eventStartLevel()
 {
-	const ALPHA_POWER = 5000;
 	var startpos = getObject("startPosition");
 	var lz = getObject("landingZone");
 	var tent = getObject("transporterEntry");
 	var text = getObject("transporterExit");
+	startExtraLoss = false;
 
 	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "CAM3A-B", {
 		area: "RTLZ",
+		message: "C32_LZ",
 		reinforcements: -1,
-		callback: "alphaTeamAlive"
+		callback: "alphaTeamAlive",
+		retlz: true
 	});
 
 	centreView(startpos.x, startpos.y);
@@ -265,14 +274,19 @@ function eventStartLevel()
 	startTransporterEntry(tent.x, tent.y, CAM_HUMAN_PLAYER);
 	setTransporterExit(text.x, text.y, CAM_HUMAN_PLAYER);
 
-	setPower(AI_POWER, NEXUS);
-	setPower(ALPHA_POWER, ALPHA);
+	var enemyLz = getObject("NXlandingZone");
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, NEXUS);
+
 	camCompleteRequiredResearch(NEXUS_RES, NEXUS);
 	camCompleteRequiredResearch(GAMMA_ALLY_RES, ALPHA);
 	setAlliance(ALPHA, NEXUS, true);
 	setAlliance(ALPHA, CAM_HUMAN_PLAYER, true);
+	changePlayerColour(ALPHA, 0);
+
+	phantomFactoryNE();
+	phantomFactorySW();
 
 	hackAddMessage("C3-2_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER);
-	queue("setupPatrolGroups", 15000);
-	queue("vtolAttack", camChangeOnDiff(300000)); //5 min
+	queue("setAlphaExp", camSecondsToMilliseconds(2));
+	queue("setupPatrolGroups", camSecondsToMilliseconds(15));
 }

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -39,7 +39,7 @@ W_BUTINIT::W_BUTINIT()
 W_BUTTON::W_BUTTON(W_BUTINIT const *init)
 	: WIDGET(init, WIDG_BUTTON)
 	, state(WBUT_PLAIN)
-	, pText(QString::fromUtf8(init->pText))
+	, pText(WzString::fromUtf8(init->pText))
 	, pTip(init->pTip)
 	, HilightAudioID(WidgGetHilightAudioID())
 	, ClickedAudioID(WidgGetClickedAudioID())
@@ -76,6 +76,12 @@ void W_BUTTON::setFlash(bool enable)
 	}
 }
 
+void W_BUTTON::unlock()
+{
+	dirty = true;
+	state &= ~(WBUT_LOCK | WBUT_CLICKLOCK);
+}
+
 void W_BUTTON::setState(unsigned newState)
 {
 	ASSERT(!((newState & WBUT_LOCK) && (newState & WBUT_CLICKLOCK)), "Cannot have both WBUT_LOCK and WBUT_CLICKLOCK");
@@ -85,24 +91,30 @@ void W_BUTTON::setState(unsigned newState)
 	dirty = true;
 }
 
-QString W_BUTTON::getString() const
+WzString W_BUTTON::getString() const
 {
 	return pText;
 }
 
-void W_BUTTON::setString(QString string)
+void W_BUTTON::setString(WzString string)
 {
 	pText = string;
 	dirty = true;
 }
 
-void W_BUTTON::setTip(QString string)
+void W_BUTTON::setTip(std::string string)
 {
 	pTip = string;
 }
 
 void W_BUTTON::clicked(W_CONTEXT *, WIDGET_KEY key)
 {
+	if ((minClickInterval > 0) && (realTime - lastClickTime < minClickInterval))
+	{
+		return;
+	}
+	lastClickTime = realTime;
+
 	dirty = true;
 
 	/* Can't click a button if it is disabled or locked down */
@@ -122,7 +134,7 @@ void W_BUTTON::clicked(W_CONTEXT *, WIDGET_KEY key)
 	}
 
 	/* Kill the tip if there is one */
-	if (!pTip.isEmpty())
+	if (!pTip.empty())
 	{
 		tipStop(this);
 	}
@@ -137,7 +149,16 @@ void W_BUTTON::released(W_CONTEXT *, WIDGET_KEY key)
 		if ((!(style & WBUT_NOPRIMARY) && key == WKEY_PRIMARY) ||
 		    ((style & WBUT_SECONDARY) && key == WKEY_SECONDARY))
 		{
-			emit clicked();
+			/* Call all onClick event handlers */
+			for (auto it = onClickHandlers.begin(); it != onClickHandlers.end(); it++)
+			{
+				auto onClickHandler = *it;
+				if (onClickHandler)
+				{
+					onClickHandler(*this);
+				}
+			}
+
 			screenPointer->setReturn(this);
 			state &= ~WBUT_DOWN;
 			dirty = true;
@@ -145,6 +166,10 @@ void W_BUTTON::released(W_CONTEXT *, WIDGET_KEY key)
 	}
 }
 
+bool W_BUTTON::isHighlighted() const
+{
+	return (state & WBUT_HIGHLIGHT);
+}
 
 /* Respond to a mouse moving over a button */
 void W_BUTTON::highlight(W_CONTEXT *psContext)
@@ -159,7 +184,7 @@ void W_BUTTON::highlight(W_CONTEXT *psContext)
 		AudioCallback(HilightAudioID);
 	}
 	/* If there is a tip string start the tool tip */
-	if (!pTip.isEmpty())
+	if (!pTip.empty())
 	{
 		tipStart(this, pTip, screenPointer->TipFontID, x() + psContext->xOffset, y() + psContext->yOffset, width(), height());
 	}
@@ -171,7 +196,7 @@ void W_BUTTON::highlightLost()
 {
 	state &= ~(WBUT_DOWN | WBUT_HIGHLIGHT);
 	dirty = true;
-	if (!pTip.isEmpty())
+	if (!pTip.empty())
 	{
 		tipStop(this);
 	}
@@ -218,21 +243,20 @@ void W_BUTTON::display(int xOffset, int yOffset)
 
 	if (haveText)
 	{
-		QByteArray textBytes = pText.toUtf8();
-		int fw = iV_GetTextWidth(textBytes.constData(), FontID);
+		int fw = iV_GetTextWidth(pText.toUtf8().c_str(), FontID);
 		int fx = x0 + (width() - fw) / 2;
 		int fy = y0 + (height() - iV_GetTextLineSize(FontID)) / 2 - iV_GetTextAboveBase(FontID);
 		if (isDisabled)
 		{
 			iV_SetTextColour(WZCOL_FORM_LIGHT);
-			iV_DrawText(textBytes.constData(), fx + 1, fy + 1, FontID);
+			iV_DrawText(pText.toUtf8().c_str(), fx + 1, fy + 1, FontID);
 			iV_SetTextColour(WZCOL_FORM_DISABLE);
 		}
 		else
 		{
 			iV_SetTextColour(WZCOL_FORM_TEXT);
 		}
-		iV_DrawText(textBytes.constData(), fx, fy, FontID);
+		iV_DrawText(pText.toUtf8().c_str(), fx, fy, FontID);
 	}
 
 	if (isDisabled && !images.normal.isNull() && images.disabled.isNull())
@@ -258,46 +282,51 @@ void W_BUTTON::setImages(Image image, Image imageDown, Image imageHighlight, Ima
 	setImages(Images(image, imageDown, imageHighlight, imageDisabled));
 }
 
-void StateButton::setState(unsigned state)
+void W_BUTTON::addOnClickHandler(const W_BUTTON_ONCLICK_FUNC& onClickFunc)
 {
-	if (currentState == state)
+	onClickHandlers.push_back(onClickFunc);
+}
+
+void MultipleChoiceButton::setChoice(unsigned newChoice)
+{
+	if (choice == newChoice)
 	{
 		return;
 	}
 	dirty = true;
-	currentState = state;
-	std::map<int, Images>::const_iterator image = imageSets.find(state);
+	choice = newChoice;
+	std::map<int, Images>::const_iterator image = imageSets.find(choice);
 	if (image != imageSets.end())
 	{
 		W_BUTTON::setImages(image->second);
 	}
-	std::map<int, QString>::const_iterator tip = tips.find(state);
+	std::map<int, std::string>::const_iterator tip = tips.find(choice);
 	if (tip != tips.end())
 	{
 		W_BUTTON::setTip(tip->second);
 	}
 }
 
-void StateButton::setTip(int state, const QString& string)
+void MultipleChoiceButton::setTip(unsigned choiceValue, const std::string& string)
 {
-	tips[state] = string;
-	if (currentState == state)
+	tips[choiceValue] = string;
+	if (choice == choiceValue)
 	{
 		W_BUTTON::setTip(string);
 	}
 }
 
-void StateButton::setTip(int state, char const *stringUtf8)
+void MultipleChoiceButton::setTip(unsigned choiceValue, char const *stringUtf8)
 {
-	setTip(state, QString::fromUtf8(stringUtf8));
+	setTip(choiceValue, stringUtf8 != nullptr? std::string(stringUtf8) : std::string());
 }
 
-void StateButton::setImages(int state, Images const &images)
+void MultipleChoiceButton::setImages(unsigned choiceValue, Images const &stateImages)
 {
-	imageSets[state] = images;
+	imageSets[choiceValue] = stateImages;
 	dirty = true;
-	if (currentState == state)
+	if (choice == choiceValue)
 	{
-		W_BUTTON::setImages(images);
+		W_BUTTON::setImages(stateImages);
 	}
 }

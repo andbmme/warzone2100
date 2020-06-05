@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -46,10 +46,10 @@ static AUDIO_CALLBACK	g_pStopTrackCallback = nullptr;
 // =======================================================================================================================
 // =======================================================================================================================
 //
-bool sound_Init()
+bool sound_Init(HRTFMode hrtf)
 {
 	g_iCurTracks = 0;
-	if (!sound_InitLibrary())
+	if (!sound_InitLibrary(hrtf))
 	{
 		debug(LOG_ERROR, "Cannot init sound library");
 		return false;
@@ -115,6 +115,10 @@ unsigned int sound_SetTrackVals(const char *fileName, bool loop, unsigned int vo
 	{
 		// No pre-assigned ID available, produce one
 		trackID = sound_GetAvailableID();
+		if (trackID == SAMPLE_NOT_ALLOCATED)
+		{
+			return 0;
+		}
 	}
 
 	if (g_apTrack[trackID] != nullptr)

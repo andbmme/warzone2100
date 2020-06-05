@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@
 
 #include "structure.h"
 #include "messagedef.h"
+#include "lib/framework/wzstring.h"
 
 #define NO_AUDIO_MSG		-1
 
@@ -63,14 +64,14 @@ void freeMessages();
 void releaseAllProxDisp();
 
 /** Load the view data for the messages from the file exported from the world editor. */
-const char *loadViewData(const char *pViewMsgData, UDWORD bufferSize);
-const char *loadResearchViewData(const char *fileName);
+WzString *loadViewData(const char *pViewMsgData, UDWORD bufferSize);
+WzString *loadResearchViewData(const char *fileName);
 
-/** Get the view data that contains the text message pointer passed in. */
-VIEWDATA *getViewData(const char *pTextMsg);
+/** Get the view data identified by the name */
+VIEWDATA *getViewData(const WzString &name);
 
 /// Get a list of viewdata entries
-QStringList getViewDataKeys();
+std::vector<WzString> getViewDataKeys();
 
 /** Release the viewdata memory. */
 void viewDataShutDown(const char *fileName);

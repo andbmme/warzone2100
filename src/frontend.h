@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -32,26 +32,19 @@ enum tMode
 	OPTIONS,		// 3 options menu
 	GAME,			// 4
 	TUTORIAL,		// 5  tutorial/fastplay
-	CREDITS,		// 6  credits
-	PROTOCOL,		// 7  MULTIPLAYER, select proto
-	MULTIOPTION,	// 8 MULTIPLAYER, select game options
-	FORCESELECT,	// 9 MULTIPLAYER, Force design screen
-	GAMEFIND,		// 10 MULTIPLAYER, gamefinder.
-	MULTILIMIT,		// 11 MULTIPLAYER, Limit the multistuff.
-	STARTGAME,		// 12 Fire up the game
-	SHOWINTRO,		// 13 reshow the intro
-	QUIT,			// 14 leaving game
-	LOADSAVEGAME,	// 15 loading a save game
-	KEYMAP,			// 16 keymap editor
-	GRAPHICS_OPTIONS,       // 17 graphics options menu
-	AUDIO_OPTIONS,          // 18 audio options menu
-	VIDEO_OPTIONS,          // 19 video options menu
-	MOUSE_OPTIONS,          // 20 mouse options menu
-	CAMPAIGNS,              // 21 campaign selector
+	TITLE_UNUSED,	// 6
+	FORCESELECT,	// 7 MULTIPLAYER, Force design screen
+	STARTGAME,		// 8 Fire up the game
+	SHOWINTRO,		// 9 reshow the intro
+	QUIT,			// 10 leaving game
+	LOADSAVEGAME,	// 11 loading a save game
+	KEYMAP,			// 12 keymap editor
+	GRAPHICS_OPTIONS,       // 13 graphics options menu
+	AUDIO_AND_ZOOM_OPTIONS, // 14 audio and zoom options menu
+	VIDEO_OPTIONS,          // 15 video options menu
+	MOUSE_OPTIONS,          // 16 mouse options menu
+	CAMPAIGNS,              // 17 campaign selector
 };
-
-extern tMode titleMode;					// the global case
-extern tMode lastTitleMode;
 
 #define MAX_LEVEL_NAME_SIZE	(256)
 
@@ -68,12 +61,13 @@ bool runMultiPlayerMenu();
 bool runGameOptionsMenu();
 bool runOptionsMenu();
 bool runGraphicsOptionsMenu();
-bool runAudioOptionsMenu();
+bool runAudioAndZoomOptionsMenu();
 bool runVideoOptionsMenu();
 bool runMouseOptionsMenu();
 bool runTutorialMenu();
+void runContinue();
 
-void addTopForm();
+void addTopForm(bool wide);
 void addBottomForm();
 void addBackdrop();
 void addTextButton(UDWORD id, UDWORD PosX, UDWORD PosY, const std::string &txt, unsigned int style);
@@ -83,6 +77,40 @@ void addFESlider(UDWORD id, UDWORD parent, UDWORD x, UDWORD y, UDWORD stops, UDW
 void displayTextOption(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset);
 
 bool CancelPressed();
+
+/* Tell the frontend when the screen has been resized */
+void frontendScreenSizeDidChange(int oldWidth, int oldHeight, int newWidth, int newHeight);
+
+// Graphics options, shared for in-game options menu use
+char const *graphicsOptionsFmvmodeString();
+char const *graphicsOptionsScanlinesString();
+char const *graphicsOptionsSubtitlesString();
+char const *graphicsOptionsShadowsString();
+char const *graphicsOptionsRadarString();
+char const *graphicsOptionsRadarJumpString();
+void seqFMVmode();
+void seqScanlineMode();
+
+// Video options, shared for in-game options menu use
+char const *videoOptionsDisplayScaleLabel();
+char const *videoOptionsVsyncString();
+std::string videoOptionsDisplayScaleString();
+std::vector<unsigned int> availableDisplayScalesSorted();
+void seqDisplayScale();
+
+// Mouse options, shared for in-game options menu use
+char const *mouseOptionsMflipString();
+char const *mouseOptionsTrapString();
+char const *mouseOptionsMbuttonsString();
+char const *mouseOptionsMmrotateString();
+char const *mouseOptionsCursorModeString();
+char const *mouseOptionsScrollEventString();
+void seqScrollEvent();
+
+struct DisplayTextOptionCache
+{
+	WzText wzText;
+};
 
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -103,42 +131,46 @@ bool CancelPressed();
 #define FRONTEND_BOTFORMX		FRONTEND_TOPFORMX
 #define FRONTEND_BOTFORMY		170
 #define FRONTEND_BOTFORMW		FRONTEND_TOPFORMW
-#define FRONTEND_BOTFORMH		300
+#define FRONTEND_BOTFORMH		305				// keep Y+H < 480 (minimum display height)
 
 
 #define FRONTEND_BUTWIDTH		FRONTEND_BOTFORMW-40 // text button sizes.
-#define FRONTEND_BUTHEIGHT		30
+#define FRONTEND_BUTHEIGHT		35
 
 #define FRONTEND_POS1X			20				// button positions
-#define FRONTEND_POS1Y			10
+#define FRONTEND_POS1Y			(0*FRONTEND_BUTHEIGHT)
 #define FRONTEND_POS1M			340
 
 #define FRONTEND_POS2X			20
-#define FRONTEND_POS2Y			50
+#define FRONTEND_POS2Y			(1*FRONTEND_BUTHEIGHT)
 #define FRONTEND_POS2M			340
 
 #define FRONTEND_POS3X			20
-#define FRONTEND_POS3Y			90
+#define FRONTEND_POS3Y			(2*FRONTEND_BUTHEIGHT)
 #define FRONTEND_POS3M			340
 
 #define FRONTEND_POS4X			20
-#define FRONTEND_POS4Y			130
+#define FRONTEND_POS4Y			(3*FRONTEND_BUTHEIGHT)
 #define FRONTEND_POS4M			340
 
 #define FRONTEND_POS5X			20
-#define FRONTEND_POS5Y			170
+#define FRONTEND_POS5Y			(4*FRONTEND_BUTHEIGHT)
 #define FRONTEND_POS5M			340
 
 #define FRONTEND_POS6X			20
-#define FRONTEND_POS6Y			210
+#define FRONTEND_POS6Y			(5*FRONTEND_BUTHEIGHT)
 #define FRONTEND_POS6M			340
 
 #define FRONTEND_POS7X			20
-#define FRONTEND_POS7Y			250
+#define FRONTEND_POS7Y			(6*FRONTEND_BUTHEIGHT)
 #define FRONTEND_POS7M			340
 
-#define FRONTEND_POS8X			-30				// special case for our hyperlink
-#define FRONTEND_POS8Y			278
+#define FRONTEND_POS8X			20
+#define FRONTEND_POS8Y			(7*FRONTEND_BUTHEIGHT)
+#define FRONTEND_POS8M			340
+
+#define FRONTEND_POS9X			-30				// special case for our hyperlink
+#define FRONTEND_POS9Y			(8*FRONTEND_BUTHEIGHT)
 
 
 #define FRONTEND_SIDEX			24
@@ -151,6 +183,7 @@ enum
 	FRONTEND_BOTFORM,
 	FRONTEND_LOGO,
 	FRONTEND_SIDETEXT,					// sideways text
+	FRONTEND_MULTILINE_SIDETEXT,				// sideways text
 	FRONTEND_SIDETEXT1,					// sideways text
 	FRONTEND_SIDETEXT2,					// sideways text
 	FRONTEND_SIDETEXT3,					// sideways text
@@ -168,6 +201,7 @@ enum
 	FRONTEND_OPTIONS,
 	FRONTEND_QUIT,
 	FRONTEND_FASTPLAY,					//tutorial menu option
+	FRONTEND_CONTINUE,
 	FRONTEND_NEWGAME		= 20200,	// single player (menu)
 	FRONTEND_LOADGAME_MISSION,
 	FRONTEND_LOADGAME_SKIRMISH,
@@ -196,15 +230,13 @@ enum
 	FRONTEND_GAMEOPTIONS = 21000,           // Game Options menu
 	FRONTEND_LANGUAGE,
 	FRONTEND_LANGUAGE_R,
-	FRONTEND_RADAR,
-	FRONTEND_RADAR_R,
 	FRONTEND_COLOUR,
 	FRONTEND_COLOUR_CAM,
 	FRONTEND_COLOUR_MP,
 	FRONTEND_DIFFICULTY,
 	FRONTEND_DIFFICULTY_R,
-	FRONTEND_SCROLLSPEED_SL,
-	FRONTEND_SCROLLSPEED,				// screen scroll speed
+	FRONTEND_CAMERASPEED,
+	FRONTEND_CAMERASPEED_R,
 
 	FRONTEND_GRAPHICSOPTIONS = 22000,       // Graphics Options Menu
 	FRONTEND_FMVMODE,
@@ -215,14 +247,26 @@ enum
 	FRONTEND_SUBTITLES_R,
 	FRONTEND_SHADOWS,
 	FRONTEND_SHADOWS_R,
+	FRONTEND_RADAR,
+	FRONTEND_RADAR_R,
+	FRONTEND_RADAR_JUMP,
+	FRONTEND_RADAR_JUMP_R,
 
-	FRONTEND_AUDIOOPTIONS = 23000,          // Audio Options Menu
+	FRONTEND_AUDIO_AND_ZOOMOPTIONS = 23000,                 // Audio and Zoom Options Menu
 	FRONTEND_3D_FX,						// 3d sound volume
 	FRONTEND_FX,						// 2d (voice) sound volume
 	FRONTEND_MUSIC,						// music volume
+	FRONTEND_SOUND_HRTF,				// HRTF mode
+	FRONTEND_MAP_ZOOM,					// map zoom
+	FRONTEND_MAP_ZOOM_RATE,					// map zoom rate
+	FRONTEND_RADAR_ZOOM,					// radar zoom rate
 	FRONTEND_3D_FX_SL,
 	FRONTEND_FX_SL,
 	FRONTEND_MUSIC_SL,
+	FRONTEND_SOUND_HRTF_R,
+	FRONTEND_MAP_ZOOM_R,
+	FRONTEND_MAP_ZOOM_RATE_R,
+	FRONTEND_RADAR_ZOOM_R,
 
 	FRONTEND_VIDEOOPTIONS = 24000,          // video Options Menu
 	FRONTEND_WINDOWMODE,
@@ -235,6 +279,8 @@ enum
 	FRONTEND_VSYNC_R,
 	FRONTEND_FSAA,
 	FRONTEND_FSAA_R,
+	FRONTEND_DISPLAYSCALE,
+	FRONTEND_DISPLAYSCALE_R,
 
 	FRONTEND_MOUSEOPTIONS = 25000,          // Mouse Options Menu
 	FRONTEND_CURSORMODE,
@@ -247,6 +293,8 @@ enum
 	FRONTEND_MBUTTONS_R,
 	FRONTEND_MMROTATE,
 	FRONTEND_MMROTATE_R,
+	FRONTEND_SCROLLEVENT,
+	FRONTEND_SCROLLEVENT_R,
 
 	FRONTEND_KEYMAP			= 26000,	// Keymap menu
 	FRONTEND_NOGAMESAVAILABLE = 31666	// Used when no games are available in lobby

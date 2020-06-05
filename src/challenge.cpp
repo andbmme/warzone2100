@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -24,9 +24,9 @@
  */
 
 #include <physfs.h>
-#include <time.h>
+#include <ctime>
+#include <string>
 
-#include <QtCore/QTime>
 #include "lib/framework/frame.h"
 #include "lib/framework/input.h"
 #include "lib/framework/wzconfig.h"
@@ -42,6 +42,7 @@
 #include "loadsave.h"
 #include "multiplay.h"
 #include "mission.h"
+#include "titleui/titleui.h"
 
 #define totalslots 36			// challenge slots
 #define slotsInColumn 12		// # of slots in a column
@@ -50,7 +51,7 @@
 #define CHALLENGE_X				D_W + 16
 #define CHALLENGE_Y				D_H + 5
 #define CHALLENGE_W				610
-#define CHALLENGE_H				220
+#define CHALLENGE_H				215
 
 #define CHALLENGE_HGAP			9
 #define CHALLENGE_VGAP			9
@@ -72,6 +73,7 @@ static	W_SCREEN	*psRequestScreen;					// Widget screen for requester
 
 bool		challengesUp = false;		///< True when interface is up and should be run.
 bool		challengeActive = false;	///< Whether we are running a challenge
+std::string challengeName;
 
 static void displayLoadBanner(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 {
@@ -81,6 +83,15 @@ static void displayLoadBanner(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 
 	pie_BoxFill(x, y, x + psWidget->width(), y + psWidget->height(), col);
 	pie_BoxFill(x + 2, y + 2, x + psWidget->width() - 2, y + psWidget->height() - 2, WZCOL_MENU_BACKGROUND);
+}
+
+const char* currentChallengeName()
+{
+	if (challengeActive)
+	{
+		return challengeName.c_str();
+	}
+	return nullptr;
 }
 
 // quite the hack, game name is stored in global sRequestResult
@@ -101,8 +112,8 @@ void updateChallenge(bool gameWon)
 	sstrcpy(sPath, fStr);
 	sPath[strlen(sPath) - 5] = '\0';	// remove .json
 	scores.beginGroup(sPath);
-	victory = scores.value("Victory", false).toBool();
-	seconds = scores.value("Seconds", 0).toInt();
+	victory = scores.value("victory", false).toBool();
+	seconds = scores.value("seconds", 0).toInt();
 
 	// Update score if we have a victory and best recorded was a loss,
 	// or both were losses but time is higher, or both were victories
@@ -111,16 +122,30 @@ void updateChallenge(bool gameWon)
 	    || (!gameWon && !victory && newtime > seconds)
 	    || (gameWon && victory && newtime < seconds))
 	{
-		scores.setValue("Seconds", newtime);
-		scores.setValue("Victory", gameWon);
-		scores.setValue("Player", NetPlay.players[selectedPlayer].name);
+		scores.setValue("seconds", newtime);
+		scores.setValue("victory", gameWon);
+		scores.setValue("player", NetPlay.players[selectedPlayer].name);
 	}
 	scores.endGroup();
 }
 
 // ////////////////////////////////////////////////////////////////////////////
+
+struct DisplayLoadSlotCache {
+	std::string fullText;
+	WzText wzText;
+};
+
+struct DisplayLoadSlotData {
+	DisplayLoadSlotCache cache;
+	const char * filename;
+};
+
 static void displayLoadSlot(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 {
+	// Any widget using displayLoadSlot must have its pUserData initialized to a (DisplayLoadSlotData*)
+	assert(psWidget->pUserData != nullptr);
+	DisplayLoadSlotData& data = *static_cast<DisplayLoadSlotData *>(psWidget->pUserData);
 
 	UDWORD	x = xOffset + psWidget->x();
 	UDWORD	y = yOffset + psWidget->y();
@@ -130,17 +155,27 @@ static void displayLoadSlot(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 
 	if (!((W_BUTTON *)psWidget)->pText.isEmpty())
 	{
-		sstrcpy(butString, ((W_BUTTON *)psWidget)->pText.toUtf8().constData());
+		sstrcpy(butString, ((W_BUTTON *)psWidget)->pText.toUtf8().c_str());
 
-		iV_SetTextColour(WZCOL_FORM_TEXT);
-
-		while (iV_GetTextWidth(butString, font_regular) > psWidget->width())
+		if (data.cache.fullText != butString)
 		{
-			butString[strlen(butString) - 1] = '\0';
+			// Update cache
+			while (iV_GetTextWidth(butString, font_regular) > psWidget->width())
+			{
+				butString[strlen(butString) - 1] = '\0';
+			}
+			data.cache.wzText.setText(butString, font_regular);
+			data.cache.fullText = butString;
 		}
 
-		iV_DrawText(butString, x + 4, y + 17, font_regular);
+		data.cache.wzText.render(x + 4, y + 17, WZCOL_FORM_TEXT);
 	}
+}
+
+void challengesScreenSizeDidChange(unsigned int oldWidth, unsigned int oldHeight, unsigned int newWidth, unsigned int newHeight)
+{
+	if (psRequestScreen == nullptr) return;
+	psRequestScreen->screenSizeDidChange(oldWidth, oldHeight, newWidth, newHeight);
 }
 
 //****************************************************************************************
@@ -156,8 +191,6 @@ bool addChallenges()
 	static char		sSlotFile[totalslots][totalslotspace];
 	char **i, **files;
 
-	(void) PHYSFS_mkdir(sSearchPath); // just in case
-
 	psRequestScreen = new W_SCREEN; // init the screen
 
 	WIDGET *parent = psRequestScreen->psForm;
@@ -165,7 +198,9 @@ bool addChallenges()
 	/* add a form to place the tabbed form on */
 	IntFormAnimated *challengeForm = new IntFormAnimated(parent);
 	challengeForm->id = CHALLENGE_FORM;
-	challengeForm->setGeometry(CHALLENGE_X, CHALLENGE_Y, CHALLENGE_W, (slotsInColumn * CHALLENGE_ENTRY_H + CHALLENGE_HGAP * slotsInColumn) + CHALLENGE_BANNER_DEPTH + 20);
+	challengeForm->setCalcLayout(LAMBDA_CALCLAYOUT_SIMPLE({
+		psWidget->setGeometry(CHALLENGE_X, CHALLENGE_Y, CHALLENGE_W, (slotsInColumn * CHALLENGE_ENTRY_H + CHALLENGE_HGAP * slotsInColumn) + CHALLENGE_BANNER_DEPTH + 20);
+	}));
 
 	// Add Banner
 	W_FORMINIT sFormInit;
@@ -179,18 +214,6 @@ bool addChallenges()
 	sFormInit.pDisplay = displayLoadBanner;
 	sFormInit.UserData = 0;
 	widgAddForm(psRequestScreen, &sFormInit);
-
-	// Add Banner Label
-	W_LABINIT sLabInit;
-	sLabInit.formID		= CHALLENGE_BANNER;
-	sLabInit.id		= CHALLENGE_LABEL;
-	sLabInit.style		= WLAB_ALIGNCENTRE;
-	sLabInit.x		= 0;
-	sLabInit.y		= 3;
-	sLabInit.width		= CHALLENGE_W - (2 * CHALLENGE_HGAP);	//CHALLENGE_W;
-	sLabInit.height		= CHALLENGE_BANNER_DEPTH;		//This looks right -Q
-	sLabInit.pText		= "Challenge";
-	widgAddLabel(psRequestScreen, &sLabInit);
 
 	// add cancel.
 	W_BUTINIT sButInit;
@@ -206,12 +229,31 @@ bool addChallenges()
 	sButInit.pDisplay = intDisplayImageHilight;
 	widgAddButton(psRequestScreen, &sButInit);
 
+	// Add Banner Label
+	W_LABINIT sLabInit;
+	sLabInit.formID		= CHALLENGE_BANNER;
+	sLabInit.FontID		= font_large;
+	sLabInit.id		= CHALLENGE_LABEL;
+	sLabInit.style		= WLAB_ALIGNCENTRE;
+	sLabInit.x		= 0;
+	sLabInit.y		= 0;
+	sLabInit.width		= CHALLENGE_W - (2 * CHALLENGE_HGAP);	//CHALLENGE_W;
+	sLabInit.height		= CHALLENGE_BANNER_DEPTH;		//This looks right -Q
+	sLabInit.pText		= WzString::fromUtf8("Challenge");
+	widgAddLabel(psRequestScreen, &sLabInit);
+
 	// add slots
 	sButInit = W_BUTINIT();
 	sButInit.formID		= CHALLENGE_FORM;
 	sButInit.width		= CHALLENGE_ENTRY_W;
 	sButInit.height		= CHALLENGE_ENTRY_H;
 	sButInit.pDisplay	= displayLoadSlot;
+	sButInit.initPUserDataFunc = []() -> void * { return new DisplayLoadSlotData(); };
+	sButInit.onDelete = [](WIDGET *psWidget) {
+		assert(psWidget->pUserData != nullptr);
+		delete static_cast<DisplayLoadSlotData *>(psWidget->pUserData);
+		psWidget->pUserData = nullptr;
+	};
 
 	for (slotCount = 0; slotCount < totalslots; slotCount++)
 	{
@@ -251,7 +293,7 @@ bool addChallenges()
 	for (i = files; *i != nullptr; ++i)
 	{
 		W_BUTTON *button;
-		QString name, map, difficulty, highscore, description;
+		WzString name, map, difficulty, highscore, description;
 		bool victory;
 		int seconds;
 
@@ -268,13 +310,21 @@ bool addChallenges()
 		highscore = "no score";
 		WzConfig scores(CHALLENGE_SCORES, WzConfig::ReadOnly);
 		scores.beginGroup(sPath);
-		name = scores.value("player", "NO NAME").toString();
+		name = scores.value("player", "NO NAME").toWzString();
 		victory = scores.value("victory", false).toBool();
 		seconds = scores.value("seconds", -1).toInt();
 		if (seconds > 0)
 		{
-			QTime format = QTime(0, 0, 0).addSecs(seconds);
-			highscore = format.toString(Qt::TextDate) + " by " + name + " (" + QString(victory ? "Victory" : "Survived") + ")";
+			char psTimeText[sizeof("HH:MM:SS")] = { 0 };
+			time_t secs = seconds;
+			struct tm tmp;
+#if defined(WZ_OS_WIN)
+			gmtime_s(&tmp, &secs);
+#else
+			gmtime_r(&secs, &tmp);
+#endif
+			strftime(psTimeText, sizeof(psTimeText), "%H:%M:%S", &tmp);
+			highscore = WzString::fromUtf8(psTimeText) + " by " + name + " (" + WzString(victory ? "Victory" : "Survived") + ")";
 		}
 		scores.endGroup();
 		ssprintf(sPath, "%s/%s", sSearchPath, *i);
@@ -282,25 +332,26 @@ bool addChallenges()
 		ASSERT(challenge.contains("challenge"), "Invalid challenge file %s - no challenge section!", sPath);
 		challenge.beginGroup("challenge");
 		ASSERT(challenge.contains("name"), "Invalid challenge file %s - no name", sPath);
-		name = challenge.value("name", "BAD NAME").toString();
+		name = challenge.value("name", "BAD NAME").toWzString();
 		ASSERT(challenge.contains("map"), "Invalid challenge file %s - no map", sPath);
-		map = challenge.value("map", "BAD MAP").toString();
-		difficulty = challenge.value("difficulty", "BAD DIFFICULTY").toString();
-		description = map + ", " + difficulty + ", " + highscore + ". " + challenge.value("Description", "").toString();
+		map = challenge.value("map", "BAD MAP").toWzString();
+		difficulty = challenge.value("difficulty", "BAD DIFFICULTY").toWzString();
+		description = map + ", " + difficulty + ", " + highscore + ".\n" + challenge.value("description", "").toWzString();
 
 		button = (W_BUTTON *)widgGetFromID(psRequestScreen, CHALLENGE_ENTRY_START + slotCount);
 
 		debug(LOG_SAVE, "We found [%s]", *i);
 
 		/* Set the button-text */
-		sstrcpy(sSlotCaps[slotCount], name.toUtf8().constData());		// store it!
-		sstrcpy(sSlotTips[slotCount], description.toUtf8().constData());	// store it, too!
+		sstrcpy(sSlotCaps[slotCount], name.toUtf8().c_str());		// store it!
+		sstrcpy(sSlotTips[slotCount], description.toUtf8().c_str());	// store it, too!
 		sstrcpy(sSlotFile[slotCount], sPath);					// store filename
 
 		/* Add button */
 		button->pTip = sSlotTips[slotCount];
-		button->pText = sSlotCaps[slotCount];
-		button->pUserData = (void *)sSlotFile[slotCount];
+		button->pText = WzString::fromUtf8(sSlotCaps[slotCount]);
+		assert(button->pUserData != nullptr);
+		static_cast<DisplayLoadSlotData *>(button->pUserData)->filename = sSlotFile[slotCount];
 		slotCount++;		// go to next button...
 		if (slotCount == totalslots)
 		{
@@ -348,9 +399,15 @@ bool runChallenges()
 		// clicked a load entry
 		if (id >= CHALLENGE_ENTRY_START  &&  id <= CHALLENGE_ENTRY_END)
 		{
-			if (!((W_BUTTON *)widgGetFromID(psRequestScreen, id))->pText.isEmpty())
+			W_BUTTON * psWidget = static_cast<W_BUTTON *>(widgGetFromID(psRequestScreen, id));
+			assert(psWidget != nullptr);
+			if (!(psWidget->pText.isEmpty()))
 			{
-				sstrcpy(sRequestResult, (const char *)((W_BUTTON *)widgGetFromID(psRequestScreen, id))->pUserData);
+				DisplayLoadSlotData * data = static_cast<DisplayLoadSlotData *>(psWidget->pUserData);
+				assert(data != nullptr);
+				assert(data->filename != nullptr);
+				sstrcpy(sRequestResult, data->filename);
+				challengeName = psWidget->pText.toStdString();
 			}
 			else
 			{
@@ -373,7 +430,7 @@ success:
 	closeChallenges();
 	challengeActive = true;
 	ingame.bHostSetup = true;
-	changeTitleMode(MULTIOPTION);
+	changeTitleUI(std::make_shared<WzMultiOptionTitleUI>(wzTitleUICurrent));
 	return true;
 }
 
@@ -384,4 +441,3 @@ bool displayChallenges()
 	widgDisplayScreen(psRequestScreen);	// display widgets.
 	return true;
 }
-

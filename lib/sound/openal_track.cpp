@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -27,15 +27,14 @@
 #include "lib/framework/frameresource.h"
 #include "lib/exceptionhandler/dumpinfo.h"
 
-#ifdef WZ_OS_MAC
-#include <OpenAL/al.h>
-#include <OpenAL/alc.h>
-#else
 #include <AL/al.h>
 #include <AL/alc.h>
+#if defined(HAVE_OPENAL_ALEXT_H)
+# include <AL/alext.h>
 #endif
 
 #include <physfs.h>
+#include "lib/framework/physfs_ext.h"
 #include <string.h>
 #include <math.h>
 
@@ -45,6 +44,7 @@
 #include "oggvorbis.h"
 #include "openal_error.h"
 #include "mixer.h"
+#include "openal_info.h"
 
 static ALuint current_queue_sample = -1;
 
@@ -58,8 +58,8 @@ struct AUDIO_STREAM
 	float                   volume;
 
 	// Callbacks
-	void (*onFinished)(void *);
-	void                    *user_data;
+	void (*onFinished)(const void *);
+	const void              *user_data;
 
 	size_t                  bufferSize;
 
@@ -82,6 +82,11 @@ static ALfloat		sfx3d_volume = 1.0;
 
 static ALCdevice *device = nullptr;
 static ALCcontext *context = nullptr;
+
+#if defined(ALC_SOFT_HRTF)
+static LPALCGETSTRINGISOFT alcGetStringiSOFT = nullptr;
+static LPALCRESETDEVICESOFT alcResetDeviceSOFT = nullptr;
+#endif
 
 
 /** Removes the given sample from the "active_samples" linked list
@@ -109,11 +114,31 @@ static void sound_RemoveSample(SAMPLE_LIST *previous, SAMPLE_LIST *to_remove)
 	}
 }
 
+ALCint HRTFModeToALCint(HRTFMode mode)
+{
+#if defined(ALC_SOFT_HRTF)
+	switch (mode)
+	{
+	case HRTFMode::Unsupported:
+		// should never be called with unsupported, log it and fall through to disabled
+		debug(LOG_ERROR, "HRTFModeToALCint called with HRTFMode::Unsupported");
+		// fallthrough
+	case HRTFMode::Disabled:
+		return ALC_FALSE;
+	case HRTFMode::Enabled:
+		return ALC_TRUE;
+	case HRTFMode::Auto:
+		return ALC_DONT_CARE_SOFT;
+	}
+#endif
+	return ALC_FALSE;
+}
+
 //*
 // =======================================================================================================================
 // =======================================================================================================================
 //
-bool sound_InitLibrary(void)
+bool sound_InitLibrary(HRTFMode hrtf)
 {
 	int err;
 	const ALfloat listenerVel[3] = { 0.0, 0.0, 0.0 };
@@ -136,27 +161,43 @@ bool sound_InitLibrary(void)
 	}
 #endif
 
-#ifdef WZ_OS_WIN
-	/* HACK: Select the "software" OpenAL device on Windows because it
-	 *       provides 256 sound sources (unlike most Creative's default
-	 *       which provides only 16), causing our lack of source-management
-	 *       to be significantly less noticeable.
-	 */
-	device = alcOpenDevice("Generic Software");
-
-	// If the software device isn't available, fall back to default
-	if (!device)
-#endif
+	if (enabled_debug[LOG_SOUND])
 	{
-		// Open default device
-		device = alcOpenDevice(nullptr);
+		OpenALInfo::Output_PlaybackDevices([](const std::string &output) {
+			addDumpInfo(output.c_str());
+			if (enabled_debug[LOG_SOUND])
+			{
+				_debug_multiline(0, LOG_SOUND, "sound", output);
+			}
+		});
 	}
+
+	// Open default device
+	device = alcOpenDevice(nullptr);
 
 	if (!device)
 	{
 		debug(LOG_ERROR, "Couldn't open audio device.");
 		return false;
 	}
+
+	if (enabled_debug[LOG_SOUND])
+	{
+		OpenALInfo::Output_ALCInfo(device, [](const std::string &output) {
+			// addDumpInfo(output.c_str());
+			//if (enabled_debug[LOG_SOUND])
+			//{
+				_debug_multiline(0, LOG_SOUND, "sound", output);
+			//}
+		});
+	}
+
+#if defined(ALC_SOFT_HRTF)
+	// Load some extensions from OpenAL-Soft (if available)
+	alcGetStringiSOFT = (LPALCGETSTRINGISOFT)alcGetProcAddress(device, "alcGetStringiSOFT");
+	alcResetDeviceSOFT = (LPALCRESETDEVICESOFT)alcGetProcAddress(device, "alcResetDeviceSOFT");
+#endif
+
 
 	// Print current device name and add it to dump info
 	deviceName = alcGetString(device, ALC_DEVICE_SPECIFIER);
@@ -200,6 +241,63 @@ bool sound_InitLibrary(void)
 
 	openal_initialized = true;
 
+#if defined(ALC_SOFT_HRTF)
+	if(alcIsExtensionPresent(device, "ALC_SOFT_HRTF"))
+	{
+		// Set desired HRTF mode
+		sound_SetHRTFMode(hrtf);
+
+		// Get current HRTF status
+		ALCint hrtfStatus;
+		alcGetIntegerv(device, ALC_HRTF_STATUS_SOFT, 1, &hrtfStatus);
+
+		const char *hrtfStatusString = nullptr;
+		switch (hrtfStatus)
+		{
+		case ALC_HRTF_DISABLED_SOFT:
+			hrtfStatusString = "ALC_HRTF_DISABLED_SOFT: HRTF is disabled";
+			break;
+		case ALC_HRTF_ENABLED_SOFT:
+			hrtfStatusString = "ALC_HRTF_ENABLED_SOFT: HRTF is enabled";
+			break;
+		case ALC_HRTF_DENIED_SOFT:
+			// This may be caused by invalid resource permissions, or other user configuration that disallows HRTF.
+			hrtfStatusString = "ALC_HRTF_DENIED_SOFT: HRTF is disabled because it's not allowed on the device.";
+			break;
+		case ALC_HRTF_REQUIRED_SOFT:
+			// This may be caused by a device that can only use HRTF, or other user configuration that forces HRTF to be used.
+			hrtfStatusString = "ALC_HRTF_REQUIRED_SOFT: HRTF is enabled because it must be used on the device.";
+			break;
+		case ALC_HRTF_HEADPHONES_DETECTED_SOFT:
+			hrtfStatusString = "ALC_HRTF_HEADPHONES_DETECTED_SOFT: HRTF is enabled automatically because the device reported itself as headphones.";
+			break;
+		case ALC_HRTF_UNSUPPORTED_FORMAT_SOFT:
+			// HRTF is disabled because the device does not support it with the current format.
+			// Typically this is caused by non-stereo output or an incompatible output frequency.
+			hrtfStatusString = "ALC_HRTF_UNSUPPORTED_FORMAT_SOFT: HRTF is disabled because the device does not support it with the current format.";
+			break;
+		default:
+			hrtfStatusString = nullptr;
+			break;
+		}
+
+		if (hrtfStatusString)
+		{
+			debug(LOG_SOUND, "%s", hrtfStatusString);
+		}
+		else
+		{
+			debug(LOG_SOUND, "OpenAL-Soft returned an unknown ALC_HRTF_STATUS_SOFT result: %d", hrtfStatus);
+		}
+	}
+	else
+	{
+		debug(LOG_SOUND, "alcIsExtensionPresent(..., \"ALC_SOFT_HRTF\") returned false");
+	}
+#else
+	debug(LOG_SOUND, "ALC_SOFT_HRTF not defined");
+#endif
+
 	// Clear Error Codes
 	alGetError();
 	alcGetError(device);
@@ -211,6 +309,57 @@ bool sound_InitLibrary(void)
 	sound_GetError();
 
 	return true;
+}
+
+HRTFMode sound_GetHRTFMode()
+{
+#if defined(ALC_SOFT_HRTF)
+	if(alcIsExtensionPresent(device, "ALC_SOFT_HRTF"))
+	{
+		ALCint hrtfStatus;
+		alcGetIntegerv(device, ALC_HRTF_SOFT, 1, &hrtfStatus);
+		switch (hrtfStatus)
+		{
+		case ALC_TRUE:
+			return HRTFMode::Enabled;
+		case ALC_FALSE:
+			return HRTFMode::Disabled;
+		default:
+			debug(LOG_SOUND, "OpenAL-Soft returned an unexpected ALC_HRTF_SOFT result: %d", hrtfStatus);
+		}
+	}
+#endif
+	return HRTFMode::Unsupported;
+}
+
+bool sound_SetHRTFMode(HRTFMode mode)
+{
+#if defined(ALC_SOFT_HRTF)
+	if(alcIsExtensionPresent(device, "ALC_SOFT_HRTF"))
+	{
+		ALCint hrtfSetting = HRTFModeToALCint(mode);
+
+		ALCint attrs[] = {
+			ALC_HRTF_SOFT, hrtfSetting, /* configure HRTF */
+			0 /* end of list */
+		};
+		if (alcResetDeviceSOFT)
+		{
+			ASSERT(device, "device is null");
+			if (!alcResetDeviceSOFT(device, attrs))
+			{
+				debug(LOG_ERROR, "Failed to reset device: %s\n", alcGetString(device, alcGetError(device)));
+				return false;
+			}
+			return true;
+		}
+		else
+		{
+			debug(LOG_ERROR, "ALC_SOFT_HRTF extension is available, but alcResetDeviceSOFT is null");
+		}
+	}
+#endif
+	return false;
 }
 
 static void sound_UpdateStreams(void);
@@ -249,6 +398,7 @@ void sound_ShutdownLibrary(void)
 	{
 		debug(LOG_SOUND, "OpenAl could not close the audio device.");
 	}
+	device = nullptr;
 
 	while (aSample)
 	{
@@ -520,7 +670,7 @@ TRACK *sound_LoadTrackFromFile(const char *fileName)
 	debug(LOG_NEVER, "Reading...[directory: %s] %s", PHYSFS_getRealDir(fileName), fileName);
 	if (fileHandle == nullptr)
 	{
-		debug(LOG_ERROR, "sound_LoadTrackFromFile: PHYSFS_openRead(\"%s\") failed with error: %s\n", fileName, PHYSFS_getLastError());
+		debug(LOG_ERROR, "sound_LoadTrackFromFile: PHYSFS_openRead(\"%s\") failed with error: %s\n", fileName, WZ_PHYSFS_getLastError());
 		return nullptr;
 	}
 
@@ -594,7 +744,7 @@ void sound_RemoveActiveSample(AUDIO_SAMPLE *psSample)
 	{
 		if (node->curr->psObj == psSample->psObj)
 		{
-			debug(LOG_MEMORY, "Removing object 0x%p from active_samples list 0x%p\n", psSample->psObj, node);
+			debug(LOG_MEMORY, "Removing object 0x%p from active_samples list 0x%p\n", static_cast<void *>(psSample->psObj), static_cast<void *>(node));
 
 			// Buginator: should we wait for it to finish, or just stop it?
 			sound_StopSample(node->curr);
@@ -729,9 +879,13 @@ bool sound_Play3DSample(TRACK *psTrack, AUDIO_SAMPLE *psSample)
 		 */
 	}
 
+#if defined(WZ_OS_UNIX) && !defined(WZ_OS_MAC)
 	// HACK: this is a workaround for a bug in the 64bit implementation of OpenAL on GNU/Linux
 	// The AL_PITCH value really should be 1.0.
 	alSourcef(psSample->iSample, AL_PITCH, 1.001f);
+#else
+	alSourcef(psSample->iSample, AL_PITCH, 1.0f);
+#endif
 
 	sound_SetObjectPosition(psSample);
 	alSourcefv(psSample->iSample, AL_VELOCITY, zero);
@@ -770,7 +924,7 @@ bool sound_Play3DSample(TRACK *psTrack, AUDIO_SAMPLE *psSample)
  *  \note You must _never_ manually free() the memory used by the returned
  *        pointer.
  */
-AUDIO_STREAM *sound_PlayStream(PHYSFS_file *fileHandle, float volume, void (*onFinished)(void *), void *user_data)
+AUDIO_STREAM *sound_PlayStream(PHYSFS_file *fileHandle, float volume, void (*onFinished)(const void *), const void *user_data)
 {
 	// Default buffer size
 	static const size_t streamBufferSize = 16 * 1024;
@@ -787,7 +941,7 @@ AUDIO_STREAM *sound_PlayStream(PHYSFS_file *fileHandle, float volume, void (*onF
  *  \see sound_PlayStream() for details about the rest of the function
  *       parameters and other details.
  */
-AUDIO_STREAM *sound_PlayStreamWithBuf(PHYSFS_file *fileHandle, float volume, void (*onFinished)(void *), void *user_data, size_t streamBufferSize, unsigned int buffer_count)
+AUDIO_STREAM *sound_PlayStreamWithBuf(PHYSFS_file *fileHandle, float volume, void (*onFinished)(const void *), const void *user_data, size_t streamBufferSize, unsigned int buffer_count)
 {
 	AUDIO_STREAM *stream;
 	ALuint       *buffers = (ALuint *)alloca(sizeof(ALuint) * buffer_count);
@@ -838,9 +992,13 @@ AUDIO_STREAM *sound_PlayStreamWithBuf(PHYSFS_file *fileHandle, float volume, voi
 
 	alSourcef(stream->source, AL_GAIN, stream->volume);
 
+#if defined(WZ_OS_UNIX) && !defined(WZ_OS_MAC)
 	// HACK: this is a workaround for a bug in the 64bit implementation of OpenAL on GNU/Linux
 	// The AL_PITCH value really should be 1.0.
 	alSourcef(stream->source, AL_PITCH, 1.001f);
+#else
+	alSourcef(stream->source, AL_PITCH, 1.0f);
+#endif
 
 	// Create some OpenAL buffers to store the decoded data in
 	alGenBuffers(buffer_count, buffers);
@@ -1104,6 +1262,7 @@ static void sound_DestroyStream(AUDIO_STREAM *stream)
 {
 	ALint buffer_count;
 	ALuint *buffers;
+	bool freeBuffers = false;
 	ALint error;
 
 	// Stop the OpenAL source from playing
@@ -1130,13 +1289,35 @@ static void sound_DestroyStream(AUDIO_STREAM *stream)
 	}
 
 	// Detach all buffers and retrieve their ID numbers
-	buffers = (ALuint *)alloca(buffer_count * sizeof(ALuint));
-	alSourceUnqueueBuffers(stream->source, buffer_count, buffers);
-	sound_GetError();
+	if (buffer_count > 0)
+	{
+		if (buffer_count <= (1024 / sizeof(ALuint))) // See CMakeLists.txt for value of -Walloca-larger-than=<N>
+		{
+			buffers = (ALuint *)alloca(buffer_count * sizeof(ALuint));
+		}
+		else
+		{
+			// Too many buffers - don't allocate on the stack!
+			buffers = (ALuint *)malloc(buffer_count * sizeof(ALuint));
+			freeBuffers = true;
+		}
+		alSourceUnqueueBuffers(stream->source, buffer_count, buffers);
+		sound_GetError();
 
-	// Destroy all of these buffers
-	alDeleteBuffers(buffer_count, buffers);
-	sound_GetError();
+		// Destroy all of these buffers
+		alDeleteBuffers(buffer_count, buffers);
+		sound_GetError();
+		if(freeBuffers)
+		{
+			free(buffers);
+		}
+		buffers = nullptr;
+	}
+	else
+	{
+		// alGetSourcei(AL_BUFFERS_PROCESSED) returned a count <= 0?
+		debug(LOG_SOUND, "alGetSourcei(AL_BUFFERS_PROCESSED) returned count: %d", buffer_count);
+	}
 
 	// Destroy the OpenAL source
 	alDeleteSources(1, &stream->source);

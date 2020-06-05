@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2013-2017  Warzone 2100 Project
+	Copyright (C) 2013-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -22,8 +22,12 @@
  * New scripting system - debug GUI
  */
 
-#include "qtscriptdebug.h"
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__) && (9 <= __GNUC__)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wdeprecated-copy" // Workaround Qt < 5.13 `deprecated-copy` issues with GCC 9
+#endif
 
+// **NOTE: Qt headers _must_ be before platform specific headers so we don't get conflicts.
 #include <QtCore/QHash>
 #include <QtScript/QScriptEngine>
 #include <QtScript/QScriptValue>
@@ -41,6 +45,15 @@
 #include <QtWidgets/QVBoxLayout>
 #include <QtGui/QStandardItemModel>
 
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__) && (9 <= __GNUC__)
+# pragma GCC diagnostic pop // Workaround Qt < 5.13 `deprecated-copy` issues with GCC 9
+#endif
+
+#include "qtscriptdebug.h"
+
+#ifndef GLM_ENABLE_EXPERIMENTAL
+	#define GLM_ENABLE_EXPERIMENTAL
+#endif
 #include <glm/gtx/string_cast.hpp>
 
 #include "lib/framework/frame.h"
@@ -48,6 +61,7 @@
 #include "lib/framework/wzconfig.h"
 #include "lib/netplay/netplay.h"
 
+#include "action.h"
 #include "difficulty.h"
 #include "multiplay.h"
 #include "objects.h"
@@ -68,6 +82,7 @@
 typedef QList<QStandardItem *> QStandardItemList;
 
 static ScriptDebugger *globalDialog = nullptr;
+static jsDebugShutdownHandlerFunction globalDialogShutdownHandler;
 bool doUpdateModels = false;
 
 // ----------------------------------------------------------
@@ -121,19 +136,21 @@ void ScriptDebugger::fogButtonClicked()
 	kf_ToggleFog();
 }
 
+static const QStringList view_type = { "RES", "RPL", "PROX", "RPLX", "BEACON" };
+
 static void fillViewdataModel(QStandardItemModel &m)
 {
-	const QStringList view_type = { "RES", "PPL", "PROX", "RPLX", "BEACON" };
 	int row = 0;
 	m.setRowCount(0);
 	m.setHorizontalHeaderLabels({"Name", "Type", "Source"});
-	QStringList keys = getViewDataKeys();
-	for (QString& key : keys)
+	std::vector<WzString> keys = getViewDataKeys();
+	for (const WzString& key : keys)
 	{
-		VIEWDATA *ptr = getViewData(key.toUtf8().constData());
-		m.setItem(row, 0, new QStandardItem(key));
+		VIEWDATA *ptr = getViewData(key);
+		ASSERT(ptr->type < view_type.size(), "Bad viewdata type");
+		m.setItem(row, 0, new QStandardItem(QString::fromUtf8(key.toUtf8().c_str())));
 		m.setItem(row, 1, new QStandardItem(view_type.at(ptr->type)));
-		m.setItem(row, 2, new QStandardItem(ptr->fileName));
+		m.setItem(row, 2, new QStandardItem(QString::fromUtf8(ptr->fileName.toUtf8().c_str())));
 		row++;
 	}
 }
@@ -141,8 +158,7 @@ static void fillViewdataModel(QStandardItemModel &m)
 static void fillMessageModel(QStandardItemModel &m)
 {
 	const QStringList msg_type = { "RESEARCH", "CAMPAIGN", "MISSION", "PROXIMITY" };
-	const QStringList view_type = { "RES", "PPL", "PROX", "RPLX", "BEACON" };
-	const QStringList msg_data_type = { "OBJ", "VIEW" };
+	const QStringList msg_data_type = { "DEFAULT", "BEACON" };
 	const QStringList obj_type = { "DROID", "STRUCTURE", "FEATURE", "PROJECTILE", "TARGET" };
 	int row = 0;
 	m.setRowCount(0);
@@ -161,7 +177,7 @@ static void fillMessageModel(QStandardItemModel &m)
 			if (psCurr->pViewData)
 			{
 				ASSERT(psCurr->pViewData->type < view_type.size(), "Bad viewdata type");
-				m.setItem(row, 4, new QStandardItem(psCurr->pViewData->name));
+				m.setItem(row, 4, new QStandardItem(QString::fromUtf8(psCurr->pViewData->name.toUtf8().c_str())));
 				m.setItem(row, 5, new QStandardItem(view_type.at(psCurr->pViewData->type)));
 			}
 			else if (psCurr->psObj)
@@ -178,9 +194,10 @@ static void fillMainModel(QStandardItemModel &m)
 {
 	const QStringList lev_type = { "LDS_COMPLETE", "LDS_CAMPAIGN", "LDS_CAMSTART", "LDS_CAMCHANGE",
 	                               "LDS_EXPAND", "LDS_BETWEEN", "LDS_MKEEP", "LDS_MCLEAR",
-	                               "LDS_EXPAND_LIMBO", "LDS_MKEEP_LIMBO", "LDS_NONE", "CAMPAIGN",
-	                               "SKIRMISH", "MULTI_SKIRMISH2", "MULTI_SKIRMISH3" };
-	const QStringList difficulty_type = { "EASY", "NORMAL", "HARD", "INSANE", "TOUGH", "KILLER" };
+	                               "LDS_EXPAND_LIMBO", "LDS_MKEEP_LIMBO", "LDS_NONE",
+	                               "LDS_MULTI_TYPE_START", "CAMPAIGN", "", "SKIRMISH", "", "", "",
+	                               "MULTI_SKIRMISH2", "MULTI_SKIRMISH3", "MULTI_SKIRMISH4" };
+	const QStringList difficulty_type = { "EASY", "NORMAL", "HARD", "INSANE" };
 	int row = 0;
 	m.setRowCount(0);
 	m.setHorizontalHeaderLabels({"Key", "Value"});
@@ -188,6 +205,7 @@ static void fillMainModel(QStandardItemModel &m)
 #define B2Q(_b) (_b ? QString("true") : QString("false"))
 #define KEYVAL(_key, _val) m.setItem(row, 0, new QStandardItem(_key)); m.setItem(row, 1, new QStandardItem(_val)); row++;
 
+	ASSERT(game.type < lev_type.size() && (int)game.type != 13 && (int)game.type != 15 && (int)game.type != 16 && (int)game.type != 17, "Bad LEVEL_TYPE for game.type");
 	KEYVAL("game.type", lev_type.at(game.type));
 	KEYVAL("game.scavengers", B2Q(game.scavengers));
 	KEYVAL("game.map", QString(game.map));
@@ -196,11 +214,13 @@ static void fillMainModel(QStandardItemModel &m)
 	KEYVAL("missionIsOffworld", B2Q(missionIsOffworld()));
 	KEYVAL("missionCanReEnforce", B2Q(missionCanReEnforce()));
 	KEYVAL("missionForReInforcements", B2Q(missionForReInforcements()));
+	ASSERT(mission.type < lev_type.size() && (int)mission.type != 13 && (int)mission.type != 15 && (int)mission.type != 16 && (int)mission.type != 17, "Bad LEVEL_TYPE for mission.type");
 	KEYVAL("mission.type", lev_type.at(mission.type));
 	KEYVAL("getDroidsToSafetyFlag", B2Q(getDroidsToSafetyFlag()));
 	KEYVAL("scavengerSlot", QString::number(scavengerSlot()));
 	KEYVAL("scavengerPlayer", QString::number(scavengerPlayer()));
 	KEYVAL("bMultiPlayer", B2Q(bMultiPlayer));
+	ASSERT(getDifficultyLevel() < difficulty_type.size(), "Bad DIFFICULTY_LEVEL");
 	KEYVAL("difficultyLevel", difficulty_type.at(getDifficultyLevel()));
 	KEYVAL("loopPieCount", QString::number(loopPieCount));
 	KEYVAL("loopPolyCount", QString::number(loopPolyCount));
@@ -241,10 +261,11 @@ static void fillPlayerModel(QStandardItemModel &m, int i)
 #undef KEYVAL
 }
 
-ScriptDebugger::ScriptDebugger(const MODELMAP &models, QStandardItemModel *triggerModel) : QDialog(nullptr, Qt::Window)
+ScriptDebugger::ScriptDebugger(const MODELMAP &models, QStandardItemModel *triggerModel, QStandardItemModel *_labelModel)
+: QDialog(nullptr, Qt::Window)
+, labelModel(_labelModel)
 {
 	modelMap = models;
-	QSignalMapper *signalMapper = new QSignalMapper(this);
 
 	// Add main page
 	QWidget *mainWidget = new QWidget(this);
@@ -285,10 +306,10 @@ ScriptDebugger::ScriptDebugger(const MODELMAP &models, QStandardItemModel *trigg
 	{
 		aiPlayerComboBox.addItem(QString::number(i));
 	}
-	const QStringList AIs = getAINames();
-	for (const QString &name : AIs)
+	const std::vector<WzString> AIs = getAINames();
+	for (const WzString &name : AIs)
 	{
-		aiScriptComboBox.addItem(name);
+		aiScriptComboBox.addItem(QString::fromUtf8(name.toUtf8().c_str()));
 	}
 	addAILayout->addWidget(addAILabel);
 	addAILayout->addWidget(&aiScriptComboBox);
@@ -338,9 +359,8 @@ ScriptDebugger::ScriptDebugger(const MODELMAP &models, QStandardItemModel *trigg
 		QHBoxLayout *layout2 = new QHBoxLayout;
 		QPushButton *updateButton = new QPushButton("Update", this);
 		QPushButton *button = new QPushButton("Run", this);
-		connect(button, SIGNAL(pressed()), signalMapper, SLOT(map()));
+		connect(button, &QPushButton::pressed, [=] { runClicked(engine); });
 		connect(updateButton, SIGNAL(pressed()), this, SLOT(updateModels()));
-		signalMapper->setMapping(button, engine);
 		editMap.insert(engine, lineEdit); // store this for slot
 		layout->addWidget(view);
 		layout2->addWidget(updateButton);
@@ -350,7 +370,6 @@ ScriptDebugger::ScriptDebugger(const MODELMAP &models, QStandardItemModel *trigg
 		dummyWidget->setLayout(layout);
 		contextsTab->addTab(dummyWidget, scriptName + ":" + QString::number(player));
 	}
-	connect(signalMapper, SIGNAL(mapped(QObject *)), this, SLOT(runClicked(QObject *)));
 	tab.addTab(contextsTab, "Contexts");
 
 	QTabWidget *playersTab = new QTabWidget(this);
@@ -392,7 +411,6 @@ ScriptDebugger::ScriptDebugger(const MODELMAP &models, QStandardItemModel *trigg
 	tab.addTab(messTab, "Messages");
 
 	// Add labels
-	labelModel = createLabelModel();
 	labelModel->setParent(this); // take ownership to avoid memory leaks
 	labelView.setModel(labelModel);
 	labelView.resizeColumnToContents(0);
@@ -417,6 +435,9 @@ ScriptDebugger::ScriptDebugger(const MODELMAP &models, QStandardItemModel *trigg
 	dummyWidget->setLayout(labelLayout);
 	tab.addTab(dummyWidget, "Labels");
 
+	// Handle dialog closing
+	connect(this, SIGNAL(finished(int)), this, SLOT(debuggerClosed()));
+
 	// Set up dialog
 	QHBoxLayout *layout = new QHBoxLayout;
 	layout->addWidget(&tab);
@@ -430,11 +451,19 @@ ScriptDebugger::ScriptDebugger(const MODELMAP &models, QStandardItemModel *trigg
 	activateWindow();
 }
 
+void ScriptDebugger::debuggerClosed()
+{
+	// Asynchronously trigger a jsDebugShutdown (on the main thread) outside of signal processing
+	wzAsyncExecOnMainThread([] {
+		jsDebugShutdown();
+	});
+}
+
 void ScriptDebugger::attachScriptClicked()
 {
 	const QString &script = aiScriptComboBox.currentText();
 	const int player = aiPlayerComboBox.currentIndex();
-	jsAutogameSpecific("multiplay/skirmish/" + script, player);
+	jsAutogameSpecific(QStringToWzString("multiplay/skirmish/" + script), player);
 	debug(LOG_INFO, "Script attached - close and reopen debug window to see its context");
 }
 
@@ -563,6 +592,7 @@ static const char *getObjType(const BASE_OBJECT *psObj)
 	case OBJ_DROID: return "Droid";
 	case OBJ_STRUCTURE: return "Structure";
 	case OBJ_FEATURE: return "Feature";
+	case OBJ_PROJECTILE: return "Projectile";
 	case OBJ_TARGET: return "Target";
 	default: break;
 	}
@@ -581,11 +611,12 @@ static QString arrayToString(const T *array, int length)
 }
 
 // Using ^ to denote stats that are in templates, and as such do not change.
+// Using : to denote stats that come from structure specializations.
 QStandardItemList componentToString(const QString &name, const COMPONENT_STATS *psStats, int player)
 {
 	QStandardItem *key = new QStandardItem(name);
 	QStandardItem *value = new QStandardItem(getName(psStats));
-	key->appendRow(QStandardItemList{ new QStandardItem("^Id"), new QStandardItem(psStats->id) });
+	key->appendRow(QStandardItemList{ new QStandardItem("^Id"), new QStandardItem(QString::fromUtf8(psStats->id.toUtf8().c_str())) });
 	key->appendRow(QStandardItemList{ new QStandardItem("^Power"), new QStandardItem(QString::number(psStats->buildPower)) });
 	key->appendRow(QStandardItemList{ new QStandardItem("^Build Points"), new QStandardItem(QString::number(psStats->buildPoints)) });
 	key->appendRow(QStandardItemList{ new QStandardItem("^Weight"), new QStandardItem(QString::number(psStats->weight)) });
@@ -597,7 +628,7 @@ QStandardItemList componentToString(const QString &name, const COMPONENT_STATS *
 		const BODY_STATS *psBody = (const BODY_STATS *)psStats;
 		key->appendRow(QStandardItemList{ new QStandardItem("^Size"), new QStandardItem(QString::number(psBody->size)) });
 		key->appendRow(QStandardItemList{ new QStandardItem("^Max weapons"), new QStandardItem(QString::number(psBody->weaponSlots)) });
-		key->appendRow(QStandardItemList{ new QStandardItem("^Body class"), new QStandardItem(psBody->bodyClass) });
+		key->appendRow(QStandardItemList{ new QStandardItem("^Body class"), new QStandardItem(QString::fromUtf8(psBody->bodyClass.toUtf8().c_str())) });
 	}
 	else if (psStats->compType == COMP_PROPULSION)
 	{
@@ -667,7 +698,6 @@ void ScriptDebugger::selected(const BASE_OBJECT *psObj)
 	setPair(row, selectedModel, "Born", QString::number(psObj->born));
 	setPair(row, selectedModel, "Died", QString::number(psObj->died));
 	setPair(row, selectedModel, "Group", QString::number(psObj->group));
-	setPair(row, selectedModel, "Cluster", QString::number(psObj->cluster));
 	setPair(row, selectedModel, "Watched tiles", QString::number(psObj->numWatchedTiles));
 	setPair(row, selectedModel, "Last hit", QString::number(psObj->timeLastHit));
 	setPair(row, selectedModel, "Hit points", QString::number(psObj->body));
@@ -706,7 +736,7 @@ void ScriptDebugger::selected(const BASE_OBJECT *psObj)
 		setPair(row, selectedModel, "Frustrated time", QString::number(psDroid->lastFrustratedTime));
 		setPair(row, selectedModel, "Resistance", QString::number(psDroid->resistance));
 		setPair(row, selectedModel, "Secondary order", QString::number(psDroid->secondaryOrder));
-		setPair(row, selectedModel, "Action", QString::number(psDroid->action));
+		setPair(row, selectedModel, "Action", QString(getDroidActionName(psDroid->action)));
 		setPair(row, selectedModel, "Action position", QString::fromStdString(glm::to_string(psDroid->actionPos)));
 		setPair(row, selectedModel, "Action started", QString::number(psDroid->actionStarted));
 		setPair(row, selectedModel, "Action points", QString::number(psDroid->actionPoints));
@@ -714,7 +744,7 @@ void ScriptDebugger::selected(const BASE_OBJECT *psObj)
 		setPair(row, selectedModel, "Blocked bits", QString::number(psDroid->blockedBits));
 		setPair(row, selectedModel, "Move status", QString::number(psDroid->sMove.Status));
 		setPair(row, selectedModel, "Move index", QString::number(psDroid->sMove.pathIndex));
-		setPair(row, selectedModel, "Move points", QString::number(psDroid->sMove.numPoints));
+		setPair(row, selectedModel, "Move points", QString::number(psDroid->sMove.asPath.size()));
 		setPair(row, selectedModel, "Move destination", QString::fromStdString(glm::to_string(psDroid->sMove.destination)));
 		setPair(row, selectedModel, "Move source", QString::fromStdString(glm::to_string(psDroid->sMove.src)));
 		setPair(row, selectedModel, "Move target", QString::fromStdString(glm::to_string(psDroid->sMove.target)));
@@ -749,6 +779,12 @@ void ScriptDebugger::selected(const BASE_OBJECT *psObj)
 		setPair(row, selectedModel, "^Height", QString::number(psStruct->pStructureType->height));
 		setPair(row, selectedModel, componentToString("ECM", psStruct->pStructureType->pECM, psObj->player));
 		setPair(row, selectedModel, componentToString("Sensor", psStruct->pStructureType->pSensor, psObj->player));
+		if (psStruct->pStructureType->type == REF_REARM_PAD)
+		{
+			setPair(row, selectedModel, ":timeStarted", QString::number(psStruct->pFunctionality->rearmPad.timeStarted));
+			setPair(row, selectedModel, ":timeLastUpdated", QString::number(psStruct->pFunctionality->rearmPad.timeLastUpdated));
+			setPair(row, selectedModel, ":Rearm target", QString(objInfo(psStruct->pFunctionality->rearmPad.psObj)));
+		}
 	}
 	else if (psObj->type == OBJ_FEATURE)
 	{
@@ -795,11 +831,17 @@ bool jsDebugShutdown()
 {
 	delete globalDialog;
 	globalDialog = nullptr;
+	if(globalDialogShutdownHandler)
+	{
+		globalDialogShutdownHandler();
+		globalDialogShutdownHandler = nullptr;
+	}
 	return true;
 }
 
-void jsDebugCreate(const MODELMAP &models, QStandardItemModel *triggerModel)
+void jsDebugCreate(const MODELMAP &models, QStandardItemModel *triggerModel, QStandardItemModel *labelModel, const jsDebugShutdownHandlerFunction& shutdownFunc)
 {
-	delete globalDialog;
-	globalDialog = new ScriptDebugger(models, triggerModel);
+	jsDebugShutdown();
+	globalDialogShutdownHandler = shutdownFunc;
+	globalDialog = new ScriptDebugger(models, triggerModel, labelModel);
 }

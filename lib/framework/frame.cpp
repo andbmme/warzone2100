@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -29,6 +29,7 @@
 #include "wzapp.h"
 
 #include <physfs.h>
+#include "physfs_ext.h"
 
 #include "frameresource.h"
 #include "input.h"
@@ -67,7 +68,7 @@ int frameRate()
 
 UDWORD	frameGetFrameNumber()
 {
-	return curFrames;
+	return (UDWORD)curFrames;
 }
 
 /*
@@ -110,7 +111,7 @@ void frameUpdate()
 	// Update the framerate only once per second
 	if (curTicks >= lastTicks + 1000)
 	{
-		frameCount = curFrames - lastFrames;
+		frameCount = static_cast<int>(curFrames - lastFrames);
 		lastTicks = curTicks;
 		lastFrames = curFrames;
 	}
@@ -145,11 +146,11 @@ PHYSFS_file *openLoadFile(const char *fileName, bool hard_fail)
 	{
 		if (hard_fail)
 		{
-			ASSERT(!"unable to open file", "file %s could not be opened: %s", fileName, PHYSFS_getLastError());
+			ASSERT(!"unable to open file", "file %s could not be opened: %s", fileName, WZ_PHYSFS_getLastError());
 		}
 		else
 		{
-			debug(LOG_WZ, "optional file %s could not be opened: %s", fileName, PHYSFS_getLastError());
+			debug(LOG_WZ, "optional file %s could not be opened: %s", fileName, WZ_PHYSFS_getLastError());
 		}
 	}
 
@@ -166,7 +167,7 @@ PHYSFS_file *openLoadFile(const char *fileName, bool hard_fail)
 ***************************************************************************/
 static bool loadFile2(const char *pFileName, char **ppFileData, UDWORD *pFileSize, bool AllocateMem, bool hard_fail)
 {
-	if (PHYSFS_isDirectory(pFileName))
+	if (WZ_PHYSFS_isDirectory(pFileName))
 	{
 		return false;
 	}
@@ -182,11 +183,13 @@ static bool loadFile2(const char *pFileName, char **ppFileData, UDWORD *pFileSiz
 	{
 		return false;  // File size could not be determined. Is a directory?
 	}
+	ASSERT_OR_RETURN(false, filesize < static_cast<PHYSFS_sint64>(std::numeric_limits<PHYSFS_sint32>::max()), "\"%s\" filesize >= std::numeric_limits<PHYSFS_sint32>::max()", pFileName);
+	ASSERT_OR_RETURN(false, static_cast<PHYSFS_uint64>(filesize) < static_cast<PHYSFS_uint64>(std::numeric_limits<size_t>::max()), "\"%s\" filesize >= std::numeric_limits<size_t>::max()", pFileName);
 
 	if (AllocateMem)
 	{
 		// Allocate a buffer to store the data and a terminating zero
-		*ppFileData = (char *)malloc(filesize + 1);
+		*ppFileData = (char *)malloc(static_cast<size_t>(filesize + 1));
 	}
 	else
 	{
@@ -200,7 +203,7 @@ static bool loadFile2(const char *pFileName, char **ppFileData, UDWORD *pFileSiz
 	}
 
 	/* Load the file data */
-	PHYSFS_sint64 length_read = PHYSFS_read(pfile, *ppFileData, 1, filesize);
+	PHYSFS_sint64 length_read = WZ_PHYSFS_readBytes(pfile, *ppFileData, static_cast<PHYSFS_uint32>(filesize));
 	if (length_read != filesize)
 	{
 		if (AllocateMem)
@@ -209,7 +212,7 @@ static bool loadFile2(const char *pFileName, char **ppFileData, UDWORD *pFileSiz
 			*ppFileData = nullptr;
 		}
 
-		debug(LOG_ERROR, "Reading %s short: %s", pFileName, PHYSFS_getLastError());
+		debug(LOG_ERROR, "Reading %s short: %s", pFileName, WZ_PHYSFS_getLastError());
 		assert(false);
 		return false;
 	}
@@ -222,7 +225,7 @@ static bool loadFile2(const char *pFileName, char **ppFileData, UDWORD *pFileSiz
 			*ppFileData = nullptr;
 		}
 
-		debug(LOG_ERROR, "Error closing %s: %s", pFileName, PHYSFS_getLastError());
+		debug(LOG_ERROR, "Error closing %s: %s", pFileName, WZ_PHYSFS_getLastError());
 		assert(false);
 		return false;
 	}
@@ -231,7 +234,8 @@ static bool loadFile2(const char *pFileName, char **ppFileData, UDWORD *pFileSiz
 	*((*ppFileData) + filesize) = 0;
 
 	// always set to correct size
-	*pFileSize = filesize;
+	ASSERT(static_cast<PHYSFS_uint64>(filesize) <= static_cast<PHYSFS_uint64>(std::numeric_limits<UDWORD>::max()), "filesize exceeds std::numeric_limits<UDWORD>::max()");
+	*pFileSize = static_cast<UDWORD>(filesize);
 
 	return true;
 }
@@ -243,7 +247,7 @@ PHYSFS_file *openSaveFile(const char *fileName)
 	{
 		const char *found = PHYSFS_getRealDir(fileName);
 
-		debug(LOG_ERROR, "%s could not be opened: %s", fileName, PHYSFS_getLastError());
+		debug(LOG_ERROR, "%s could not be opened: %s", fileName, WZ_PHYSFS_getLastError());
 		if (found)
 		{
 			debug(LOG_ERROR, "%s found as %s", fileName, found);
@@ -268,19 +272,19 @@ bool saveFile(const char *pFileName, const char *pFileData, UDWORD fileSize)
 	pfile = openSaveFile(pFileName);
 	if (!pfile)
 	{
-		ASSERT(false, "Couldn't save file %s (%s)?", pFileName, PHYSFS_getLastError());
+		ASSERT(false, "Couldn't save file %s (%s)?", pFileName, WZ_PHYSFS_getLastError());
 		return false;
 	}
 
-	if (PHYSFS_write(pfile, pFileData, 1, size) != size)
+	if (WZ_PHYSFS_writeBytes(pfile, pFileData, size) != size)
 	{
-		debug(LOG_ERROR, "%s could not write: %s", pFileName, PHYSFS_getLastError());
+		debug(LOG_ERROR, "%s could not write: %s", pFileName, WZ_PHYSFS_getLastError());
 		assert(false);
 		return false;
 	}
 	if (!PHYSFS_close(pfile))
 	{
-		debug(LOG_ERROR, "Error closing %s: %s", pFileName, PHYSFS_getLastError());
+		debug(LOG_ERROR, "Error closing %s: %s", pFileName, WZ_PHYSFS_getLastError());
 		assert(false);
 		return false;
 	}
@@ -288,7 +292,7 @@ bool saveFile(const char *pFileName, const char *pFileData, UDWORD fileSize)
 	if (PHYSFS_getRealDir(pFileName) == nullptr)
 	{
 		// weird
-		debug(LOG_ERROR, "PHYSFS_getRealDir(%s) returns NULL (%s)?!", pFileName, PHYSFS_getLastError());
+		debug(LOG_ERROR, "PHYSFS_getRealDir(%s) returns NULL (%s)?!", pFileName, WZ_PHYSFS_getLastError());
 	}
 	else
 	{
@@ -340,5 +344,5 @@ bool PHYSFS_printf(PHYSFS_file *file, const char *format, ...)
 	vssprintf(vaBuffer, format, ap);
 	va_end(ap);
 
-	return PHYSFS_write(file, vaBuffer, strlen(vaBuffer), 1);
+	return WZ_PHYSFS_writeBytes(file, vaBuffer, strlen(vaBuffer));
 }

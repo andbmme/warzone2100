@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -59,8 +59,8 @@
 #include "multigifts.h"
 #include "multiint.h"
 #include "multirecv.h"
-#include "scriptfuncs.h"
 #include "template.h"
+#include "activity.h"
 
 // send complete game info set!
 void sendOptions()
@@ -94,6 +94,7 @@ void sendOptions()
 	NETuint8_t(&game.alliance);
 	NETbool(&game.scavengers);
 	NETbool(&game.isMapMod);
+	NETuint32_t(&game.techLevel);
 
 	for (i = 0; i < MAX_PLAYERS; i++)
 	{
@@ -118,18 +119,21 @@ void sendOptions()
 	}
 
 	// Send the number of structure limits to expect
-	NETuint32_t(&ingame.numStructureLimits);
-	debug(LOG_NET, "(Host) Structure limits to process on client is %u", ingame.numStructureLimits);
+	uint32_t numStructureLimits = static_cast<uint32_t>(ingame.structureLimits.size());
+	NETuint32_t(&numStructureLimits);
+	debug(LOG_NET, "(Host) Structure limits to process on client is %zu", ingame.structureLimits.size());
 	// Send the structures changed
-	for (i = 0; i < ingame.numStructureLimits; i++)
+	for (auto structLimit : ingame.structureLimits)
 	{
-		NETuint32_t(&ingame.pStructureLimits[i].id);
-		NETuint32_t(&ingame.pStructureLimits[i].limit);
+		NETuint32_t(&structLimit.id);
+		NETuint32_t(&structLimit.limit);
 	}
 	updateLimitFlags();
 	NETuint8_t(&ingame.flags);
 
 	NETend();
+
+	ActivityManager::instance().updateMultiplayGameData(game, ingame, NETGameIsLocked());
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -160,6 +164,7 @@ void recvOptions(NETQUEUE queue)
 	NETuint8_t(&game.alliance);
 	NETbool(&game.scavengers);
 	NETbool(&game.isMapMod);
+	NETuint32_t(&game.techLevel);
 
 	for (i = 0; i < MAX_PLAYERS; i++)
 	{
@@ -185,26 +190,22 @@ void recvOptions(NETQUEUE queue)
 	netPlayersUpdated = true;
 
 	// Free any structure limits we may have in-place
-	if (ingame.numStructureLimits)
-	{
-		ingame.numStructureLimits = 0;
-		free(ingame.pStructureLimits);
-		ingame.pStructureLimits = nullptr;
-	}
+	ingame.structureLimits.clear();
 
 	// Get the number of structure limits to expect
-	NETuint32_t(&ingame.numStructureLimits);
-	debug(LOG_NET, "Host is sending us %u structure limits", ingame.numStructureLimits);
+	uint32_t numStructureLimits = 0;
+	NETuint32_t(&numStructureLimits);
+	debug(LOG_NET, "Host is sending us %u structure limits", numStructureLimits);
 	// If there were any changes allocate memory for them
-	if (ingame.numStructureLimits)
+	if (numStructureLimits)
 	{
-		ingame.pStructureLimits = (MULTISTRUCTLIMITS *)malloc(ingame.numStructureLimits * sizeof(MULTISTRUCTLIMITS));
+		ingame.structureLimits.resize(numStructureLimits);
 	}
 
-	for (i = 0; i < ingame.numStructureLimits; i++)
+	for (i = 0; i < numStructureLimits; i++)
 	{
-		NETuint32_t(&ingame.pStructureLimits[i].id);
-		NETuint32_t(&ingame.pStructureLimits[i].limit);
+		NETuint32_t(&ingame.structureLimits[i].id);
+		NETuint32_t(&ingame.structureLimits[i].limit);
 	}
 	NETuint8_t(&ingame.flags);
 
@@ -310,6 +311,8 @@ void recvOptions(NETQUEUE queue)
 	{
 		loadMapPreview(false);
 	}
+
+	ActivityManager::instance().updateMultiplayGameData(game, ingame, NETGameIsLocked());
 }
 
 
@@ -361,6 +364,7 @@ bool hostCampaign(char *sGame, char *sPlayer)
 		}
 	}
 
+	ActivityManager::instance().updateMultiplayGameData(game, ingame, NETGameIsLocked());
 	return true;
 }
 
@@ -392,12 +396,7 @@ bool multiShutdown()
 	NETshutdown();
 
 	debug(LOG_MAIN, "free game data (structure limits)");
-	if (ingame.numStructureLimits)
-	{
-		ingame.numStructureLimits = 0;
-		free(ingame.pStructureLimits);
-		ingame.pStructureLimits = nullptr;
-	}
+	ingame.structureLimits.clear();
 
 	return true;
 }
@@ -406,18 +405,6 @@ bool multiShutdown()
 static bool gameInit()
 {
 	UDWORD			player;
-
-	// If this is from a savegame, stop here!
-	if (getSaveGameType() == GTYPE_SAVE_START || getSaveGameType() == GTYPE_SAVE_MIDMISSION)
-	{
-		// these two lines are the biggest hack in the world.
-		// the reticule seems to get detached from 'reticuleup'
-		// this forces it back in sync...
-		intRemoveReticule();
-		intAddReticule();
-
-		return true;
-	}
 
 	for (player = 1; player < MAX_PLAYERS; player++)
 	{
@@ -475,7 +462,6 @@ bool multiGameInit()
 	}
 
 	gameInit();
-	msgStackReset();	//for multiplayer msgs, reset message stack
 
 	return true;
 }
@@ -506,12 +492,7 @@ bool multiGameShutdown()
 	NETclose();
 	NETremRedirects();
 
-	if (ingame.numStructureLimits)
-	{
-		ingame.numStructureLimits = 0;
-		free(ingame.pStructureLimits);
-		ingame.pStructureLimits = nullptr;
-	}
+	ingame.structureLimits.clear();
 	ingame.flags = 0;
 
 	ingame.localJoiningInProgress = false; // Clean up

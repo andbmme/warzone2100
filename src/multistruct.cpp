@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -151,6 +151,7 @@ bool recvBuildFinished(NETQUEUE queue)
 		NETlogEntry("had to plonk down a building", SYNC_FLAG, player);
 #endif
 		triggerEventStructBuilt(psStruct, nullptr);
+		checkPlayerBuiltHQ(psStruct);
 	}
 	else
 	{
@@ -285,7 +286,8 @@ void sendStructureInfo(STRUCTURE *psStruct, STRUCTURE_INFO structureInfo_, DROID
 	if (structureInfo_ == STRUCTUREINFO_MANUFACTURE)
 	{
 		int32_t droidType = pT->droidType;
-		NETqstring(pT->name);
+		WzString name = pT->name;
+		NETwzstring(name);
 		NETuint32_t(&pT->multiPlayerID);
 		NETint32_t(&droidType);
 		NETuint8_t(&pT->asParts[COMP_BODY]);
@@ -298,7 +300,7 @@ void sendStructureInfo(STRUCTURE *psStruct, STRUCTURE_INFO structureInfo_, DROID
 		NETint8_t(&pT->numWeaps);
 		for (int i = 0; i < pT->numWeaps; i++)
 		{
-			NETuint8_t(&pT->asWeaps[i]);
+			NETuint32_t(&pT->asWeaps[i]);
 		}
 	}
 	NETend();
@@ -319,7 +321,9 @@ void recvStructureInfo(NETQUEUE queue)
 	NETuint8_t(&structureInfo);
 	if (structureInfo == STRUCTUREINFO_MANUFACTURE)
 	{
-		NETqstring(pT->name);
+		WzString name;
+		NETwzstring(name);
+		pT->name = name;
 		NETuint32_t(&pT->multiPlayerID);
 		NETint32_t(&droidType);
 		NETuint8_t(&pT->asParts[COMP_BODY]);
@@ -333,7 +337,7 @@ void recvStructureInfo(NETQUEUE queue)
 		ASSERT_OR_RETURN(, pT->numWeaps >= 0 && pT->numWeaps <= ARRAY_SIZE(pT->asWeaps), "Bad numWeaps %d", pT->numWeaps);
 		for (int i = 0; i < pT->numWeaps; i++)
 		{
-			NETuint8_t(&pT->asWeaps[i]);
+			NETuint32_t(&pT->asWeaps[i]);
 		}
 		pT->droidType = (DROID_TYPE)droidType;
 		pT = copyTemplate(player, pT);
@@ -346,7 +350,7 @@ void recvStructureInfo(NETQUEUE queue)
 
 	if (psStruct == nullptr)
 	{
-		debug(LOG_ERROR, "Could not find structure %u to change production for", structId);
+		debug(LOG_WARNING, "Could not find structure %u to change production for", structId);
 		return;
 	}
 	if (!canGiveOrdersFor(queue.index, psStruct->player))
@@ -359,12 +363,12 @@ void recvStructureInfo(NETQUEUE queue)
 
 	if (structureInfo == STRUCTUREINFO_MANUFACTURE && !researchedTemplate(pT, player, true, true))
 	{
-		debug(LOG_ERROR, "Invalid droid received from player %d with name %s", (int)player, pT->name.toUtf8().constData());
+		debug(LOG_ERROR, "Invalid droid received from player %d with name %s", (int)player, pT->name.toUtf8().c_str());
 		return;
 	}
 	if (structureInfo == STRUCTUREINFO_MANUFACTURE && !intValidTemplate(pT, nullptr, true, player))
 	{
-		debug(LOG_ERROR, "Illegal droid received from player %d with name %s", (int)player, pT->name.toUtf8().constData());
+		debug(LOG_ERROR, "Illegal droid received from player %d with name %s", (int)player, pT->name.toUtf8().c_str());
 		return;
 	}
 

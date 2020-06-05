@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -53,7 +53,8 @@ enum LEVEL_TYPE
 	CAMPAIGN = 12,
 	SKIRMISH = 14,
 	MULTI_SKIRMISH2 = 18,
-	MULTI_SKIRMISH3 = 19
+	MULTI_SKIRMISH3 = 19,
+	MULTI_SKIRMISH4 = 20
 };
 
 struct LEVEL_DATASET
@@ -102,8 +103,10 @@ bool levReleaseMissionData();
 //get the type of level currently being loaded of GTYPE type
 SDWORD getLevelLoadType();
 
-char *getLevelName();
+const char *getLevelName();
 
 void levTest();
+
+std::string mapNameWithoutTechlevel(const char *mapName);
 
 #endif // __INCLUDED_SRC_LEVELS_H__

@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2013-2017  Warzone 2100 Project
+	Copyright (C) 2013-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -20,6 +20,22 @@
 #ifndef __INCLUDED_QTSCRIPTDEBUG_H__
 #define __INCLUDED_QTSCRIPTDEBUG_H__
 
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__) && (9 <= __GNUC__)
+// not push / pop because this is needed for the generated qtscriptdebug moc cpp file
+# pragma GCC diagnostic ignored "-Wdeprecated-copy" // Workaround Qt < 5.13 `deprecated-copy` issues with GCC 9
+#endif
+
+// **NOTE: Qt headers _must_ be before platform specific headers so we don't get conflicts.
+#include <QtGui/QStandardItemModel>
+#include <QtCore/QHash>
+#include <QtCore/QSignalMapper>
+#include <QtWidgets/QDialog>
+#include <QtWidgets/QTableWidget>
+#include <QtWidgets/QTreeView>
+#include <QtWidgets/QComboBox>
+
+#include <functional>
+
 #include "lib/framework/frame.h"
 #include "basedef.h"
 #include "droiddef.h"
@@ -31,14 +47,6 @@ class QScriptEngine;
 class QModelIndex;
 class QLineEdit;
 
-#include <QtGui/QStandardItemModel>
-#include <QtCore/QHash>
-#include <QtCore/QSignalMapper>
-#include <QtWidgets/QDialog>
-#include <QtWidgets/QTableWidget>
-#include <QtWidgets/QTreeView>
-#include <QtWidgets/QComboBox>
-
 typedef QHash<QScriptEngine *, QStandardItemModel *> MODELMAP;
 typedef QHash<QScriptEngine *, QLineEdit *> EDITMAP;
 
@@ -47,7 +55,7 @@ class ScriptDebugger : public QDialog
 	Q_OBJECT
 
 public:
-	ScriptDebugger(const MODELMAP &models, QStandardItemModel *triggerModel);
+	ScriptDebugger(const MODELMAP &models, QStandardItemModel *triggerModel, QStandardItemModel *labelModel);
 	~ScriptDebugger();
 	void selected(const BASE_OBJECT *psObj);
 	void updateMessages();
@@ -98,9 +106,11 @@ protected slots:
 	void shadowButtonClicked();
 	void fogButtonClicked();
 	void attachScriptClicked();
+	void debuggerClosed();
 };
 
-void jsDebugCreate(const MODELMAP &models, QStandardItemModel *triggerModel);
+typedef std::function<void ()> jsDebugShutdownHandlerFunction;
+void jsDebugCreate(const MODELMAP &models, QStandardItemModel *triggerModel, QStandardItemModel *labelModel, const jsDebugShutdownHandlerFunction& shutdownFunc);
 bool jsDebugShutdown();
 
 // jsDebugSelected() and jsDebugMessageUpdate() defined in qtscript.h since it is used widely

@@ -1,4 +1,5 @@
-#version 120
+// Version directive is set by Warzone when loading the shader
+// (This shader supports GLSL 1.20 - 1.50 core.)
 
 uniform mat4 ModelViewProjectionMatrix;
 
@@ -6,12 +7,23 @@ uniform vec4 paramxlight;
 uniform vec4 paramylight;
 uniform mat4 lightTextureMatrix;
 
+#if (!defined(GL_ES) && (__VERSION__ >= 130)) || (defined(GL_ES) && (__VERSION__ >= 300))
+in vec4 vertex;
+in vec2 vertexTexCoord;
+#else
 attribute vec4 vertex;
 attribute vec2 vertexTexCoord;
+#endif
 
+#if (!defined(GL_ES) && (__VERSION__ >= 130)) || (defined(GL_ES) && (__VERSION__ >= 300))
+out vec2 uv_tex;
+out vec2 uv_lightmap;
+out float vertexDistance;
+#else
 varying vec2 uv_tex;
 varying vec2 uv_lightmap;
 varying float vertexDistance;
+#endif
 
 void main()
 {

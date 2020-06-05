@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -23,12 +23,9 @@
 
 #include "lib/framework/frame.h"
 #include <physfs.h>
+#include "sounddefs.h"
 
-#ifdef WZ_OS_MAC
-#include <OpenAL/al.h>
-#else
 #include <AL/al.h>
-#endif
 
 #define ATTENUATION_FACTOR	0.0003f
 
@@ -81,7 +78,7 @@ struct TRACK
 /* functions
  */
 
-bool	sound_Init();
+bool	sound_Init(HRTFMode hrtf);
 bool	sound_Shutdown();
 
 TRACK 	*sound_LoadTrackFromFile(const char *fileName);
@@ -125,7 +122,7 @@ bool sound_isStreamPlaying(AUDIO_STREAM *stream);
 void sound_StopStream(AUDIO_STREAM *stream);
 void sound_PauseStream(AUDIO_STREAM *stream);
 void sound_ResumeStream(AUDIO_STREAM *stream);
-AUDIO_STREAM *sound_PlayStreamWithBuf(PHYSFS_file *fileHandle, float volume, void (*onFinished)(void *), void *user_data, size_t streamBufferSize, unsigned int buffer_count);
+AUDIO_STREAM *sound_PlayStreamWithBuf(PHYSFS_file *fileHandle, float volume, void (*onFinished)(const void *), const void *user_data, size_t streamBufferSize, unsigned int buffer_count);
 float sound_GetStreamVolume(const AUDIO_STREAM *stream);
 void sound_SetStreamVolume(AUDIO_STREAM *stream, float volume);
 

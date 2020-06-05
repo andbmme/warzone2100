@@ -2,6 +2,8 @@
 *~
 *.bak
 .*.swp
+*.log
+*.out
 
 # Generated binary files:
 *.o
@@ -11,14 +13,6 @@
 *.gmo
 *.pyc
 *.wz
-# Doxygen files
-/doc/code/html
-# LaTeX generated (binary) files
-*.aux
-*.log
-*.out
-*.pdf
-*.toc
 # windows generated binary files:
 *.obj
 *.lib
@@ -61,8 +55,6 @@ win32/libs/png/*-stamp
 win32/libs/png/libpng-*/
 win32/libs/popt/*-stamp
 win32/libs/popt/popt-*/
-win32/libs/quesoglc/*-stamp
-win32/libs/quesoglc/quesoglc-*/
 win32/libs/sdl/SDL-*/
 win32/libs/sdl/*-stamp
 win32/libs/theora/*-stamp
@@ -92,14 +84,12 @@ win32/packages
 /src/autorevision.cache
 *moc.h
 *moc.cpp
+/src/titleui/.dirstamp
+/src/3rdparty/.dirstamp
 
 /doc/quickstartguide.html
 /doc/quickstartguide.pdf
 /doc/warzone2100.6
-/doc/events.tex
-/doc/functions.tex
-/doc/globals.tex
-/doc/objects.tex
 
 # Generated executables:
 /src/warzone2100
@@ -134,7 +124,6 @@ Makefile.in
 /po/remove-potcdate.sed
 /po/stamp-po
 /po/update-po
-/po/warzone2100.pot
 /compile
 /test-driver
 
@@ -169,6 +158,9 @@ cscope.out
 # Waf:
 /waf
 /.waf-*
+
+# VS Code
+.vscode
 
 # Eclipse CDT
 .project
@@ -222,6 +214,7 @@ macosx/Warzone.xcodeproj/xcuserdata/*
 macosx/Warzone.xcodeproj/project.xcworkspace/xcuserdata/*
 macosx/Warzone.xcworkspace/xcuserdata/*
 macosx/configs/CS-ID.xcconfig
+*.xcscmblueprint
 
 # build folders
 /macosx/build/
@@ -277,6 +270,8 @@ devpkg/*
 *.exp
 warzone*.*build
 *.lnk
+/CMakeSettings.json
+/launch.vs.json
 
 # profiler stuff
 win32/CodeAnalyst
@@ -288,3 +283,15 @@ win32/CodeAnalyst
 
 # Locale
 /locale
+
+# vcpkg
+/vcpkg/
+
+# Exclusions
+# Do not ignore the *.manifest* files that are used under the /win32 folder
+!/win32/*.manifest*
+# Do not ignore NSIS plugins under the pkg/nsis/plugins/*/ folders
+!/pkg/nsis/plugins/*/*.dll
+# Do not ignore the in-repo template file used for translation integration
+!/po/warzone2100_en.pot
+!/po/warzone2100.pot

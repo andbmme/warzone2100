@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -27,30 +27,48 @@ PIELIGHT psPalette[WZCOL_MAX];
 
 void pal_Init()
 {
-	char *pFileData, *ptr;
-	UDWORD fileSize;
-	int i, lenLeft;
+	char *pFileData = nullptr;
+	UDWORD fileSize = 0;
 
 	// Read these from file so that mod-makers can change them
-	loadFile("palette.txt", &pFileData, &fileSize);
-
-	ptr = pFileData;
-	lenLeft = fileSize;
-	for (i = 0; i < WZCOL_MAX; i++)
+	if (loadFile("palette.txt", &pFileData, &fileSize))
 	{
-		unsigned int r, g, b, a;
-		int len;
+		char * ptr = pFileData;
+		int lenLeft = fileSize;
+		for (int i = 0; i < WZCOL_MAX; i++)
+		{
+			if (lenLeft <= 0)
+			{
+				// No more data to read - palette.txt is likely for an older version of WZ
+				debug(LOG_FATAL, "palette.txt is missing required value(s); (missing lines %d - %d)", i, (WZCOL_MAX-1));
+				return;
+			}
 
-		sscanf(ptr, "%x, %x, %x, %x %*[^\n]\n%n", &r, &g, &b, &a, &len);
-		psPalette[i].byte.r = r;
-		psPalette[i].byte.g = g;
-		psPalette[i].byte.b = b;
-		psPalette[i].byte.a = a;
-		ptr += len;
-		lenLeft -= len;
-		ASSERT(lenLeft >= 0, "Buffer overrun reading palette data");
+			unsigned int r, g, b, a;
+			int len;
+
+			int result = sscanf(ptr, "%x, %x, %x, %x %*[^\n]\n%n", &r, &g, &b, &a, &len);
+
+			ptr += len;
+			lenLeft -= len;
+			ASSERT(lenLeft >= 0, "Buffer overrun reading palette data");
+
+			if (result != 4)
+			{
+				debug(LOG_ERROR, "Truncated / invalid line (%d) in palette.txt only has %d valid values", (i + 1), result);
+				continue;
+			}
+			psPalette[i].byte.r = r;
+			psPalette[i].byte.g = g;
+			psPalette[i].byte.b = b;
+			psPalette[i].byte.a = a;
+		}
+		free(pFileData);
 	}
-	free(pFileData);
+	else
+	{
+		debug(LOG_FATAL, "Failed to load palette.txt");
+	}
 }
 
 void pal_ShutDown()

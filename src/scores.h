@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -20,6 +20,8 @@
 
 #ifndef __INCLUDED_SRC_SCORES_H__
 #define __INCLUDED_SRC_SCORES_H__
+
+#include <vector>
 
 class WIDGET;
 
@@ -68,6 +70,14 @@ struct STAT_BAR
 	UDWORD	number;			// %d string for the associated text string.
 };
 
+struct END_GAME_STATS_DATA
+{
+	MISSION_DATA missionData;
+	uint32_t maxDroidsPerLevel = 0;
+	std::vector<uint32_t> numDroidsPerLevel = {0};
+	uint32_t numUnits = 0;
+};
+
 enum
 {
 	STAT_UNIT_LOST,
@@ -89,10 +99,25 @@ enum
 	STAT_ACE
 };
 
+#include "lib/ivis_opengl/textdraw.h"
+struct ScoreDataToScreenCache {
+	WzText wzLabelText_UnitLosses;
+	WzText wzLabelText_StructureLosses;
+	WzText wzLabelText_ForceInformation;
+
+	std::vector<WzText> wzInfoBarText;
+
+	WzText wzInfoText_ArtifactsFound;
+	WzText wzInfoText_MissionTime;
+	WzText wzInfoText_TotalGameTime;
+	WzText wzInfoText_Cheated;
+};
+
 bool scoreInitSystem();
 void scoreUpdateVar(DATA_INDEX var);
 void scoreDataToConsole();
-void scoreDataToScreen(WIDGET *psWidget);
+END_GAME_STATS_DATA	collectEndGameStatsData();
+void scoreDataToScreen(WIDGET *psWidget, ScoreDataToScreenCache& cache);
 void getAsciiTime(char *psText, unsigned time);
 bool readScoreData(const char *fileName);
 bool writeScoreData(const char *fileName);

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -72,6 +72,7 @@ typedef signed   long long int64_t;
 # define UINT32_MAX             (4294967295U)
 #endif
 #else
+#define __USE_MINGW_ANSI_STDIO 1
 #include <stdint.h>		// MSVC 2010 does have those defined
 #endif
 #endif
@@ -80,9 +81,12 @@ typedef signed   long long int64_t;
 # define PRIu32					"u"
 # define PRIu64					"I64u"
 # define PRId64					"I64d"
-typedef SSIZE_T ssize_t;
 #endif
 #endif // WZ_C99
+
+#ifdef WZ_CC_MSVC
+typedef SSIZE_T ssize_t;
+#endif
 
 #ifndef INT8_MAX
 #error inttypes.h and stdint.h defines missing! Make sure that __STDC_FORMAT_MACROS and __STDC_LIMIT_MACROS are defined when compiling C++ files.

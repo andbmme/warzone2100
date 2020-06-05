@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -37,14 +37,12 @@
 #include "lib/sequence/sequence.h"
 #include "lib/sound/audio.h"
 #include "lib/sound/cdaudio.h"
-#include "lib/script/script.h"
 
 #include "seqdisp.h"
 
 #include "warzoneconfig.h"
 #include "hci.h"//for font
 #include "loop.h"
-#include "scripttabs.h"
 #include "design.h"
 #include "wrappers.h"
 #include "init.h" // For fileLoadBuffer
@@ -78,8 +76,8 @@ struct SEQTEXT
 
 struct SEQLIST
 {
-	QString         pSeq;						//name of the sequence to play
-	QString         pAudio;					//name of the wav to play
+	WzString         pSeq;					//name of the sequence to play
+	WzString         pAudio;				//name of the wav to play
 	bool		bSeqLoop;					//loop this sequence
 	int             currentText;			// current number of text messages for this seq
 	SEQTEXT		aText[MAX_TEXT_OVERLAYS];	//text data to display for this sequence
@@ -107,10 +105,13 @@ static bool bAudioPlaying = false;
 static bool bHoldSeqForAudio = false;
 static bool bSeqSubtitles = true;
 static bool bSeqPlaying = false;
-static QString aVideoName;
+static WzString aVideoName;
 static SEQLIST aSeqList[MAX_SEQ_LIST];
 static SDWORD currentSeq = -1;
 static SDWORD currentPlaySeq = -1;
+
+// local rendered text cache
+static std::vector<WzText> wzCachedSeqText;
 
 /***************************************************************************/
 /*
@@ -124,7 +125,7 @@ enum VIDEO_RESOLUTION
 	VIDEO_USER_CHOSEN_RESOLUTION,
 };
 
-static bool seq_StartFullScreenVideo(const QString& videoName, const QString& audioName, VIDEO_RESOLUTION resolution);
+static bool seq_StartFullScreenVideo(const WzString& videoName, const WzString& audioName, VIDEO_RESOLUTION resolution);
 
 /***************************************************************************/
 /*
@@ -133,7 +134,7 @@ static bool seq_StartFullScreenVideo(const QString& videoName, const QString& au
 /***************************************************************************/
 
 /* Renders a video sequence specified by filename to a buffer*/
-bool seq_RenderVideoToBuffer(const QString &sequenceName, int seqCommand)
+bool seq_RenderVideoToBuffer(const WzString &sequenceName, int seqCommand)
 {
 	static enum
 	{
@@ -166,7 +167,7 @@ bool seq_RenderVideoToBuffer(const QString &sequenceName, int seqCommand)
 		/* We do *NOT* want to use the user-choosen resolution when we
 		 * are doing intelligence videos.
 		 */
-		videoPlaying = seq_StartFullScreenVideo(sequenceName, QString(), VIDEO_PRESELECTED_RESOLUTION) ? VIDEO_PLAYING : VIDEO_FINISHED;
+		videoPlaying = seq_StartFullScreenVideo(sequenceName, WzString(), VIDEO_PRESELECTED_RESOLUTION) ? VIDEO_PLAYING : VIDEO_FINISHED;
 		bSeqPlaying = true;
 	}
 
@@ -219,12 +220,12 @@ static void seq_SetUserResolution()
 }
 
 //full screenvideo functions
-static bool seq_StartFullScreenVideo(const QString& videoName, const QString& audioName, VIDEO_RESOLUTION resolution)
+static bool seq_StartFullScreenVideo(const WzString& videoName, const WzString& audioName, VIDEO_RESOLUTION resolution)
 {
-	QString aAudioName("sequenceaudio/" + audioName);
+	WzString aAudioName("sequenceaudio/" + audioName);
 
 	bHoldSeqForAudio = false;
-	aVideoName = QString("sequences/" + videoName);
+	aVideoName = WzString("sequences/" + videoName);
 
 	iV_SetTextColour(WZCOL_TEXT_BRIGHT);
 
@@ -246,7 +247,7 @@ static bool seq_StartFullScreenVideo(const QString& videoName, const QString& au
 		seq_SetUserResolution();
 	}
 
-	if (!seq_Play(aVideoName.toUtf8().constData()))
+	if (!seq_Play(aVideoName.toUtf8().c_str()))
 	{
 		seq_Shutdown();
 		return false;
@@ -261,8 +262,8 @@ static bool seq_StartFullScreenVideo(const QString& videoName, const QString& au
 		// NOT controlled by sliders for now?
 		static const float maxVolume = 1.f;
 
-		bAudioPlaying = audio_PlayStream(aAudioName.toUtf8().constData(), maxVolume, nullptr, nullptr) ? true : false;
-		ASSERT(bAudioPlaying == true, "unable to initialise sound %s", aAudioName.toUtf8().constData());
+		bAudioPlaying = audio_PlayStream(aAudioName.toUtf8().c_str(), maxVolume, nullptr, nullptr) ? true : false;
+		ASSERT(bAudioPlaying == true, "unable to initialise sound %s", aAudioName.toUtf8().c_str());
 	}
 
 	return true;
@@ -340,17 +341,20 @@ bool seq_UpdateFullScreenVideo(int *pbClear)
 			if (((realTime >= currentText.startTime) && (realTime <= currentText.endTime)) ||
 			    (aSeqList[currentPlaySeq].bSeqLoop)) //if its a looped video always draw the text
 			{
+				if (i >= wzCachedSeqText.size())
+				{
+					wzCachedSeqText.resize(i + 1);
+				}
 				if (bMoreThanOneSequenceLine)
 				{
 					currentText.x = 20 + D_W2;
 				}
-				iV_SetTextColour(WZCOL_GREY);
-				iV_DrawText(&(currentText.pText[0]), currentText.x - 1, currentText.y - 1, font_scaled);
-				iV_DrawText(&(currentText.pText[0]), currentText.x - 1, currentText.y + 1, font_scaled);
-				iV_DrawText(&(currentText.pText[0]), currentText.x - 1, currentText.y + 1, font_scaled);
-				iV_DrawText(&(currentText.pText[0]), currentText.x + 1, currentText.y + 1, font_scaled);
-				iV_SetTextColour(WZCOL_WHITE);
-				iV_DrawText(&(currentText.pText[0]), currentText.x, currentText.y, font_scaled);
+				wzCachedSeqText[i].setText(&(currentText.pText[0]), font_scaled);
+				wzCachedSeqText[i].render(currentText.x - 1, currentText.y - 1, WZCOL_GREY);
+				wzCachedSeqText[i].render(currentText.x - 1, currentText.y + 1, WZCOL_GREY);
+				wzCachedSeqText[i].render(currentText.x + 1, currentText.y - 1, WZCOL_GREY);
+				wzCachedSeqText[i].render(currentText.x + 1, currentText.y + 1, WZCOL_GREY);
+				wzCachedSeqText[i].render(currentText.x, currentText.y, WZCOL_WHITE);
 			}
 		}
 	}
@@ -362,7 +366,7 @@ bool seq_UpdateFullScreenVideo(int *pbClear)
 			{
 				seq_Shutdown();
 
-				if (!seq_Play(aVideoName.toUtf8().constData()))
+				if (!seq_Play(aVideoName.toUtf8().c_str()))
 				{
 					bHoldSeqForAudio = true;
 				}
@@ -390,6 +394,8 @@ bool seq_StopFullScreenVideo()
 	}
 
 	seq_Shutdown();
+
+	wzCachedSeqText.clear();
 
 	return true;
 }
@@ -551,7 +557,7 @@ void seq_ClearSeqList()
 }
 
 //add a sequence to the list to be played
-void seq_AddSeqToList(const QString &pSeqName, const QString &audioName, const char *pTextName, bool bLoop)
+void seq_AddSeqToList(const WzString &pSeqName, const WzString &audioName, const char *pTextName, bool bLoop)
 {
 	currentSeq++;
 
@@ -570,7 +576,7 @@ void seq_AddSeqToList(const QString &pSeqName, const QString &audioName, const c
 	if (bSeqSubtitles)
 	{
 		char aSubtitleName[MAX_STR_LENGTH];
-		sstrcpy(aSubtitleName, pSeqName.toUtf8().constData());
+		sstrcpy(aSubtitleName, pSeqName.toUtf8().c_str());
 
 		// check for a subtitle file
 		char *extension = strrchr(aSubtitleName, '.');
@@ -591,7 +597,7 @@ bool seq_AnySeqLeft()
 	int nextSeq = currentPlaySeq + 1;
 
 	//check haven't reached end
-	if (nextSeq > MAX_SEQ_LIST)
+	if (nextSeq >= MAX_SEQ_LIST)
 	{
 		return false;
 	}
@@ -615,19 +621,9 @@ void seq_StartNextFullScreenVideo()
 	if (bPlayedOK == false)
 	{
 		//don't do the callback if we're playing the win/lose video
-		if (!getScriptWinLoseVideo())
+		if (getScriptWinLoseVideo())
 		{
-			debug(LOG_SCRIPT, "*** Called video quit trigger!");
-			// Not sure this is correct... CHECK, since the callback should ONLY
-			// be called when a video is playing (always?)
-			if (seq_Playing())
-			{
-				eventFireCallbackTrigger((TRIGGER_TYPE)CALL_VIDEO_QUIT);
-			}
-		}
-		else
-		{
-			displayGameOver(getScriptWinLoseVideo() == PLAY_WIN);
+			displayGameOver(getScriptWinLoseVideo() == PLAY_WIN, false);
 		}
 	}
 }

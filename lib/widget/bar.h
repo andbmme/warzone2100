@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -25,20 +25,20 @@
 #define __INCLUDED_LIB_WIDGET_BAR_H__
 
 #include "widget.h"
+#include <string>
 
 
 class W_BARGRAPH : public WIDGET
 {
-	Q_OBJECT
 
 public:
 	W_BARGRAPH(W_BARINIT const *init);
 
-	void highlight(W_CONTEXT *psContext);
-	void highlightLost();
-	void display(int xOffset, int yOffset);
+	void highlight(W_CONTEXT *psContext) override;
+	void highlightLost() override;
+	void display(int xOffset, int yOffset) override;
 
-	void setTip(QString string);
+	void setTip(std::string string) override;
 
 	void setBackgroundColour(PIELIGHT colour)
 	{
@@ -56,11 +56,12 @@ public:
 	PIELIGHT	majorCol;			// Colour for the major bar
 	PIELIGHT	minorCol;			// Colour for the minor bar
 	PIELIGHT        textCol;                        // Colour for the text on the bar.
-	QString         pTip;                           // The tool tip for the graph
-	QString         text;                           // Text on the bar.
+	std::string         pTip;                           // The tool tip for the graph
+	std::string         text;                           // Text on the bar.
 
 //private:
 	PIELIGHT backgroundColour;
+	WzText	 wzCachedText;
 };
 
 /* The trough bar graph display function */

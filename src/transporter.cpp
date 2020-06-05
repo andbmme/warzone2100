@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -43,8 +43,6 @@
 #include "objects.h"
 #include "display.h"
 #include "qtscript.h"
-#include "lib/script/script.h"
-#include "scripttabs.h"
 #include "order.h"
 #include "action.h"
 #include "lib/gamelib/gtime.h"
@@ -57,7 +55,6 @@
 #include "mapgrid.h"
 #include "visibility.h"
 #include "multiplay.h"
-#include "qtscript.h"
 
 //#define IDTRANS_FORM			9000	//The Transporter base form
 #define IDTRANS_CLOSE			9002	//The close button icon
@@ -103,6 +100,8 @@
 //start y position of the available droids buttons
 #define AVAIL_STARTY			0
 
+#define MAX_TRANSPORT_FULL_MESSAGE_PAUSE 20000
+
 /* the widget screen */
 extern W_SCREEN		*psWScreen;
 
@@ -115,6 +114,8 @@ static	UDWORD			g_iLaunchTime = 0;
 static  bool            bFirstTransporter;
 //the tab positions of the DroidsAvail window
 static  UWORD           objMajor = 0;
+// Last time the transporter is full message was displayed
+static UDWORD lastTransportIsFullMsgTime = 0;
 
 /*functions */
 static bool intAddTransporterContents();
@@ -185,7 +186,9 @@ bool intAddTransporter(DROID *psSelected, bool offWorld)
 
 	IntFormAnimated *transForm = new IntFormAnimated(parent, Animate);  // Do not animate the opening, if the window was already open.
 	transForm->id = IDTRANS_FORM;
-	transForm->setGeometry(TRANS_X, TRANS_Y, TRANS_WIDTH, TRANS_HEIGHT);
+	transForm->setCalcLayout(LAMBDA_CALCLAYOUT_SIMPLE({
+		psWidget->setGeometry(TRANS_X, TRANS_Y, TRANS_WIDTH, TRANS_HEIGHT);
+	}));
 
 	/* Add the close button */
 	W_BUTINIT sButInit;
@@ -244,16 +247,17 @@ bool intAddTransporterContents()
 
 	IntFormAnimated *transContentForm = new IntFormAnimated(parent, Animate);  // Do not animate the opening, if the window was already open.
 	transContentForm->id = IDTRANS_CONTENTFORM;
-	transContentForm->setGeometry(TRANSCONT_X, TRANSCONT_Y, TRANSCONT_WIDTH, TRANSCONT_HEIGHT);
+	transContentForm->setCalcLayout(LAMBDA_CALCLAYOUT_SIMPLE({
+		psWidget->setGeometry(TRANSCONT_X, TRANSCONT_Y, TRANSCONT_WIDTH, TRANSCONT_HEIGHT);
+	}));
 
 	/* Add the close button */
 	W_BUTINIT sButInit;
 	sButInit.formID = IDTRANS_CONTENTFORM;
 	sButInit.id = IDTRANS_CONTCLOSE;
-	sButInit.x = STAT_WIDTH - CLOSE_WIDTH;
-	sButInit.y = 0;
-	sButInit.width = CLOSE_WIDTH;
-	sButInit.height = CLOSE_HEIGHT;
+	sButInit.calcLayout = (LAMBDA_CALCLAYOUT_SIMPLE({
+		psWidget->setGeometry(STAT_WIDTH - CLOSE_WIDTH, 0, CLOSE_WIDTH, CLOSE_HEIGHT);
+	}));
 	sButInit.pTip = _("Close");
 	sButInit.pDisplay = intDisplayImageHilight;
 	sButInit.UserData = PACKDWORD_TRI(0, IMAGE_CLOSEHILIGHT , IMAGE_CLOSE);
@@ -271,7 +275,7 @@ bool intAddTransporterContents()
 		sLabInit.y = 0;
 		sLabInit.width = 16;
 		sLabInit.height = 16;
-		sLabInit.pText = "00/10";
+		sLabInit.pText = WzString::fromUtf8("00/10");
 		sLabInit.pCallback = intUpdateTransCapacity;
 		if (!widgAddLabel(psWScreen, &sLabInit))
 		{
@@ -351,11 +355,11 @@ bool intAddTransporterLaunch(DROID *psDroid)
 	W_LABINIT sLabInit;
 	sLabInit.formID = IDTRANS_LAUNCH;
 	sLabInit.id = IDTRANS_CAPACITY;
-	sLabInit.x = (SWORD)(sButInit.x + 20);
+	sLabInit.x = (SWORD)(sButInit.x + 40);
 	sLabInit.y = 0;
 	sLabInit.width = 16;
 	sLabInit.height = 16;
-	sLabInit.pText = "00/10";
+	sLabInit.pText = WzString::fromUtf8("00/10");
 	sLabInit.pCallback = intUpdateTransCapacity;
 	if (!widgAddLabel(psWScreen, &sLabInit))
 	{
@@ -522,16 +526,17 @@ bool intAddDroidsAvailForm()
 	/* Add the droids available form */
 	IntFormAnimated *transDroids = new IntFormAnimated(parent, Animate);  // Do not animate the opening, if the window was already open.
 	transDroids->id = IDTRANS_DROIDS;
-	transDroids->setGeometry(TRANSDROID_X, TRANSDROID_Y, TRANSDROID_WIDTH, TRANSDROID_HEIGHT);
+	transDroids->setCalcLayout(LAMBDA_CALCLAYOUT_SIMPLE({
+		psWidget->setGeometry(TRANSDROID_X, TRANSDROID_Y, TRANSDROID_WIDTH, TRANSDROID_HEIGHT);
+	}));
 
 	/* Add the close button */
 	W_BUTINIT sButInit;
 	sButInit.formID = IDTRANS_DROIDS;
 	sButInit.id = IDTRANS_DROIDCLOSE;
-	sButInit.x = TRANSDROID_WIDTH - CLOSE_WIDTH;
-	sButInit.y = 0;
-	sButInit.width = CLOSE_WIDTH;
-	sButInit.height = CLOSE_HEIGHT;
+	sButInit.calcLayout = (LAMBDA_CALCLAYOUT_SIMPLE({
+		psWidget->setGeometry(TRANSDROID_WIDTH - CLOSE_WIDTH, 0, CLOSE_WIDTH, CLOSE_HEIGHT);
+	}));
 	sButInit.pTip = _("Close");
 	sButInit.pDisplay = intDisplayImageHilight;
 	sButInit.UserData = PACKDWORD_TRI(0, IMAGE_CLOSEHILIGHT , IMAGE_CLOSE);
@@ -543,10 +548,14 @@ bool intAddDroidsAvailForm()
 	//now add the tabbed droids available form
 	IntListTabWidget *droidList = new IntListTabWidget(transDroids);
 	droidList->id = IDTRANS_DROIDTAB;
-	droidList->setChildSize(OBJ_BUTWIDTH, OBJ_BUTHEIGHT);
-	droidList->setChildSpacing(OBJ_GAP, OBJ_GAP);
-	int droidListWidth = OBJ_BUTWIDTH * 2 + OBJ_GAP;
-	droidList->setGeometry((TRANSDROID_WIDTH - droidListWidth) / 2, AVAIL_STARTY + 15, droidListWidth, TRANSDROID_HEIGHT - (AVAIL_STARTY + 15));
+	droidList->setCalcLayout(LAMBDA_CALCLAYOUT_SIMPLE({
+		IntListTabWidget *droidList = static_cast<IntListTabWidget *>(psWidget);
+		assert(droidList != nullptr);
+		droidList->setChildSize(OBJ_BUTWIDTH, OBJ_BUTHEIGHT);
+		droidList->setChildSpacing(OBJ_GAP, OBJ_GAP);
+		int droidListWidth = OBJ_BUTWIDTH * 2 + OBJ_GAP;
+		droidList->setGeometry((TRANSDROID_WIDTH - droidListWidth) / 2, AVAIL_STARTY + 15, droidListWidth, TRANSDROID_HEIGHT - (AVAIL_STARTY + 15));
+	}));
 
 	/* Add the droids available buttons */
 	int nextButtonId = IDTRANS_DROIDSTART;
@@ -614,10 +623,10 @@ up different amount depending on their body size - currently all are set to one!
 int calcRemainingCapacity(const DROID *psTransporter)
 {
 	int capacity = TRANSPORTER_CAPACITY;
-	DROID *psDroid, *psNext;
+	const DROID *psDroid, *psNext;
 
 	// If it's dead then just return 0.
-	if (isDead((BASE_OBJECT *)psTransporter))
+	if (isDead((const BASE_OBJECT *)psTransporter))
 	{
 		return 0;
 	}
@@ -649,7 +658,7 @@ bool transporterIsEmpty(const DROID *psTransporter)
 	        || psTransporter->psGroup->psList == psTransporter);
 }
 
-static void intSetTransCapacityLabel(QString &text)
+static void intSetTransCapacityLabel(W_LABEL &Label)
 {
 	if (psCurrTransporter)
 	{
@@ -660,7 +669,7 @@ static void intSetTransCapacityLabel(QString &text)
 
 		char tmp[40];
 		ssprintf(tmp, "%02d/10", capacity);
-		text = QString::fromUtf8(tmp);
+		Label.setString(WzString::fromUtf8(tmp));
 	}
 }
 
@@ -669,7 +678,7 @@ void intUpdateTransCapacity(WIDGET *psWidget, W_CONTEXT *psContext)
 {
 	W_LABEL		*Label = (W_LABEL *)psWidget;
 
-	intSetTransCapacityLabel(Label->aText);
+	intSetTransCapacityLabel(*Label);
 }
 
 /* Process return codes from the Transporter Screen*/
@@ -868,7 +877,7 @@ void transporterRemoveDroid(DROID *psTransport, DROID *psDroid, QUEUE_MODE mode)
 		if (bMultiPlayer)
 		{
 			//set the units next to the transporter's current location
-			droidPos = map_coord(psTransport->pos.xy);
+			droidPos = map_coord(psTransport->pos.xy());
 		}
 		else
 		{
@@ -907,7 +916,6 @@ void transporterRemoveDroid(DROID *psTransport, DROID *psDroid, QUEUE_MODE mode)
 	initDroidMovement(psDroid);
 	//reset droid orders
 	orderDroid(psDroid, DORDER_STOP, ModeImmediate);
-	psDroid->cluster = 0;
 	// check if it is a commander
 	if (psDroid->droidType == DROID_COMMAND)
 	{
@@ -969,7 +977,11 @@ void transporterAddDroid(DROID *psTransporter, DROID *psDroidToAdd)
 		if (psTransporter->player == selectedPlayer)
 		{
 			audio_PlayTrack(ID_SOUND_BUILD_FAIL);
-			addConsoleMessage(_("There is not enough room in the Transport!"), DEFAULT_JUSTIFY, selectedPlayer);
+			if (lastTransportIsFullMsgTime + MAX_TRANSPORT_FULL_MESSAGE_PAUSE < gameTime)
+			{
+				addConsoleMessage(_("There is not enough room in the Transport!"), DEFAULT_JUSTIFY, selectedPlayer);
+				lastTransportIsFullMsgTime = gameTime;
+			}
 		}
 		return;
 	}
@@ -1123,29 +1135,6 @@ bool updateTransporter(DROID *psTransporter)
 		return true;
 	}
 
-	/*if the transporter (selectedPlayer only) is moving droids to safety and
-	all remaining droids are destroyed then we need to flag the end of mission
-	as long as we're not flying out*/
-	if (psTransporter->player == selectedPlayer && getDroidsToSafetyFlag()
-	    && psTransporter->action != DACTION_TRANSPORTOUT)
-	{
-		//if there aren't any droids left...
-		if (!missionDroidsRemaining(selectedPlayer))
-		{
-			// Set the Transporter to have arrived at its destination
-			psTransporter->action = DACTION_NONE;
-
-			//the script can call startMission for this callback for offworld missions
-			eventFireCallbackTrigger((TRIGGER_TYPE)CALL_START_NEXT_LEVEL);
-			triggerEvent(TRIGGER_TRANSPORTER_EXIT, psTransporter);
-
-			// clear order
-			psTransporter->order = DroidOrder(DORDER_NONE);
-
-			return true;
-		}
-	}
-
 	// moving to a location
 	// if we're coming back for more droids then we want the transporter to
 	// fly to edge of map before turning round again
@@ -1173,6 +1162,12 @@ bool updateTransporter(DROID *psTransporter)
 			//reset the data for the transporter timer
 			widgSetUserData(psWScreen, IDTRANTIMER_DISPLAY, (void *)nullptr);
 			return true;
+		}
+
+		//Remove visibility so tiles are not bright around where the transporter left the map
+		if (psTransporter->action != DACTION_TRANSPORTIN)
+		{
+			visRemoveVisibility((BASE_OBJECT *) psTransporter);
 		}
 
 		// Got to destination
@@ -1221,7 +1216,6 @@ void processLaunchTransporter()
 			//set the data for the transporter timer
 			widgSetUserData(psWScreen, IDTRANTIMER_DISPLAY, (void *)psCurrTransporter);
 
-			eventFireCallbackTrigger((TRIGGER_TYPE)CALL_LAUNCH_TRANSPORTER);
 			triggerEvent(TRIGGER_TRANSPORTER_LAUNCH, psCurrTransporter);
 		}
 	}

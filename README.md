@@ -19,20 +19,71 @@ State of the game
 After the liberation of the Warzone 2100 source-code on December 6th, 2004, all
 proprietary technologies have been replaced with open-source counterparts.
 
-Right now supported platforms are Linux and Windows. It should be possible to
-build it on MacOS X, and there are reports that Warzone 2100 is working on BSD,
-too.
+Right now supported platforms are Linux, Windows, and macOS. There are reports 
+that Warzone 2100 is working on BSD, too.
+
+Latest development builds
+-------------------------
+
+[![Windows Build Status](https://img.shields.io/github/workflow/status/Warzone2100/warzone2100/Windows/master?label=Windows&logo=windows)](https://github.com/Warzone2100/warzone2100/actions?query=workflow%3AWindows+branch%3Amaster+event%3Apush)
+ [![macOS Build Status](https://img.shields.io/azure-devops/build/wz2100/27126038-ce95-47c8-8726-aaba57651f31/1/master?label=macOS&logo=apple&logoColor=FFFFFF)](https://dev.azure.com/wz2100/warzone2100/_build/latest?definitionId=1&branchName=master)
+ [![Ubuntu Build Status](https://img.shields.io/github/workflow/status/Warzone2100/warzone2100/Ubuntu/master?label=Ubuntu&logo=ubuntu&logoColor=FFFFFF)](https://github.com/Warzone2100/warzone2100/actions?query=workflow%3AUbuntu+branch%3Amaster+event%3Apush)
+ [![Fedora Build Status](https://img.shields.io/github/workflow/status/Warzone2100/warzone2100/Fedora/master?label=Fedora&logo=fedora&logoColor=FFFFFF)](https://github.com/Warzone2100/warzone2100/actions?query=workflow%3AFedora+branch%3Amaster+event%3Apush)
+ [![FreeBSD Build Status](https://img.shields.io/cirrus/github/Warzone2100/warzone2100/master?label=FreeBSD&logo=FreeBSD)](https://cirrus-ci.com/github/Warzone2100/warzone2100/master)
+ [![Travis CI Build Status](https://img.shields.io/travis/Warzone2100/warzone2100/master?label=ARM64%20%2F%20Misc)](https://travis-ci.org/Warzone2100/warzone2100)
+ [![Packaging status](https://repology.org/badge/tiny-repos/warzone2100.svg)](https://repology.org/project/warzone2100/versions)
+
+### Windows
+
+How to get the latest Windows development builds:
+1. View the **[latest successful Windows builds](https://github.com/Warzone2100/warzone2100/actions?query=workflow%3AWindows+branch%3Amaster+event%3Apush+is%3Asuccess)**.
+2. Select the latest workflow run in the table / list.
+   This should display a list of **Artifacts** from the run.
+3. Download the `warzone2100_win_x86_portable` or `warzone2100_win_x86_installer` artifact (depending on whether you want the portable build or the full / regular installer).
+> Note: A free GitHub account is currently required to download the artifacts.
+
+### macOS
+
+How to get the latest macOS development builds:
+1. View the **[latest macOS build](https://dev.azure.com/wz2100/warzone2100/_build/latest?definitionId=1&branchName=master)**.
+2. Under the **`Artifacts:`** column there should be a link titled `<#> published`.
+   Click it to view the build artifacts.
+3. Download the `warzone2100_macOS` artifact (a download icon will appear to the right side of the row when you mouse-over).
+
+### Ubuntu 18.04+
+
+How to get the latest Ubuntu development builds:
+1. View the **[latest successful Ubuntu builds](https://github.com/Warzone2100/warzone2100/actions?query=workflow%3AUbuntu+branch%3Amaster+event%3Apush+is%3Asuccess)**.
+2. Select the latest workflow run in the table / list.
+   This should display a list of **Artifacts** from the run.
+3. Download the `warzone2100_ubuntu_amd64_deb` artifact.
+> Note: A free GitHub account is currently required to download the artifacts.
+4. Extract the contents of the downloaded .zip (`warzone2100_ubuntu_amd64.deb`) to your Desktop.
+5. Execute the following commands in Terminal:
+```
+cd ~/Desktop
+sudo apt install ./warzone2100_ubuntu_amd64.deb
+```
+
+### Linux (from source)
+
+Clone this Git repo and build, following the instructions under:
+[How to Build](#how-to-build)
+
+> Development builds are a snapshot of the current state of development, from the 
+> latest (successfully-built) commit. Help testing these builds is always welcomed,
+> but they should be considered a work-in-progress.
 
 Reporting bugs
 --------------
 
-This game still has bugs and if you run into one, please use the bugtracker
-(http://developer.wz2100.net/) to report this bug. In order to faster fix
+This game still has bugs and if you run into one, please use the GitHub bugtracker
+(https://github.com/Warzone2100/warzone2100/issues) to report this bug. In order to faster fix
 those bugs we require that you follow these rules:
 
    1. If the game crashes you may save a memory dump. Please do so and upload it
       when reporting the bug. (Linux locates that file at /tmp/warzone2100.gdmp,
-      Windows at /Program Files/Warzone 2100/warzone2100.RPT, Mac OS X by
+      Windows at /Program Files/Warzone 2100/warzone2100.RPT, macOS by
       clicking "Details" in the crash error message)
       A self created backtrace is just as useful.
    2. Give as much information about what you were doing before the crash/bug
@@ -57,20 +108,41 @@ location of this directory depends on the operating system.
 
 ### Warzone directory under GNU/Linux
 
-Under GNU/Linux the warzone-dir can be found in your home-directory, it is called
-".warzone2100-<version>". The leading dot indicates that it is a hidden
-directory so depending on your configuration you may not be able to see it.
+Under GNU/Linux, Warzone conforms to the [XDG base directory spec](https://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html).
+
+By default, the directory `warzone2100-<version>` can be found in your home-directory 
+under the path `~/.local/share/`.
+(If the `XDG_DATA_HOME` environment variable is defined, the Warzone folder will
+be located within `$XDG_DATA_HOME`.)
+
+The leading dot in the `.local` part of the path indicates that it is a hidden
+directory, so depending on your configuration you may not be able to see it. 
 However, you can still access it by typing the path into your address-bar.
 
 ### Warzone directory under Windows
 
-The directory is called "Warzone 2100 <version>" and is located in "My
-Documents".
+The directory `Warzone 2100 Project\Warzone 2100 <version>` is located under the 
+`%APPDATA%` folder.
 
-### Warzone directory under Mac OS X
+Typical `%APPDATA%` paths:
+- Windows XP: `\Documents and Settings\$USER$\Application Data`
+- Windows Vista+: `\Users\$USER$\AppData\Roaming`
 
-The directory "Warzone 2100 <version>" can be found in your home-directory at:
-~/Library/Application Support/
+Hence, the default path for the Warzone configuration data on Windows Vista+ would be:
+`C:\Users\$USER$\AppData\Roaming\Warzone 2100 Project\Warzone 2100 <version>\`
+
+By default, the `%APPDATA%` folder is hidden. Entering:
+`%APPDATA%\Warzone 2100 Project\` into the address bar of Windows Explorer
+will browse to your Warzone directory.
+
+### Warzone directory under macOS
+
+The directory `Warzone 2100 <version>` can be found in your home-directory at:
+`~/Library/Application Support/`
+
+By default, recent version of macOS hide your account's Library folder. To view it in
+**Finder**, hold down the **Option (⌥)** key while clicking the **Go** menu, and your Library folder
+will appear as a menu choice.
 
 ### Configuration file
 
@@ -166,11 +238,30 @@ Modding information
 Warzone AI, maps and campaign can be scripted using javascript.
 
 Links to further information
+* [Scripting](doc/Scripting.md)
 * [Model format](doc/PIE.md)
 * [Animation](doc/Animation.md)
 
 How to build
 -------------------
+
+### Getting the Source
+
+To properly build the game, either:
+- Download a release `tar.xz`, which contains all the source code and revision information.
+
+  _OR_
+
+- Clone the Git repo:
+  ```
+  git clone https://github.com/Warzone2100/warzone2100.git
+  cd warzone2100
+  git fetch --tags
+  git submodule update --init --recursive
+  ```
+  > Note: Initializing submodules is required.
+
+Do **not** use GitHub's "Download Zip" option, as it does not contain submodules or the Git-based autorevision information.
 
 ### Linux
 See http://developer.wz2100.net/wiki/CompileGuideLinux
@@ -180,8 +271,39 @@ See http://developer.wz2100.net/wiki/CompileGuideWindows/Cross
 
 ### Windows using MSVC
 
-* You need Visual Studio 2015 or 2017 (recommended) CMake (https://cmake.org/) and QT 5.9.1 (https://www.qt.io/)
-* Build dependencies are provided with vcpkg project from Microsoft. Run "get-dependencies.ps1" script from powershell in order to download source and build them.
-* From now you can use cmake the canonical way or directly from Visual Studio 2017 ; the only requirement is to pass the CMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystem/vcpkg.cmake variable.
-* The canonical way is the command 'cmake -H. -DCMAKE_TOOLCHAIN_FILE=vcpkg\scripts\buildsystem\vcpkg.cmake -Bbuild -G "Visual Studio 14 2015" '
-* With VS2017 open the warzone 2100 folder, then  "CMake menu > Change Cmake settings" will create a json file. There add "-DCMAKE_TOOLCHAIN_FILE=vcpkg\\scripts\\buildsystems\\vcpkg.cmake" to cmakeCommandArgs.
+* Prerequisites
+   * **Visual Studio 2017** (Visual Studio 2015 may work, but 2017 is strongly encouraged)
+      - If you do not already have Visual Studio installed, you can download the free **Visual Studio Community** from: https://developer.microsoft.com/en-us/windows/downloads
+      - IMPORTANT: You need the fully-featured Visual Studio IDE. “Visual Studio Code” does not include the necessary support for building C++ Windows apps.
+   * **CMake 3.10+** (https://cmake.org/)
+   * **Qt 5.9.1+** (https://www.qt.io/)
+     - Here's a direct link to the [Qt 5.9.9 installer](https://download.qt.io/archive/qt/5.9/5.9.9/).
+     - You will probably need to register for a Qt account during the installation, along with activating your email.
+     - Required components to install: MSVC 2015, Qt Script (even though it's labelled as deprecated). The MSVC 2015 components will work on MSVC 2017 / 2019, and 32-bit versions work on 64-bit platforms.
+   * **Git** (if not building from a release source archive)
+   * **7-Zip** (http://www.7-zip.org)
+* **Preparing to build:**
+   Build dependencies are provided via [vcpkg](https://github.com/Microsoft/vcpkg) from Microsoft.
+   * Run the `get-dependencies_win.ps1` script from powershell in order to download and build the dependencies.
+* **Building from the command-line:**
+   * Change directory to the warzone2100 repo directory
+   * Configure
+      * Visual Studio 2017: `cmake -H. -DCMAKE_TOOLCHAIN_FILE=vcpkg\scripts\buildsystems\vcpkg.cmake -Bbuild -G "Visual Studio 15 2017"`
+      * Visual Studio 2015: `cmake -H. -DCMAKE_TOOLCHAIN_FILE=vcpkg\scripts\buildsystems\vcpkg.cmake -Bbuild -G "Visual Studio 14 2015"`
+   * Build
+      * Release: `cmake --build build --config Release`
+      * Debug: `cmake --build build --config Debug`
+* **Building using Visual Studio 2017:**
+   1. Open Visual Studio 2017
+   2. Open the warzone2100 folder using **File** > **Open** > **Folder...**
+      - Allow Visual Studio some time to load the project and retrieve information from CMake.
+   3. Create a VS CMake settings JSON file using **CMake** > **Change CMake settings**. You can also reach this dialog by clicking "Manage Configurations" in the configuration dropdown in the toolbar. Make sure the CMake components in Visual Studio are installed (by running the Visual Studio Installer).
+      - This creates `CMakeSettings.json`
+   4. Add the following variables to `CMakeSettings.json`:
+      - To `cmakeCommandArgs`, add: `-DCMAKE_TOOLCHAIN_FILE=vcpkg\scripts\buildsystems\vcpkg.cmake -DCMAKE_PREFIX_PATH=C:\Qt\Qt5.9.9\5.9.9\msvc2015` (check your Qt installation path)
+      - If you're running a 64-bit platform, you need to set the compilation to 32-bit by setting `inheritEnvironments` to `[ "msvc_x86_x64" ]`
+      - Note: Visual Studio automatically escapes and turns each `\` into `\\`
+   5. After letting Visual Studio re-run CMake configure with the new settings, you can build using the **CMake** menu.
+
+### macOS
+See [macosx/README.md](macosx/README.md)

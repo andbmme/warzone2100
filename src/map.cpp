@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -45,10 +45,10 @@
 #include "gateway.h"
 #include "wrappers.h"
 #include "mapgrid.h"
+#include "qtscript.h"
 #include "astar.h"
 #include "fpath.h"
 #include "levels.h"
-#include "scriptfuncs.h"
 #include "lib/framework/wzapp.h"
 
 #define GAME_TICKS_FOR_DANGER (GAME_TICKS_PER_SEC * 2)
@@ -747,7 +747,7 @@ bool mapLoad(char *filename, bool preview)
 		debug(LOG_ERROR, "%s not found", filename);
 		return false;
 	}
-	else if (PHYSFS_read(fp, aFileType, 4, 1) != 1
+	else if (WZ_PHYSFS_readBytes(fp, aFileType, 4) != 4
 	         || !PHYSFS_readULE32(fp, &version)
 	         || !PHYSFS_readULE32(fp, &width)
 	         || !PHYSFS_readULE32(fp, &height)
@@ -928,17 +928,14 @@ failure:
 /* Save the map data */
 bool mapSave(char **ppFileData, UDWORD *pFileSize)
 {
-	MAP_SAVEHEADER	*psHeader = nullptr;
-	MAP_SAVETILE	*psTileData = nullptr;
-	MAPTILE	*psTile = nullptr;
-	GATEWAY_SAVEHEADER *psGateHeader = nullptr;
-	GATEWAY_SAVE *psGate = nullptr;
-	SDWORD	numGateways = gwNumGateways();
+	UDWORD	numGateways = gwNumGateways();
 
 	/* Allocate the data buffer */
+	static_assert(SAVE_HEADER_SIZE == (sizeof(char) * 4) + (sizeof(UDWORD) * 3), "SAVE_HEADER_SIZE doesn't match?");
+	static_assert(SAVE_TILE_SIZE == sizeof(UWORD) + sizeof(UBYTE), "SAVE_TILE_SIZE doesn't match?");
 	*pFileSize = SAVE_HEADER_SIZE + mapWidth * mapHeight * SAVE_TILE_SIZE;
 	// Add on the size of the gateway data.
-	*pFileSize += sizeof(GATEWAY_SAVEHEADER) + sizeof(GATEWAY_SAVE) * numGateways;
+	*pFileSize += (sizeof(UDWORD) * 2) + ((sizeof(UBYTE) * 4) * numGateways);
 
 	*ppFileData = (char *)malloc(*pFileSize);
 	if (*ppFileData == nullptr)
@@ -947,67 +944,78 @@ bool mapSave(char **ppFileData, UDWORD *pFileSize)
 		abort();
 		return false;
 	}
+	char *pCurrFileData = *ppFileData;
+
+	auto push_uword = [&](UWORD value) {
+		endian_uword(&value);
+		memcpy(pCurrFileData, &value, sizeof(value));
+		pCurrFileData += sizeof(value);
+		ASSERT(pCurrFileData - *ppFileData <= *pFileSize, "Buffer overrun (buffer size: %" PRIu32") (writing to: %" PRIu32")", *pFileSize, static_cast<uint32_t>(pCurrFileData - *ppFileData));
+	};
+	auto push_udword = [&](UDWORD value) {
+		endian_udword(&value);
+		memcpy(pCurrFileData, &value, sizeof(value));
+		pCurrFileData += sizeof(value);
+		ASSERT(pCurrFileData - *ppFileData <= *pFileSize, "Buffer overrun (buffer size: %" PRIu32") (writing to: %" PRIu32")", *pFileSize, static_cast<uint32_t>(pCurrFileData - *ppFileData));
+	};
 
 	/* Put the file header on the file */
-	psHeader = (MAP_SAVEHEADER *)*ppFileData;
-	psHeader->aFileType[0] = 'm';
-	psHeader->aFileType[1] = 'a';
-	psHeader->aFileType[2] = 'p';
-	psHeader->aFileType[3] = ' ';
-	psHeader->version = CURRENT_VERSION_NUM;
-	psHeader->width = mapWidth;
-	psHeader->height = mapHeight;
+	char aFileType[4];
+	aFileType[0] = 'm';
+	aFileType[1] = 'a';
+	aFileType[2] = 'p';
+	aFileType[3] = ' ';
+	memcpy(pCurrFileData, aFileType, sizeof(aFileType));
+	pCurrFileData += sizeof(aFileType);
 
-	/* MAP_SAVEHEADER */
-	endian_udword(&psHeader->version);
-	endian_udword(&psHeader->width);
-	endian_udword(&psHeader->height);
+	push_udword(CURRENT_VERSION_NUM);
+	push_udword(mapWidth);
+	push_udword(mapHeight);
 
 	/* Put the map data into the buffer */
-	psTileData = (MAP_SAVETILE *)(*ppFileData + SAVE_HEADER_SIZE);
-	psTile = psMapTiles;
+	MAPTILE	*psTile = psMapTiles;
 	for (int i = 0; i < mapWidth * mapHeight; i++)
 	{
-		psTileData->texture = psTile->texture;
+		UWORD	texture;
+		UBYTE	height;
+
+		texture = psTile->texture;
 		if (terrainType(psTile) == TER_WATER)
 		{
-			psTileData->height = (psTile->waterLevel + world_coord(1) / 3) / ELEVATION_SCALE;
+			height = (psTile->waterLevel + world_coord(1) / 3) / ELEVATION_SCALE;
 		}
 		else
 		{
-			psTileData->height = psTile->height / ELEVATION_SCALE;
+			height = psTile->height / ELEVATION_SCALE;
 		}
 
-		/* MAP_SAVETILE */
-		endian_uword(&psTileData->texture);
+		push_uword(texture);
+		memcpy(pCurrFileData, &height, sizeof(height)); pCurrFileData += sizeof(height);
 
-		psTileData = (MAP_SAVETILE *)((UBYTE *)psTileData + SAVE_TILE_SIZE);
 		psTile++;
 	}
 
 	// Put the gateway header.
-	psGateHeader = (GATEWAY_SAVEHEADER *)psTileData;
-	psGateHeader->version = 1;
-	psGateHeader->numGateways = numGateways;
-
-	/* GATEWAY_SAVEHEADER */
-	endian_udword(&psGateHeader->version);
-	endian_udword(&psGateHeader->numGateways);
-
-	psGate = (GATEWAY_SAVE *)(psGateHeader + 1);
+	UDWORD version = 1;
+	push_udword(version);
+	push_udword(numGateways);
 
 	// Put the gateway data.
+	UBYTE	x0, y0, x1, y1;
 	for (auto psCurrGate : gwGetGateways())
 	{
-		psGate->x0 = psCurrGate->x1;
-		psGate->y0 = psCurrGate->y1;
-		psGate->x1 = psCurrGate->x2;
-		psGate->y1 = psCurrGate->y2;
-		ASSERT(psGate->x0 == psGate->x1 || psGate->y0 == psGate->y1, "Invalid gateway coordinates (%d, %d, %d, %d)",
-		       psGate->x0, psGate->y0, psGate->x1, psGate->y1);
-		ASSERT(psGate->x0 < mapWidth && psGate->y0 < mapHeight && psGate->x1 < mapWidth && psGate->y1 < mapHeight,
+		x0 = psCurrGate->x1;
+		y0 = psCurrGate->y1;
+		x1 = psCurrGate->x2;
+		y1 = psCurrGate->y2;
+		ASSERT(x0 == x1 || y0 == y1, "Invalid gateway coordinates (%d, %d, %d, %d)",
+		       x0, y0, x1, y1);
+		ASSERT(x0 < mapWidth && y0 < mapHeight && x1 < mapWidth && y1 < mapHeight,
 		       "Bad gateway dimensions for savegame");
-		psGate++;
+		memcpy(pCurrFileData, &x0, sizeof(x0)); pCurrFileData += sizeof(x0);
+		memcpy(pCurrFileData, &y0, sizeof(y0)); pCurrFileData += sizeof(y0);
+		memcpy(pCurrFileData, &x1, sizeof(x1)); pCurrFileData += sizeof(x1);
+		memcpy(pCurrFileData, &y1, sizeof(y1)); pCurrFileData += sizeof(y1);
 	}
 
 	return true;
@@ -1283,7 +1291,7 @@ unsigned map_LineIntersect(Vector3i src, Vector3i dst, unsigned tMax)
 {
 	// Transform src and dst to a coordinate system such that the tile quadrant containing src has
 	// corners at (0, 0), (TILE_UNITS, 0), (TILE_UNITS/2, TILE_UNITS/2).
-	Vector2i tile = map_coord(src.xy);
+	Vector2i tile = map_coord(src.xy());
 	src -= Vector3i(world_coord(tile), 0);
 	dst -= Vector3i(world_coord(tile), 0);
 	//            +0+
@@ -1324,8 +1332,8 @@ unsigned map_LineIntersect(Vector3i src, Vector3i dst, unsigned tMax)
 		numer[2] = -(-src.x + src.y);
 		denom[2] =   -dif.x + dif.y;
 		Vector3i normal(2 * (height[1] - height[0]), height[2] + height[3] - height[0] - height[1], -2 * TILE_UNITS); // Normal pointing down, and not normalised.
-		numer[3] = height[0] * normal.z - src * normal;
-		denom[3] =                      dif * normal;
+		numer[3] = height[0] * normal.z - dot(src, normal);
+		denom[3] =                      dot(dif, normal);
 		numer[4] = 1;
 		denom[4] = 1;
 		int firstIntersection = 0;
@@ -1541,10 +1549,10 @@ bool writeVisibilityData(const char *fileName)
 	fileHeader.version = CURRENT_VERSION_NUM;
 
 	// Write out the current file header
-	if (PHYSFS_write(fileHandle, fileHeader.aFileType, sizeof(fileHeader.aFileType), 1) != 1
+	if (WZ_PHYSFS_writeBytes(fileHandle, fileHeader.aFileType, sizeof(fileHeader.aFileType)) != sizeof(fileHeader.aFileType)
 	    || !PHYSFS_writeUBE32(fileHandle, fileHeader.version))
 	{
-		debug(LOG_ERROR, "writeVisibilityData: could not write header to %s; PHYSFS error: %s", fileName, PHYSFS_getLastError());
+		debug(LOG_ERROR, "writeVisibilityData: could not write header to %s; PHYSFS error: %s", fileName, WZ_PHYSFS_getLastError());
 		PHYSFS_close(fileHandle);
 		return false;
 	}
@@ -1557,7 +1565,7 @@ bool writeVisibilityData(const char *fileName)
 		{
 			if (!PHYSFS_writeUBE8(fileHandle, psMapTiles[i].tileExploredBits >> (plane * 8)))
 			{
-				debug(LOG_ERROR, "writeVisibilityData: could not write to %s; PHYSFS error: %s", fileName, PHYSFS_getLastError());
+				debug(LOG_ERROR, "writeVisibilityData: could not write to %s; PHYSFS error: %s", fileName, WZ_PHYSFS_getLastError());
 				PHYSFS_close(fileHandle);
 				return false;
 			}
@@ -1585,10 +1593,10 @@ bool readVisibilityData(const char *fileName)
 	}
 
 	// Read the header from the file
-	if (PHYSFS_read(fileHandle, fileHeader.aFileType, sizeof(fileHeader.aFileType), 1) != 1
+	if (WZ_PHYSFS_readBytes(fileHandle, fileHeader.aFileType, sizeof(fileHeader.aFileType)) != sizeof(fileHeader.aFileType)
 	    || !PHYSFS_readUBE32(fileHandle, &fileHeader.version))
 	{
-		debug(LOG_ERROR, "readVisibilityData: error while reading header from file: %s", PHYSFS_getLastError());
+		debug(LOG_ERROR, "readVisibilityData: error while reading header from file: %s", WZ_PHYSFS_getLastError());
 		PHYSFS_close(fileHandle);
 		return false;
 	}
@@ -1635,7 +1643,7 @@ bool readVisibilityData(const char *fileName)
 			uint8_t val = 0;
 			if (!PHYSFS_readUBE8(fileHandle, &val))
 			{
-				debug(LOG_ERROR, "readVisibilityData: could not read from %s; PHYSFS error: %s", fileName, PHYSFS_getLastError());
+				debug(LOG_ERROR, "readVisibilityData: could not read from %s; PHYSFS error: %s", fileName, WZ_PHYSFS_getLastError());
 				PHYSFS_close(fileHandle);
 				return false;
 			}
@@ -1781,7 +1789,7 @@ static int dangerFloodFill(int player)
 {
 	int i;
 	Vector2i pos = getPlayerStartPosition(player);
-	Vector2i npos;
+	Vector2i npos(0, 0);
 	uint8_t aux, block;
 	int x, y;
 	bool start = true;	// hack to disregard the blocking status of any building exactly on the starting position
@@ -1961,19 +1969,17 @@ void mapInit()
 	lastDangerUpdate = 0;
 	lastDangerPlayer = -1;
 
-	// Initialize danger maps
-	for (player = 0; player < MAX_PLAYERS; player++)
-	{
-		auxMapStore(player, AUX_DANGERMAP);
-		threatUpdate(player);
-		dangerFloodFill(player);
-		auxMapRestore(player, AUX_DANGERMAP, AUXBITS_DANGER | AUXBITS_THREAT | AUXBITS_AATHREAT);
-	}
-
-	// Start thread
+	// Start danger thread (not used for campaign for now - mission map swaps too icky)
 	ASSERT(dangerSemaphore == nullptr && dangerThread == nullptr, "Map data not cleaned up before starting!");
 	if (game.type == SKIRMISH)
 	{
+		for (player = 0; player < MAX_PLAYERS; player++)
+		{
+			auxMapStore(player, AUX_DANGERMAP);
+			threatUpdate(player);
+			dangerFloodFill(player);
+			auxMapRestore(player, AUX_DANGERMAP, AUXBITS_DANGER | AUXBITS_THREAT | AUXBITS_AATHREAT);
+		}
 		lastDangerPlayer = 0;
 		dangerSemaphore = wzSemaphoreCreate(0);
 		dangerDoneSemaphore = wzSemaphoreCreate(0);

@@ -11,7 +11,7 @@ function exposeNorthBase()
 function camArtifactPickup_ScavLab()
 {
 	camCallOnce("exposeNorthBase");
-	with (camTemplates) camSetFactoryData("WestFactory", {
+	camSetFactoryData("WestFactory", {
 		assembly: "WestAssembly",
 		order: CAM_ORDER_COMPROMISE,
 		data: {
@@ -24,8 +24,8 @@ function camArtifactPickup_ScavLab()
 		},
 		groupSize: 5,
 		maxSize: 9,
-		throttle: camChangeOnDiff(10000),
-		templates: [ trike, bloke, buggy, bjeep ]
+		throttle: camChangeOnDiff(camSecondsToMilliseconds(10)),
+		templates: [ cTempl.trike, cTempl.bloke, cTempl.buggy, cTempl.bjeep ]
 	});
 	camEnableFactory("WestFactory");
 }
@@ -51,23 +51,12 @@ function enableWestFactory()
 	});
 }
 
-function enableReinforcements()
-{
-	playSound("pcv440.ogg"); // Reinforcements are available.
-	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "SUB_1_3S", {
-		area: "RTLZ",
-		message: "C1-2_LZ",
-		reinforcements: 60,
-		retlz: true
-	});
-}
-
 function eventStartLevel()
 {
 	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "SUB_1_3S", {
 		area: "RTLZ",
 		message: "C1-2_LZ",
-		reinforcements: -1,
+		reinforcements: 60,
 		retlz: true
 	});
 
@@ -79,8 +68,6 @@ function eventStartLevel()
 	setNoGoArea(lz.x, lz.y, lz.x2, lz.y2, CAM_HUMAN_PLAYER);
 	startTransporterEntry(tent.x, tent.y, CAM_HUMAN_PLAYER);
 	setTransporterExit(text.x, text.y, CAM_HUMAN_PLAYER);
-
-	setPower(AI_POWER, 7);
 
 	camSetEnemyBases({
 		"NorthGroup": {
@@ -96,6 +83,7 @@ function eventStartLevel()
 			eliminateSnd: "pcv392.ogg"
 		},
 		"ScavLabGroup": {
+			cleanup: "ScavLabCleanup",
 			detectMsg: "C1-2_OBJ1",
 		},
 	});
@@ -107,7 +95,7 @@ function eventStartLevel()
 		"NorthFactory": { tech: "R-Vehicle-Prop-Halftracks" },
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"NorthFactory": {
 			assembly: "NorthAssembly",
 			order: CAM_ORDER_COMPROMISE,
@@ -121,9 +109,9 @@ function eventStartLevel()
 			},
 			groupSize: 5,
 			maxSize: 9,
-			throttle: camChangeOnDiff(15000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(15)),
 			group: camMakeGroup("NorthTankGroup"),
-			templates: [ trike, bloke, buggy, bjeep ]
+			templates: [ cTempl.trike, cTempl.bloke, cTempl.buggy, cTempl.bjeep ]
 		},
 		"WestFactory": {
 			assembly: "WestAssembly",
@@ -138,11 +126,10 @@ function eventStartLevel()
 			},
 			groupSize: 5,
 			maxSize: 9,
-			throttle: camChangeOnDiff(10000),
-			templates: [ trike, bloke, buggy, bjeep ]
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(10)),
+			templates: [ cTempl.trike, cTempl.bloke, cTempl.buggy, cTempl.bjeep ]
 		},
 	});
 
-	queue("enableReinforcements", 10000);
-	queue("enableWestFactory", 30000);
+	queue("enableWestFactory", camSecondsToMilliseconds(30));
 }

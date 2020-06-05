@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -30,10 +30,10 @@
 
 void radarColour(UDWORD tileNumber, uint8_t r, uint8_t g, uint8_t b);	///< Set radar colour for given terrain type.
 
-#define MAX_RADARZOOM		(16 * 4)    // 3.00x
-#define MIN_RADARZOOM		(16 * 2/4)  // 0.75x
-#define DEFAULT_RADARZOOM	(16)        // 1.00x
-#define RADARZOOM_STEP		(16 * 1/4)  // 0.25x
+#define MAX_RADARZOOM		(64)
+#define MIN_RADARZOOM		(8)
+#define DEFAULT_RADARZOOM	(32)
+#define RADARZOOM_STEP		(4)
 
 bool InitRadar();				///< Initialize minimap subsystem.
 bool ShutdownRadar();			///< Shutdown minimap subsystem.
@@ -58,6 +58,7 @@ enum RADAR_DRAW_MODE
 extern bool bEnemyAllyRadarColor;		///< Enemy/ally minimap color
 extern RADAR_DRAW_MODE	radarDrawMode;			///< Current minimap mode
 extern bool rotateRadar;
+extern bool radarRotationArrow;
 
 void radarInitVars();			///< Recalculate minimap variables. For initialization code only.
 

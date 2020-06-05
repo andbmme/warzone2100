@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2013-2017  Warzone 2100 Project
+	Copyright (C) 2011-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 #include "lib/framework/frame.h"
 #include "qtscript.h"
 #include "featuredef.h"
+#include "3rdparty/json/json_fwd.hpp"
 
 class QStandardItemModel;
 
@@ -37,7 +38,16 @@ enum SCRIPT_TYPE
 	SCRIPT_COUNT
 };
 
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__) && (9 <= __GNUC__)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wdeprecated-copy" // Workaround Qt < 5.13 `deprecated-copy` issues with GCC 9
+#endif
+
 #include <QtScript/QScriptEngine>
+
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__) && (9 <= __GNUC__)
+# pragma GCC diagnostic pop // Workaround Qt < 5.13 `deprecated-copy` issues with GCC 9
+#endif
 
 // ----------------------------------------------
 // Private to scripting module functions below
@@ -55,6 +65,8 @@ bool loadGroup(QScriptEngine *engine, int groupId, int objId);
 void prepareLabels();
 
 bool areaLabelCheck(DROID *psDroid);
+
+QScriptValue mapJsonToQScriptValue(QScriptEngine *engine, const nlohmann::json &instance, QScriptValue::PropertyFlags flags);
 
 // Utility conversion functions
 QScriptValue convDroid(DROID *psDroid, QScriptEngine *engine);

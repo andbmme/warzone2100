@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -24,10 +24,9 @@
 #ifndef __INCLUDED_RESEARCHDEF_H__
 #define __INCLUDED_RESEARCHDEF_H__
 
-#include <QtCore/QStringList>
-#include <QtCore/QJsonValue>
 #include "lib/framework/frame.h"
 #include "statsdef.h"
+#include "lib/framework/wzconfig.h"
 
 struct VIEWDATA;
 
@@ -54,14 +53,15 @@ struct RESEARCH : public BASE_STATS
 	UDWORD			researchPower;		/* Power cost to research */
 	UBYTE			keyTopic;			/* Flag to indicate whether in single player
 										   this topic must be explicitly enabled*/
+	UBYTE			disabledWhen;		/* flags when to disable tech */
 	std::vector<UWORD>	pPRList;		///< List of research pre-requisites
 	std::vector<UWORD>	pStructList;		///< List of structures that when built would enable this research
 	std::vector<UWORD>	pRedStructs;		///< List of Structures that become redundant
 	std::vector<COMPONENT_STATS *> pRedArtefacts;	///< List of Artefacts that become redundant
 	std::vector<UWORD>	pStructureResults;	///< List of Structures that are possible after this research
-	QList<COMPONENT_STATS *> componentResults;	///< List of Components that are possible after this research
-	QList<RES_COMP_REPLACEMENT> componentReplacement;	///< List of Components that are automatically replaced with new onew after research
-	QJsonValue		results;		///< Research upgrades
+	std::vector<COMPONENT_STATS *> componentResults;	///< List of Components that are possible after this research
+	std::vector<RES_COMP_REPLACEMENT> componentReplacement;	///< List of Components that are automatically replaced with new onew after research
+	nlohmann::json	results;		///< Research upgrades
 	VIEWDATA                *pViewData;             ///< Data used to display a message in the Intelligence Screen
 	UWORD			iconID;				/* the ID from 'Framer' for which graphic to draw in interface*/
 	BASE_STATS      *psStat;   /* A stat used to define which graphic is drawn instead of the two fields below */
@@ -79,7 +79,7 @@ struct PLAYER_RESEARCH
 
 	UBYTE		ResearchStatus;			// Bit flags   ...  see below
 
-	bool            possible;                       ///< is the research possible ... so can enable topics vis scripts
+	UBYTE           possible;                       ///< is the research possible ... so can enable topics vis scripts
 };
 
 #define STARTED_RESEARCH           0x01            // research in progress
@@ -91,14 +91,41 @@ struct PLAYER_RESEARCH
 #define RESBITS_PENDING_ONLY (STARTED_RESEARCH_PENDING|CANCELLED_RESEARCH_PENDING)
 #define RESBITS_PENDING (RESBITS|RESBITS_PENDING_ONLY)
 
+#define RESEARCH_IMPOSSIBLE        0x00            // research is (temporarily) not possible
+#define RESEARCH_POSSIBLE          0x01            // research is possible
+#define RESEARCH_DISABLED          0x02            // research is disabled (e.g. most VTOL research in no-VTOL games)
+
 static inline bool IsResearchPossible(const PLAYER_RESEARCH *research)
 {
-	return research->possible;
+	return research->possible == RESEARCH_POSSIBLE;
+}
+
+static inline bool IsResearchDisabled(const PLAYER_RESEARCH *research)
+{
+	return research->possible == RESEARCH_DISABLED;
 }
 
 static inline void MakeResearchPossible(PLAYER_RESEARCH *research)
 {
-	research->possible = true;
+	if (research->possible == RESEARCH_IMPOSSIBLE)
+	{
+		research->possible = RESEARCH_POSSIBLE;
+	}
+}
+
+static inline void DisableResearch(PLAYER_RESEARCH *research)
+{
+	research->possible = RESEARCH_DISABLED;
+}
+
+static inline int GetResearchPossible(const PLAYER_RESEARCH *research)
+{
+	return research->possible;
+}
+
+static inline void SetResearchPossible(PLAYER_RESEARCH *research, UBYTE possible)
+{
+	research->possible = possible;
 }
 
 static inline bool IsResearchCompleted(PLAYER_RESEARCH const *x)
@@ -163,5 +190,7 @@ static inline void ResetResearchStatus(PLAYER_RESEARCH *x)
 {
 	x->ResearchStatus &= ~RESBITS_PENDING;
 }
+
+void RecursivelyDisableResearchByFlags(UBYTE flags);
 
 #endif // __INCLUDED_RESEARCHDEF_H__

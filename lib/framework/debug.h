@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -187,6 +187,7 @@ enum code_part
 	LOG_INPUT,	// mouse / keyboard events
 	LOG_POPUP,	// special, on by default, for both debug & release builds (used for OS dependent popup code)
 	LOG_CONSOLE,	// send console messages to file
+	LOG_ACTIVITY,
 	LOG_LAST /**< _must_ be last! */
 };
 
@@ -261,7 +262,16 @@ bool debug_enable_switch(const char *str);
  * Only outputs if debugging of part was formerly enabled with debug_enable_switch.
  */
 #define debug(part, ...) do { if (enabled_debug[part]) _debug(__LINE__, part, __FUNCTION__, __VA_ARGS__); } while(0)
+#ifdef WZ_CC_MINGW
+void _debug(int line, code_part part, const char *function, const char *str, ...) WZ_DECL_FORMAT(__MINGW_PRINTF_FORMAT, 4, 5);
+#else
 void _debug(int line, code_part part, const char *function, const char *str, ...) WZ_DECL_FORMAT(printf, 4, 5);
+#endif
+
+#include <string>
+
+#define debug_multiline(part, string) do { if (enabled_debug[part]) _debug_multiline(__LINE__, part, __FUNCTION__, string); } while(0)
+void _debug_multiline(int line, code_part part, const char *function, const std::string &multilineString);
 
 #define debugBacktrace(part, ...) do { if (enabled_debug[part]) { _debug(__LINE__, part, __FUNCTION__, __VA_ARGS__); _debugBacktrace(part); }} while(0)
 void _debugBacktrace(code_part part);

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -25,11 +25,11 @@
 #include "lib/ivis_opengl/bitimage.h"
 #include "lib/ivis_opengl/tex.h"
 #include "src/warzoneconfig.h"
-#include "src/frontend.h"
 #include "cursors_sdl.h"
 #include <SDL.h>
 
 static CURSOR currentCursor = CURSOR_MAX;
+static CURSOR lastAppliedCursor = CURSOR_MAX;
 static SDL_Cursor *aCursors[CURSOR_MAX];
 static bool monoCursor;
 
@@ -1356,24 +1356,35 @@ SDL_Cursor *init_system_cursor32(CURSOR cur)
 }
 
 /**
-	wzSetCursor()-- Set the current cursor
+	wzSetCursor()-- Set the current cursor. Cursor is actually applied in wzApplyCursor() in mainLoop()
  */
 void wzSetCursor(CURSOR cur)
 {
 	ASSERT(cur < CURSOR_MAX, "Specified cursor(%d) is over our limit of (%d)!", (int)cur, (int)CURSOR_MAX);
-	// we reset mouse cursors on the fly...(only in the mouse options screen!)
-	if ((!(war_GetColouredCursor() ^ monoCursor)) && (titleMode == MOUSE_OPTIONS))
+	
+	currentCursor = cur;
+}
+
+void wzApplyCursor()
+{
+	// If mouse cursor options change, change cursors (used to only work on mouse options screen for some reason)
+	if (!(war_GetColouredCursor() ^ monoCursor))
 	{
 		sdlFreeCursors();
 		war_GetColouredCursor() ? sdlInitColoredCursors() : sdlInitCursors();
-		SDL_SetCursor(aCursors[cur]);
+		SDL_SetCursor(aCursors[currentCursor]);
+		lastAppliedCursor = currentCursor;
+		return;
 	}
-	// If we are already using this cursor then  return
-	if (cur != currentCursor)
+
+	// If we are already using this cursor then return
+	if (currentCursor == lastAppliedCursor)
 	{
-		SDL_SetCursor(aCursors[cur]);
-		currentCursor = cur;
+		return;
 	}
+
+	SDL_SetCursor(aCursors[currentCursor]);
+	lastAppliedCursor = currentCursor;
 }
 
 /**

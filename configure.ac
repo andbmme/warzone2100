@@ -1,7 +1,7 @@
 AC_PREREQ([2.56])
 AC_INIT([Warzone 2100],[master],[http://wz2100.net/],[warzone2100])
 
-AM_INIT_AUTOMAKE([1.11 tar-ustar no-dist-gzip dist-xz])
+AM_INIT_AUTOMAKE([1.11 tar-ustar no-dist-gzip dist-xz subdir-objects])
 
 # Set to the default or stupid automake will use the much slower but useless -e(xtreme!!!) option.
 AC_SUBST([XZ_OPT], ["-6"])
@@ -12,11 +12,17 @@ AC_CONFIG_SRCDIR([lib/framework/frame.cpp])
 # HACK
 # Workaround stupid autoconf CFLAGS default
 # (Bash considers set but empty variables different from null for the ${VAR:+alt} operator)
-CFLAGS="${CFLAGS} -fPIC"
-CXXFLAGS="${CXXFLAGS} -fPIC -std=c++11"
+CFLAGS="${CFLAGS}"
+CXXFLAGS="${CXXFLAGS} -std=c++11"
 
 # Make cross compilation options available in --help
 AC_CANONICAL_HOST
+
+# This build toolchain is deprecated - please switch to CMake
+AC_ARG_ENABLE([promise-to-use-cmake],
+	AS_HELP_STRING([--enable-promise-to-use-cmake], [Bypass deprecation notice (for now)]),
+	[ AC_MSG_WARN([*** This build toolchain is deprecated (and will be removed) - please move to the CMake build toolchain. (Ignoring deprecation, for now.) ***]) ],
+	[ AC_MSG_ERROR([*** This build toolchain is deprecated (and will be removed) - please use the CMake build toolchain. (If you really want to ignore this for now, specify: --enable-promise-to-use-cmake) ***]) ])
 
 # Checks for programs.
 AC_PROG_CC_STDC
@@ -48,18 +54,16 @@ AC_CHECK_PROG(WKHTMLTOPDF, wkhtmltopdf, wkhtmltopdf)
 AM_CONDITIONAL([A2X_AVAILABLE], test -n "$A2X")
 AM_CONDITIONAL([WKHTMLTOPDF_AVAILABLE], test -n "$WKHTMLTOPDF")
 
-AC_CHECK_PROG(PDFLATEX, pdflatex, pdflatex)
-AC_CHECK_PROG(HEVEA, hevea, hevea)
-AC_CHECK_PROG(HACHA, hacha, hacha)
-AM_CONDITIONAL(PDFLATEX, test -n "$PDFLATEX")
-AM_CONDITIONAL(HEVEA, test -n "$HEVEA")
-AM_CONDITIONAL(HACHA, test -n "$HACHA")
-
 # Enable Compiler/LibC GNU extensions
 AC_GNU_SOURCE
 
-# __builtin_expect
-AX_C___BUILTIN_EXPECT
+# Check for __builtin_expect()
+AC_MSG_CHECKING([for __builtin_expect()])
+AC_LINK_IFELSE([AC_LANG_PROGRAM(, return __builtin_expect(main != 0, 1))],
+		[AC_DEFINE(HAVE_BUILTIN_EXPECT, 1,
+		Define to 1 if compiler supports __builtin_expect)
+		AC_MSG_RESULT([yes])],
+[AC_MSG_RESULT([no])])
 
 # Check for the strlcpy and strlcat functions
 AX_CHECK_STRLCPY
@@ -73,29 +77,22 @@ AC_CHECK_HEADERS(alloca.h sys/ucontext.h)
 
 # Check for gettext
 AM_GNU_GETTEXT([external])
-AM_GNU_GETTEXT_VERSION([0.15])
+AM_GNU_GETTEXT_VERSION([0.17])
+
+# Check for libcurl
+LIBCURL_CHECK_CONFIG([yes], [7.10.1], , [AC_MSG_ERROR([Missing required libcurl >= 7.10.1])])
+
+# Check for libsodium
+WZ_FIND_SODIUM
 
 # Check for pkg-config
 PKG_PROG_PKG_CONFIG
 AC_PROG_VERSION_CHECK([pkg-config], [0.9])
 
-AC_MSG_CHECKING([for backend])
-AC_ARG_WITH([backend],
-	AS_HELP_STRING([--with-backend=sdl/qt], [Backend rendering code to use [sdl]]),
-	[ backend=${withval} ], [ backend="sdl" ])
-AM_CONDITIONAL([BACKEND_QT], test "$backend" = "qt")
-AM_CONDITIONAL([BACKEND_SDL], test "$backend" = "sdl")
+PKG_CHECK_MODULES(QT5, Qt5Core Qt5Gui Qt5Widgets Qt5Script >= 5.4,,[:])
 
-# Check for Qt
-if test "$backend" = "qt"; then
-	AC_MSG_RESULT([Qt])
-	PKG_CHECK_MODULES(QT5, Qt5Core Qt5Gui Qt5Widgets Qt5Script Qt5OpenGL Qt5X11Extras,,[:])
-else
-	AC_MSG_RESULT([SDL])
-	PKG_CHECK_MODULES(QT5, Qt5Core Qt5Gui Qt5Widgets Qt5Script,,[:])
-fi
 if test "$pkg_failed" = "yes" ; then
-	AC_MSG_ERROR([Qt 5 not found - required!])
+	AC_MSG_ERROR([Qt 5.4 not found -- required!])
 fi
 QT5_INCLUDES=$QT5_FRONTEND_CFLAGS
 QT5_LDFLAGS=$QT5_FRONTEND_LIBS
@@ -125,9 +122,12 @@ case ${host_os} in
 		AC_CHECK_TOOL([WINDRES], [windres], AC_MSG_ERROR([windres not found]))
 		WIN32_LIBS='-ldbghelp -lshfolder -lshlwapi -lpsapi -lshell32 -lwinmm -lws2_32 -liphlpapi -ladvapi32'
 		AC_SUBST([WIN32_LIBS], [${WIN32_LIBS}])
-		LDFLAGS="-Wl,-subsystem,windows ${LDFLAGS}"
+		LDFLAGS="-Wl,-subsystem,windows ${LDFLAGS} -Wl,--dynamicbase -Wl,--nxcompat"
 		;;
 	*)
+		CFLAGS="${CFLAGS} -fPIC"
+		CXXFLAGS="${CXXFLAGS} -fPIC"
+
 		# Some platforms don't need _XOPEN_SOURCE
 		case ${host_os} in
 			*bsd* | dragonfly* | bitrig*) ;;
@@ -290,6 +290,10 @@ WZ_WARNINGS_GCC="-Wall -Wextra ${WZ_Wno_}unused-parameter ${WZ_Wno_}sign-compare
 AX_C_CHECK_FLAG([-Werror -Wno-expansion-to-defined -Wno-error=cpp], [#warning x], , WZ_WARNINGS_GCC="${WZ_WARNINGS_GCC} -Wno-expansion-to-defined")
 WZ_WARNINGS_GCC_C="${WZ_WARNINGS_GCC} -Wstrict-prototypes -Wdeclaration-after-statement ${CFLAGS_IGNORE_WARNINGS}"
 WZ_WARNINGS_GCC_CXX="${WZ_Wno_}enum-compare ${WZ_WARNINGS_GCC}"
+# gcc 8.0 added some fairly obnoxious string truncation warnings
+AX_C_CHECK_FLAG([-Werror -Wno-stringop-truncation -Wno-error=cpp], [#warning x], , WZ_WARNINGS_GCC_CXX="${WZ_WARNINGS_GCC_CXX} -Wno-stringop-truncation")
+AX_C_CHECK_FLAG([-Werror -Wno-stringop-truncation -Wno-error=cpp], [#warning x], , WZ_WARNINGS_GCC_C="${WZ_WARNINGS_GCC_C} -Wno-stringop-truncation")
+AX_C_CHECK_FLAG([-Werror -Wno-format-truncation -Wno-error=cpp], [#warning x], , WZ_WARNINGS_GCC_CXX="${WZ_WARNINGS_GCC_CXX} -Wno-format-truncation")
 if test "x$enable_debug" = "xyes" ; then
 	if test "x$cc_icc" = "xyes" ; then
 		WZ_CFLAGS="${WZ_CFLAGS} -O0 -g -Wcheck -Werror"
@@ -408,9 +412,7 @@ fi
 
 # Checks for modules:
 
-if test "$backend" = "sdl"; then
-	PKG_CHECK_MODULES([SDL], [sdl2 >= 2.0.0])
-fi
+PKG_CHECK_MODULES([SDL], [sdl2 >= 2.0.5])
 PKG_CHECK_MODULES([PNG], [libpng >= 1.2])
 PKG_CHECK_MODULES([THEORA], [theora >= 1.0])
 PKG_CHECK_MODULES([OPENAL], [openal >= 0.0.8])
@@ -483,7 +485,18 @@ WZ_CPPFLAGS="${WZ_CPPFLAGS} -I\$(top_srcdir)"
 
 # 3rdparty libs
 WZ_CPPFLAGS="${WZ_CPPFLAGS} -I\$(top_srcdir)/3rdparty"
-
+# glm
+WZ_CPPFLAGS="${WZ_CPPFLAGS} -I\$(top_srcdir)/3rdparty/glm"
+# miniupnpc
+WZ_CPPFLAGS="${WZ_CPPFLAGS} -I\$(top_srcdir)/3rdparty/miniupnp"
+# launchinfo
+WZ_CPPFLAGS="${WZ_CPPFLAGS} -I\$(top_srcdir)/3rdparty/launchinfo/include"
+# EmbeddedJSONSignature
+WZ_CPPFLAGS="${WZ_CPPFLAGS} -I\$(top_srcdir)/3rdparty/EmbeddedJSONSignature/include"
+# re2
+WZ_CPPFLAGS="${WZ_CPPFLAGS} -I\$(top_srcdir)/3rdparty/re2"
+# date
+WZ_CPPFLAGS="${WZ_CPPFLAGS} -I\$(top_srcdir)/3rdparty/date/include"
 
 AC_SUBST([WZ_CPPFLAGS], [${WZ_CPPFLAGS}])
 AC_SUBST([WZ_CFLAGS], [${WZ_CFLAGS}])
@@ -500,18 +513,14 @@ AC_CONFIG_FILES([Makefile
 		data/music/Makefile
 		pkg/nsis/Makefile
 		win32/Makefile
-		tests/Makefile
-		3rdparty/miniupnpc/Makefile
 		3rdparty/micro-ecc/Makefile
-		3rdparty/sha2/Makefile
+		3rdparty/Makefile
 		lib/framework/Makefile
 		lib/exceptionhandler/Makefile
 		lib/gamelib/Makefile
 		lib/ivis_opengl/Makefile
 		lib/netplay/Makefile
-		lib/qtgame/Makefile
 		lib/sdl/Makefile
-		lib/script/Makefile
 		lib/sequence/Makefile
 		lib/sound/Makefile
 		lib/widget/Makefile
@@ -524,10 +533,9 @@ AS_IF([test "x$enable_debug" = "xyes"],[
 	AC_MSG_NOTICE([*** Running in debug mode! ***])
 ])
 
-AS_IF([test "x$with_distributor" = "xUNKNOWN"],[
+AS_IF([test "x$with_distributor" != "xUNKNOWN"],[
 	AC_MSG_NOTICE()
-	AC_MSG_WARN([Distributor unknown!])
-	AC_MSG_NOTICE([Use --with-distributor when compiling package for distribution])
+	AC_MSG_NOTICE([*** Distributor $with_distributor ***])
 ])
 
 AS_IF([test -z "$PERL"],[
@@ -553,4 +561,4 @@ AS_IF([test "x$with_videos" = "xyes"],[
 
 
 AC_MSG_NOTICE()
-AC_MSG_NOTICE(Backend used: ${backend})
+AC_MSG_NOTICE(Backend used: SDL)

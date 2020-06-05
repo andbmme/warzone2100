@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -68,7 +68,7 @@ struct DROID_TEMPLATE : public BASE_STATS
 	uint8_t         asParts[DROID_MAXCOMP];
 	/* The weapon systems */
 	int8_t          numWeaps;                   ///< Number of weapons
-	uint8_t         asWeaps[MAX_WEAPONS];       ///< weapon indices
+	uint32_t        asWeaps[MAX_WEAPONS];       ///< weapon indices
 	DROID_TYPE      droidType;                  ///< The type of droid
 	UDWORD          multiPlayerID;              ///< multiplayer unique descriptor(cant use id's for templates). Used for save games as well now - AB 29/10/98
 	bool            prefab;                     ///< Not player designed, not saved, never delete or change

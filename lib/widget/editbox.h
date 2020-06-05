@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@
 
 #include "widget.h"
 #include "widgbase.h"
+#include "lib/framework/wzstring.h"
 
 /* Edit Box states */
 #define WEDBS_FIXED		0x0001		// No editing is going on
@@ -35,30 +36,35 @@
 #define WEDBS_HILITE	0x0010		//
 #define WEDBS_DISABLE   0x0020		// disable button from selection
 
+struct EditBoxDisplayCache {
+	WzText wzDisplayedText;
+	WzText modeText;
+};
+
 class W_EDITBOX : public WIDGET
 {
-	Q_OBJECT
 
 public:
 	W_EDITBOX(W_EDBINIT const *init);
 	W_EDITBOX(WIDGET *parent);
 
-	void clicked(W_CONTEXT *psContext, WIDGET_KEY key = WKEY_PRIMARY);
-	void highlight(W_CONTEXT *psContext);
-	void highlightLost();
-	void focusLost();
-	void run(W_CONTEXT *psContext);
-	void display(int xOffset, int yOffset);
+	void clicked(W_CONTEXT *psContext, WIDGET_KEY key = WKEY_PRIMARY) override;
+	void simulateClick(W_CONTEXT *psContext, bool silenceClickAudio = false, WIDGET_KEY key = WKEY_PRIMARY);
+	void highlight(W_CONTEXT *psContext) override;
+	void highlightLost() override;
+	void focusLost() override;
+	void run(W_CONTEXT *psContext) override;
+	void display(int xOffset, int yOffset) override;
 
-	void setState(unsigned state);
-	QString getString() const;
-	void setString(QString string);
+	void setState(unsigned state) override;
+	WzString getString() const override;
+	void setString(WzString string) override;
 	void setMaxStringSize(int size);
 
 	void setBoxColours(PIELIGHT first, PIELIGHT second, PIELIGHT background);
 
 	UDWORD		state;						// The current edit box state
-	QString		aText;						// The text in the edit box
+	WzString	aText;						// The text in the edit box
 	iV_fonts	FontID;
 	int			blinkOffset;				// Cursor should be visible at time blinkOffset.
 	int			maxStringSize;				// max characters string will accept
@@ -76,13 +82,15 @@ private:
 	void initialise();  // Moves the cursor to the end.
 	void delCharRight();
 	void delCharLeft();
-	void insertChar(QChar ch);
-	void overwriteChar(QChar ch);
+	bool insertChar(WzUniCodepoint ch);
+	bool overwriteChar(WzUniCodepoint ch);
 	void fitStringStart();  // Calculate how much of the start of a string can fit into the edit box
 	void fitStringEnd();
 	void setCursorPosPixels(int xPos);
 
 	PIELIGHT boxColourFirst, boxColourSecond, boxColourBackground;
+	EditBoxDisplayCache displayCache;
+	bool suppressAudioCallback = false;
 };
 
 #endif // __INCLUDED_LIB_WIDGET_EDITBOX_H__

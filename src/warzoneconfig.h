@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -26,6 +26,12 @@
 
 #include "lib/framework/frame.h"
 #include "lib/sequence/sequence.h"
+#include "lib/sound/sounddefs.h"
+
+#define	CAMERASPEED_MAX		(5000)
+#define	CAMERASPEED_MIN		(100)
+#define	CAMERASPEED_DEFAULT	(2500)
+#define	CAMERASPEED_STEP	(100)
 
 /***************************************************************************/
 /*
@@ -60,6 +66,8 @@ bool war_GetColouredCursor();
 void war_SetColouredCursor(bool enabled);
 void war_SetVsync(bool b);
 bool war_GetVsync();
+void war_SetDisplayScale(unsigned int scale);
+unsigned int war_GetDisplayScale();
 void war_SetWidth(UDWORD width);
 UDWORD war_GetWidth();
 void war_SetScreen(int screen);
@@ -70,6 +78,20 @@ void war_SetPauseOnFocusLoss(bool enabled);
 bool war_GetPauseOnFocusLoss();
 bool war_GetMusicEnabled();
 void war_SetMusicEnabled(bool enabled);
+HRTFMode war_GetHRTFMode();
+void war_SetHRTFMode(HRTFMode mode);
+int war_GetMapZoom();
+void war_SetMapZoom(int mapZoom);
+int war_GetMapZoomRate();
+void war_SetMapZoomRate(int mapZoomRate);
+int war_GetRadarZoom();
+void war_SetRadarZoom(int radarZoom);
+bool war_GetRadarJump();
+void war_SetRadarJump(bool radarJump);
+int war_GetCameraSpeed();
+void war_SetCameraSpeed(int cameraSpeed);
+int war_GetScrollEvent();
+void war_SetScrollEvent(int scrollEvent);
 int8_t war_GetSPcolor();
 void war_SetSPcolor(int color);
 void war_setMPcolour(int colour);

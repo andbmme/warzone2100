@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2008-2017  Warzone 2100 Project
+	Copyright (C) 2008-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -35,6 +35,8 @@ bool seq_Update();
 void seq_Shutdown();
 int seq_GetFrameNumber();
 void seq_SetDisplaySize(int sizeX, int sizeY, int posX, int posY);
+void seq_setScanlinesDisabled(bool flag);
+bool seq_getScanlinesDisabled();
 void seq_setScanlineMode(SCANLINE_MODE mode);
 SCANLINE_MODE seq_getScanlineMode();
 double seq_GetFrameTime();

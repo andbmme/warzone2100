@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -35,12 +35,15 @@
 #include "lib/framework/frame.h"
 #include "lib/framework/string_ext.h"
 #include "lib/framework/vector.h"
-#include "glm/core/type.hpp"
+#include "lib/framework/wzstring.h"
+#include <glm/mat4x4.hpp>
 #include "piedef.h"
 #include "ivisdef.h"
 #include "pietypes.h"
 #include "piepalette.h"
 #include "pieclip.h"
+#include "lib/framework/opengl.h"
+#include <list>
 
 /***************************************************************************/
 /*
@@ -100,7 +103,7 @@ private:
 	int mHeight;
 	GLenum mdrawType;
 	int mCoordsPerVertex;
-	GLuint mBuffers[VBO_COUNT];
+	gfx_api::buffer* mBuffers[VBO_COUNT] = { nullptr };
 	gfx_api::texture* mTexture = nullptr;
 	int mSize;
 };
@@ -120,13 +123,84 @@ static inline void iV_Box(int x0, int y0, int x1, int y1, PIELIGHT first)
 	iV_Box2(x0, y0, x1, y1, first, first);
 }
 void pie_BoxFill(int x0, int y0, int x1, int y1, PIELIGHT colour, REND_MODE rendermode = REND_OPAQUE);
-void iV_DrawImage(GLuint TextureID, Vector2i position, Vector2i offset, Vector2i size, float angle, REND_MODE mode, PIELIGHT colour);
-void iV_DrawImageText(gfx_api::texture& TextureID, Vector2i position, Vector2i offset, Vector2i size, float angle, REND_MODE mode, PIELIGHT colour);
-void iV_DrawImage(IMAGEFILE *ImageFile, UWORD ID, int x, int y, const glm::mat4 &modelViewProjection = defaultProjectionMatrix());
-void iV_DrawImage2(const QString &filename, float x, float y, float width = -0.0f, float height = -0.0f);
+struct PIERECT_DrawRequest
+{
+	PIERECT_DrawRequest(int x0, int y0, int x1, int y1, PIELIGHT color)
+	: x0(x0)
+	, y0(y0)
+	, x1(x1)
+	, y1(y1)
+	, color(color)
+	{ }
+
+	int x0;
+	int y0;
+	int x1;
+	int y1;
+	PIELIGHT color;
+};
+void pie_DrawMultiRect(std::vector<PIERECT_DrawRequest> rects, REND_MODE rendermode = REND_OPAQUE);
+struct PIERECT  ///< Screen rectangle.
+{
+	float x, y, w, h;
+};
+struct PieDrawImageRequest {
+public:
+	PieDrawImageRequest(REND_MODE rendMode, IMAGEFILE *imageFile, int ID, Vector2i size, const PIERECT& dest, PIELIGHT colour, const glm::mat4& modelViewProjection, Vector2i textureInset = Vector2i(0, 0))
+	: rendMode(rendMode),
+	imageFile(imageFile),
+	ID(ID),
+	size(size),
+	dest(dest),
+	colour(colour),
+	modelViewProjection(modelViewProjection),
+	textureInset(textureInset)
+	{ }
+
+public:
+	REND_MODE rendMode;
+
+	IMAGEFILE *imageFile;
+	int ID;
+	Vector2i size;
+	const PIERECT dest;
+	PIELIGHT colour;
+	glm::mat4 modelViewProjection;
+	Vector2i textureInset;
+};
+struct BatchedImageDrawRequests {
+public:
+	BatchedImageDrawRequests(bool deferRender = false)
+	: deferRender(deferRender)
+	{ }
+public:
+	void queuePieImageDraw(REND_MODE rendMode, IMAGEFILE *imageFile, int id, Vector2i size, const PIERECT& dest, PIELIGHT colour, const glm::mat4& modelViewProjection, Vector2i textureInset = Vector2i(0, 0))
+	{
+		queuePieImageDraw(PieDrawImageRequest(rendMode, imageFile, id, size, dest, colour, modelViewProjection, textureInset));
+	}
+	void queuePieImageDraw(const PieDrawImageRequest& request)
+	{
+		_imageDrawRequests.push_back(request);
+	}
+	void queuePieImageDraw(const PieDrawImageRequest&& request)
+	{
+		_imageDrawRequests.push_back(std::move(request));
+	}
+
+	bool draw(bool force = false);
+	void clear();
+public:
+	bool deferRender = false;
+private:
+	std::list<PieDrawImageRequest> _imageDrawRequests;
+};
+void iV_DrawImage(GLuint TextureID, Vector2i position, Vector2f offset, Vector2f size, float angle, REND_MODE mode, PIELIGHT colour);
+void iV_DrawImageText(gfx_api::texture& TextureID, Vector2i Position, Vector2f offset, Vector2f size, float angle, REND_MODE mode, PIELIGHT colour);
+void iV_DrawImage(IMAGEFILE *ImageFile, UWORD ID, int x, int y, const glm::mat4 &modelViewProjection = defaultProjectionMatrix(), BatchedImageDrawRequests* pBatchedRequests = nullptr);
+void iV_DrawImage2(const WzString &filename, float x, float y, float width = -0.0f, float height = -0.0f);
 void iV_DrawImageTc(Image image, Image imageTc, int x, int y, PIELIGHT colour, const glm::mat4 &modelViewProjection = defaultProjectionMatrix());
-void iV_DrawImageRepeatX(IMAGEFILE *ImageFile, UWORD ID, int x, int y, int Width, const glm::mat4 &modelViewProjection = defaultProjectionMatrix());
-void iV_DrawImageRepeatY(IMAGEFILE *ImageFile, UWORD ID, int x, int y, int Height, const glm::mat4 &modelViewProjection = defaultProjectionMatrix());
+void iV_DrawImageRepeatX(IMAGEFILE *ImageFile, UWORD ID, int x, int y, int Width, const glm::mat4 &modelViewProjection = defaultProjectionMatrix(), bool enableHorizontalTilingSeamWorkaround = false, BatchedImageDrawRequests* pBatchedRequests = nullptr);
+void iV_DrawImageRepeatY(IMAGEFILE *ImageFile, UWORD ID, int x, int y, int Height, const glm::mat4 &modelViewProjection = defaultProjectionMatrix(), BatchedImageDrawRequests* pBatchedRequests = nullptr);
 
 static inline void iV_DrawImage(Image image, int x, int y)
 {
@@ -144,12 +218,11 @@ bool pie_InitRadar();
 bool pie_ShutdownRadar();
 void pie_DownLoadRadar(UDWORD *buffer);
 void pie_RenderRadar(const glm::mat4 &modelViewProjectionMatrix);
-void pie_SetRadar(GLfloat x, GLfloat y, GLfloat width, GLfloat height, int twidth, int theight, bool filter);
+void pie_SetRadar(gfx_api::gfxFloat x, gfx_api::gfxFloat y, gfx_api::gfxFloat width, gfx_api::gfxFloat height, int twidth, int theight);
 
 enum SCREENTYPE
 {
 	SCREEN_RANDOMBDROP,
-	SCREEN_CREDITS,
 	SCREEN_MISSIONEND,
 };
 

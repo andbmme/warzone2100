@@ -1,54 +1,96 @@
-
 function eventDroidBuilt(droid, struct)
 {
-	if (defined(droid) && (droid.player == me))
+	if (isVTOL(droid))
 	{
-		if (isVTOL(droid))
+		groupAdd(vtolGroup, droid);
+	}
+	else if (droid.droidType === DROID_WEAPON || droid.droidType === DROID_CYBORG)
+	{
+		if (droid.weapons[0].name === "Rocket-BB")
 		{
-			groupAdd(vtolGroup, droid);
+			groupAdd(busterGroup, droid);
 		}
-		else if (droid.droidType == DROID_WEAPON || droid.droidType == DROID_CYBORG)
+		else
 		{
 			groupAdd(attackGroup, droid);
 		}
-		else if (droid.droidType == DROID_CONSTRUCT)
-		{
-			checkLocalJobs();
-		}
 	}
-}
-
-function eventGameInit()
-{
-	attackGroup = newGroup();
-	vtolGroup = newGroup();
+	else if (droid.droidType === DROID_CONSTRUCT)
+	{
+		if (enumGroup(oilBuilders).length < MIN_OIL_TRUCKS)
+		{
+			groupAdd(oilBuilders, droid);
+		}
+		else
+		{
+			groupAdd(baseBuilders, droid);
+		}
+		checkLocalJobs();
+	}
 }
 
 function eventAttacked(victim, attacker)
 {
-	const MIN_GROUND_UNITS = 8;
-	const MIN_VTOL_UNITS = 4;
+	const MIN_GROUND_UNITS = 5;
+	const MIN_VTOL_UNITS = 5;
+	const GROUP_SCAN_RADIUS = 7;
 
 	// TBD, for now -- SEND EVERYONE!!!
-	if (attacker && victim && (attacker.player != me) && !allianceExistsBetween(attacker.player, me))
+	if (attacker && victim && attacker.player !== me && !allianceExistsBetween(attacker.player, me))
 	{
-		var loc = {x: attacker.x, y: attacker.y };
-		//Set this player as the current enemy (as long as they are not scavengers).
-		if((getCurrentEnemy() != attacker.player) && (attacker.player < maxPlayers))
+		//Flee if we are outnumbered to an extent
+		if (victim.type === DROID && victim.player === me)
 		{
-			currentEnemy = attacker; //Focus on this player
+			var seenEnemyGroupSize = enumRange(victim.x, victim.y, GROUP_SCAN_RADIUS, ENEMIES, false).length;
+			if (isVTOL(victim))
+			{
+				vtolReady(victim.id); //check if it needs repair or rearming
+			}
+			else if (victim.order !== DORDER_RTR &&
+				victim.order !== DORDER_RECYCLE &&
+				!droidNeedsRepair(victim.id) &&
+				enumRange(victim.x, victim.y, GROUP_SCAN_RADIUS, me, false).length < seenEnemyGroupSize)
+			{
+				orderDroidLoc(victim, DORDER_MOVE, BASE.x, BASE.y);
+			}
+		}
+
+		var enemyNumber = getCurrentEnemy();
+		if (!defined(enemyNumber))
+		{
+			return;
+		}
+
+		//Set this player as the current enemy. Also, only do this if they are
+		//somewhat close to our base so our units don't shuffle around rapidly
+		//picking many different players to focus on in intense multi-battles.
+		if (enemyNumber !== attacker.player && distBetweenTwoPoints(attacker.x, attacker.y, BASE.x, BASE.y) <= (AVG_BASE_RADIUS + 10))
+		{
+			setPlayerAsTarget(attacker.player);
+		}
+
+		if (attacker.type === DROID && isVTOL(attacker))
+		{
+			enemyHasVtol = true; //Definitely has VTOLs.
+			return; //Ignore VTOLs
+		}
+		if (ThrottleThis("eventAttacked_Throttle_1", 1500))
+		{
+			return;
 		}
 
 		//log("Defend!");
+		var loc = {x: attacker.x, y: attacker.y };
 		var defenders = enumGroup(attackGroup);
 		var defLen = defenders.length;
 		if (defLen > MIN_GROUND_UNITS)
 		{
-			for (var i = 0; i < defLen; i++)
+			for (var i = 0; i < defLen; ++i)
 			{
-				if(defenders[i].order != DORDER_RECYCLE)
+				var dr = defenders[i];
+				if (dr.order !== DORDER_RECYCLE && !droidNeedsRepair(dr.id) && dr.id !== victim.id)
 				{
-					orderDroidLoc(defenders[i], DORDER_SCOUT, loc.x, loc.y);
+					orderDroidLoc(dr, DORDER_SCOUT, loc.x, loc.y);
 				}
 			}
 		}
@@ -57,11 +99,12 @@ function eventAttacked(victim, attacker)
 		var vtolLen = vtols.length;
 		if (vtolLen > MIN_VTOL_UNITS)
 		{
-			for (var j = 0; j < vtolLen; j++)
+			for (var j = 0; j < vtolLen; ++j)
 			{
-				if (vtolReady(vtols[j]))
+				var vt = vtols[j];
+				if (vtolReady(vt.id))
 				{
-					orderDroidLoc(vtols[j], DORDER_SCOUT, loc.x, loc.y);
+					orderDroidLoc(vt, DORDER_SCOUT, loc.x, loc.y);
 				}
 			}
 		}
@@ -71,94 +114,95 @@ function eventAttacked(victim, attacker)
 function eventStartLevel()
 {
 	//log("== level started ==");
+
+	//setup groups
+	attackGroup = newGroup();
+	busterGroup = newGroup();
+	vtolGroup = newGroup();
+	baseBuilders = newGroup();
+	oilBuilders = newGroup();
+	truckRoleSwapped = false;
+	enumDroid(me).forEach(function(droid) {
+		if (droid.droidType !== DROID_CONSTRUCT)
+		{
+			eventDroidBuilt(droid, null);
+		}
+	});
+
+	setupTruckGroups();
 	recycleDroidsForHover();
 	buildFundamentals();
 	isSeaMap = isHoverMap();
+	researchDone = false;
+	enemyHasVtol = false;
 
 	// Set the timer call randomly so as not to compute on the same tick if more than one semperfi is on map.
-	setTimer("buildFundamentals", 1200 + ((1 + random(3)) * random(60))); // build stuff
-	setTimer("eventResearched", 11000 + ((1 + random(4)) * random(40)));
-	setTimer("produce", 14000 + ((1 + random(4)) * random(70)));
-	setTimer("attackEnemy", 20000 + ((1 + random(4)) * random(100)));
-	setTimer("recycleDroidsForHover", 30000 + ((1 + random(4)) * random(100))); // will remove self
-}
-
-function eventGroupLoss(droid, group, size)
-{
-	//log("lost " + droid.id + " in group " + group + " which is now size " + size);
-
-	//Drop a beacon if the last one was more than thirty seconds ago.
-	if ((droid.player == me) && gameTime > (lastBeaconDrop + 30000))
-	{
-		lastBeaconDrop = gameTime;
-		addBeacon(droid.x, droid.y, ALLIES);
-	}
+	setTimer("produceAndResearch", 400 + ((1 + random(4)) * random(70)));
+	setTimer("buildFundamentals", 900 + ((1 + random(3)) * random(60))); // build stuff
+	setTimer("lookForOil", 1200 + ((1 + random(4)) * random(30)));
+	setTimer("recycleDroidsForHover", 2000 + ((1 + random(4)) * random(100)));
+	setTimer("attackEnemy", 6000 + ((1 + random(4)) * random(100)));
+	setTimer("scanForVTOLs", 10000 + ((1 + random(5)) * random(60)));
 }
 
 // Build defenses.
 function eventStructureBuilt(structure, droid)
 {
-	if (defined(droid) && (droid.player == me))
+	//don't go crazy defending stuff we just built relavtively close to the base.
+	var dist = distBetweenTwoPoints(BASE.x, BASE.y, structure.x, structure.y);
+	if (!droid || dist <= AVG_BASE_RADIUS)
 	{
-		const MIN_POWER = -230;
-		const MIN_DEFENSES = 2;
+		return;
+	}
 
-		var checkArea = enumRange(droid.x, droid.y, 12, ENEMIES, false);
-		var defenses = enumRange(droid.x, droid.y, 10, me, false).filter(function (obj) {
-			return (obj.type == STRUCTURE && obj.stattype == DEFENSE);
-		});
-		var chance = ((structure.stattype == RESOURCE_EXTRACTOR) || (random(101) < 10)) ? true : false;
+	scanAndDefendPosition(structure, droid);
+}
 
-		//Build a defense structure here.
-		if (chance && checkArea.length || (defenses.length < MIN_DEFENSES) && (getRealPower() > MIN_POWER))
+function eventDroidIdle(droid)
+{
+	if (droid.droidType === DROID_CONSTRUCT)
+	{
+		const ENEMY_DERRICK_SCAN_RANGE = 4;
+		var enemyDerrs = enumRange(droid.x, droid.y, ENEMY_DERRICK_SCAN_RANGE, ENEMIES, false).filter(isDerrick);
+
+		//most likely an enemy truck got the oil before us, so try to build a defense near it.
+		if (enemyDerrs.length > 0)
 		{
-			buildDefenses(droid); // Build right where this droid is at.
-		}
-		else
-		{
-			// Or defend the base with anti-air if needed.
-			buildAntiAir();
+			scanAndDefendPosition(undefined, droid);
 		}
 	}
 }
 
-//Investigate the area around the beacon
+//Target enemy player closest to whose objects are closest to the beacon.
 function eventBeacon(x, y, from, to, message)
 {
-	if(allianceExistsBetween(from, to) && (to != from))
+	if (allianceExistsBetween(from, to) && to !== from)
 	{
 		//log(from + " sent a beacon. Location [" + x + ", " + y + "]");
-		const MIN_ATTACKERS = 8;
-		const MIN_VTOLS = 4;
-		var attackers = enumGroup(attackGroup);
-		var vtols = enumGroup(vtolGroup);
-		var attackLen = attackers.length;
-		var vtolLen = vtols.length;
-
-		if (attackLen > MIN_ATTACKERS)
+		const BEACON_SCAN_RADIUS = 4;
+		var enemyObjects = enumRange(x, y, BEACON_SCAN_RADIUS, ENEMIES, false);
+		if (enemyObjects.length > 0)
 		{
-			for (var i = 0; i < attackLen; i++)
+			for (var i = 0, l = enemyObjects.length; i < l; ++i)
 			{
-				if(droidCanReach(attackers[i], x, y))
+				var obj = enemyObjects[i];
+				if (obj)
 				{
-					orderDroidLoc(attackers[i], DORDER_SCOUT, x, y);
+					setPlayerAsTarget(obj.player);
+					break;
 				}
 			}
 		}
+	}
+}
 
-		if (vtolLen > MIN_VTOLS)
+function eventObjectTransfer(obj, from)
+{
+	if (obj.player === me)
+	{
+		if (obj.type === DROID)
 		{
-			for (var j = 0; j < vtolLen; j++)
-			{
-				if (vtols[j].armed == 100)
-				{
-					orderDroidLoc(vtols[j], DORDER_PATROL, x, y);
-				}
-				else
-				{
-					orderDroid(vtols[j], DORDER_REARM);
-				}
-			}
+			eventDroidBuilt(obj, null); //put it in a group
 		}
 	}
 }

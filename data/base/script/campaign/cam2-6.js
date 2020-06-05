@@ -32,7 +32,7 @@ function camEnemyBaseDetected_COMainBase()
 			camMakePos("grp2Pos2"),
 			camMakePos("uplinkBaseCorner"),
 		],
-		interval: 40000,
+		interval: camSecondsToMilliseconds(40),
 		//fallback: camMakePos("heavyFacAssembly"),
 		repair: 40,
 		regroup: false,
@@ -42,7 +42,7 @@ function camEnemyBaseDetected_COMainBase()
 	camEnableFactory("COCyborgFactory-b2");
 	camEnableFactory("COHeavyFactory-b2R");
 	enableTimeBasedFactories(); //Might as well since the player is attacking.
-};
+}
 
 function camEnemyBaseEliminated_COUplinkBase()
 {
@@ -91,23 +91,12 @@ function enableTimeBasedFactories()
 	camEnableFactory("COHeavyFactory-b2L");
 }
 
-
-function enableReinforcements()
-{
-	playSound("pcv440.ogg"); // Reinforcements are available.
-	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "SUB_2_7S", {
-		area: "RTLZ",
-		message: "C26_LZ",
-		reinforcements: 180 //3 min
-	});
-}
-
 function eventStartLevel()
 {
 	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "SUB_2_7S", {
 		area: "RTLZ",
 		message: "C26_LZ",
-		reinforcements: -1
+		reinforcements: camMinutesToSeconds(3)
 	});
 
 	var startpos = getObject("startPosition");
@@ -119,13 +108,15 @@ function eventStartLevel()
 	startTransporterEntry(tent.x, tent.y, CAM_HUMAN_PLAYER);
 	setTransporterExit(text.x, text.y, CAM_HUMAN_PLAYER);
 
+	var enemyLz = getObject("COLandingZone");
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, THE_COLLECTIVE);
+
 	camSetArtifacts({
 		"COCyborgFactory-Arti": { tech: "R-Wpn-Rocket07-Tank-Killer" },
 		"COCommandCenter": { tech: "R-Wpn-Mortar3" },
 		"uplink": { tech: "R-Sys-VTOLCBS-Tower01" },
 	});
 
-	setPower(AI_POWER, THE_COLLECTIVE);
 	camCompleteRequiredResearch(COLLECTIVE_RES, THE_COLLECTIVE);
 
 	camSetEnemyBases({
@@ -149,85 +140,84 @@ function eventStartLevel()
 		},
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"COCyborgFactory-Arti": {
 			assembly: "COCyborgFactory-ArtiAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [npcybc, npcybf, cocybag, npcybr]
+			templates: [cTempl.npcybc, cTempl.npcybf, cTempl.cocybag, cTempl.npcybr]
 		},
 		"COCyborgFactory-b1": {
 			assembly: "COCyborgFactory-b1Assembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 6,
-			throttle: camChangeOnDiff(50000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(50)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [cocybag, npcybr]
+			templates: [cTempl.cocybag, cTempl.npcybr]
 		},
 		"COCyborgFactory-b2": {
 			assembly: "COCyborgFactory-b2Assembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(50000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(50)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [npcybc, npcybf]
+			templates: [cTempl.npcybc, cTempl.npcybf]
 		},
 		"COHeavyFactory-b2L": {
 			assembly: "COHeavyFactory-b2LAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(80000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(80)),
 			data: {
 				regroup: false,
 				repair: 20,
 				count: -1,
 			},
-			templates: [cohact, comhpv, comrotm]
+			templates: [cTempl.cohact, cTempl.comhpv, cTempl.comrotm]
 		},
 		"COHeavyFactory-b2R": {
 			assembly: "COHeavyFactory-b2RAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(60000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(60)),
 			data: {
 				regroup: false,
 				repair: 20,
 				count: -1,
 			},
-			templates: [comrotm, comhltat, cohact, comsensh]
+			templates: [cTempl.comrotm, cTempl.comhltat, cTempl.cohact, cTempl.comsensh]
 		},
 		"COMediumFactory": {
 			assembly: "COMediumFactoryAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(45000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(45)),
 			data: {
 				regroup: false,
 				repair: 30,
 				count: -1,
 			},
-			templates: [comhpv, comagt, comrotm]
+			templates: [cTempl.comhpv, cTempl.comagt, cTempl.comrotm]
 		},
 	});
 
 	hackAddMessage("C26_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER, true);
 
-	queue("enableReinforcements", 27000);
-	queue("northWestAttack", 120000);
-	queue("mainBaseAttackGroup", 180000);
-	queue("enableTimeBasedFactories", camChangeOnDiff(600000)); // 10 min
+	queue("northWestAttack", camMinutesToMilliseconds(2));
+	queue("mainBaseAttackGroup", camMinutesToMilliseconds(3));
+	queue("enableTimeBasedFactories", camChangeOnDiff(camMinutesToMilliseconds(10)));
 }

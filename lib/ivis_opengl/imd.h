@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 #ifndef _imd_
 #define _imd_
 
-#include <QtCore/qstring.h>
+#include "lib/framework/wzstring.h"
 
 struct iIMDShape;
 
@@ -52,8 +52,8 @@ void modelShutdown();
 
 /// Get filename of model pointer. This is really slow, so do not abuse for logging
 /// purposes, for example.
-const QString &modelName(iIMDShape *model);
+const std::string &modelName(iIMDShape *model);
 
-iIMDShape *modelGet(const QString &filename);
+iIMDShape *modelGet(const WzString &filename);
 
 #endif

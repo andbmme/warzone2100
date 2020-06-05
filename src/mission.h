@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -41,8 +41,6 @@ extern MISSION		mission;
 extern bool			offWorldKeepLists;
 extern DROID       *apsLimboDroids[MAX_PLAYERS];
 
-/** Return positions for vtols. */
-extern Vector2i asVTOLReturnPos[MAX_PLAYERS];
 extern bool Cheated;
 
 void initMission();
@@ -191,10 +189,22 @@ void resetMissionWidgets();
 
 UDWORD	getCampaignNumber();
 void	setCampaignNumber(UDWORD number);
-bool intAddMissionResult(bool result, bool bPlaySuccess);
 
-/** Reset the vtol landing pos. */
-void resetVTOLLandingPos();
+std::string getCampaignName();
+
+struct CAMPAIGN_FILE
+{
+	WzString name;
+	WzString level;
+	WzString video;
+	WzString captions;
+	WzString package;
+	WzString loading;
+};
+std::vector<CAMPAIGN_FILE> readCampaignFiles();
+
+bool intAddMissionResult(bool result, bool bPlaySuccess, bool showBackDrop);
+
 
 /** This is called via a script function to place the Limbo droids once the mission has started. */
 void placeLimboDroids();

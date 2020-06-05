@@ -6,18 +6,17 @@ const warning = "pcv632.ogg"; // Collective commander escaping
 const COLLEVTIVE_RES = [
 	"R-Defense-WallUpgrade03", "R-Struc-Materials04",
 	"R-Struc-Factory-Upgrade04", "R-Struc-Factory-Cyborg-Upgrade04",
-	"R-Vehicle-Engine04", "R-Vehicle-Metals03", "R-Cyborg-Metals03",
-	"R-Vehicle-Armor-Heat02", "R-Cyborg-Armor-Heat02",
+	"R-Vehicle-Engine04", "R-Vehicle-Metals05", "R-Cyborg-Metals05",
 	"R-Wpn-Cannon-Accuracy02", "R-Wpn-Cannon-Damage04",
 	"R-Wpn-Cannon-ROF02", "R-Wpn-Flamer-Damage06", "R-Wpn-Flamer-ROF03",
 	"R-Wpn-MG-Damage06", "R-Wpn-MG-ROF03", "R-Wpn-Mortar-Acc02",
 	"R-Wpn-Mortar-Damage06", "R-Wpn-Mortar-ROF03",
 	"R-Wpn-Rocket-Accuracy02", "R-Wpn-Rocket-Damage06",
 	"R-Wpn-Rocket-ROF03", "R-Wpn-RocketSlow-Accuracy03",
-	"R-Wpn-RocketSlow-Damage05", "R-Sys-Sensor-Upgrade01",
+	"R-Wpn-RocketSlow-Damage04", "R-Sys-Sensor-Upgrade01",
 	"R-Struc-VTOLFactory-Upgrade01", "R-Struc-VTOLPad-Upgrade01",
 	"R-Sys-Engineering02", "R-Wpn-Howitzer-Accuracy01",
-	"R-Wpn-Howitzer-Damage01", "R-Wpn-RocketSlow-ROF03",
+	"R-Wpn-Howitzer-Damage01", "R-Wpn-RocketSlow-ROF01",
 ];
 var commandGroup;
 
@@ -32,13 +31,14 @@ camAreaEvent("vtolRemoveZone", function(droid)
 });
 
 
-camAreaEvent("group1Trigger", function()
+camAreaEvent("group1Trigger", function(droid)
 {
 	hackRemoveMessage("C22_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER);
 	camEnableFactory("COFactoryEast");
 
 	camManageGroup(commandGroup, CAM_ORDER_DEFEND, {
 		pos: camMakePos("wayPoint1"),
+		radius: 0,
 		regroup: false,
 	});
 });
@@ -52,6 +52,7 @@ camAreaEvent("wayPoint1Rad", function(droid)
 	}
 	camManageGroup(commandGroup, CAM_ORDER_DEFEND, {
 		pos: camMakePos("wayPoint3"),
+		radius: 0,
 		regroup: false,
 	});
 });
@@ -71,9 +72,9 @@ camAreaEvent("wayPoint2Rad", function(droid)
 		return (obj.droidType === DROID_WEAPON);
 	});
 
-
 	camManageGroup(commandGroup, CAM_ORDER_DEFEND, {
 		pos: camMakePos("wayPoint4"),
+		radius: 0,
 		regroup: false
 	});
 
@@ -81,7 +82,7 @@ camAreaEvent("wayPoint2Rad", function(droid)
 		pos: camMakePos("defensePos"),
 		regroup: false,
 		radius: 10,
-		repair: 45,
+		repair: 67,
 	});
 
 	playSound(warning);
@@ -95,20 +96,24 @@ camAreaEvent("failZone", function(droid)
 		failSequence();
 	}
 	else
+	{
 		resetLabel("failZone");
+	}
 });
 
 function vtolAttack()
 {
-	var list; with (camTemplates) list = [colatv, colatv];
-	camSetVtolData(THE_COLLECTIVE, "vtolAppearPoint", "vtolRemovePoint", list, camChangeOnDiff(300000), "COCommandCenter"); // 5 min
+	var list = [cTempl.colatv, cTempl.colatv];
+	camSetVtolData(THE_COLLECTIVE, "vtolAppearPoint", "vtolRemovePoint", list, camChangeOnDiff(camMinutesToMilliseconds(5)), "COCommandCenter");
 }
 
 //Order the truck to build some defenses.
 function truckDefense()
 {
 	if (enumDroid(THE_COLLECTIVE, DROID_CONSTRUCT).length > 0)
-		queue("truckDefense", 160000);
+	{
+		queue("truckDefense", camSecondsToMilliseconds(160));
+	}
 
 	const list = ["WallTower06", "PillBox1", "WallTower03"];
 	camQueueBuilding(THE_COLLECTIVE, list[camRand(list.length)]);
@@ -123,15 +128,15 @@ function showGameOver()
 
 function failSequence()
 {
-	camTrace("Collective Commander escaped with artifact");
-	queue("showGameOver", 300);
+	queue("showGameOver", camSecondsToMilliseconds(0.3));
 }
 
 function retreatCommander()
 {
 	camManageGroup(commandGroup, CAM_ORDER_DEFEND, {
 		pos: camMakePos("wayPoint3"),
-		repair: 30,
+		radius: 6,
+		repair: 67,
 		regroup: false
 	});
 }
@@ -139,23 +144,13 @@ function retreatCommander()
 //Make the enemy commander flee back to the NW base if attacked.
 function eventAttacked(victim, attacker)
 {
-	if (camDef(victim)
-		&& victim.player === THE_COLLECTIVE
-		&& victim.y > Math.floor(mapHeight / 3) //only if the commander is escaping to the south
-		&& victim.group === commandGroup)
+	if (camDef(victim) &&
+		victim.player === THE_COLLECTIVE &&
+		victim.y > Math.floor(mapHeight / 3) && //only if the commander is escaping to the south
+		victim.group === commandGroup)
 	{
 		camCallOnce("retreatCommander");
 	}
-}
-
-function enableReinforcements()
-{
-	playSound("pcv440.ogg"); // Reinforcements are available.
-	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "CAM_2C", {
-		area: "RTLZ",
-		message: "C22_LZ",
-		reinforcements: 180 //3 min
-	});
 }
 
 function eventStartLevel()
@@ -163,7 +158,7 @@ function eventStartLevel()
 	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "CAM_2C",{
 		area: "RTLZ",
 		message: "C22_LZ",
-		reinforcements: -1
+		reinforcements: camMinutesToSeconds(3)
 	});
 
 	var startpos = getObject("startPosition");
@@ -175,11 +170,13 @@ function eventStartLevel()
 	startTransporterEntry(tent.x, tent.y, CAM_HUMAN_PLAYER);
 	setTransporterExit(text.x, text.y, CAM_HUMAN_PLAYER);
 
+	var enemyLz = getObject("COLandingZone");
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, THE_COLLECTIVE);
+
 	camSetArtifacts({
 		"COCommander": { tech: "R-Wpn-RocketSlow-Accuracy03" },
 	});
 
-	setPower(AI_POWER, THE_COLLECTIVE);
 	camCompleteRequiredResearch(COLLEVTIVE_RES, THE_COLLECTIVE);
 
 	camSetEnemyBases({
@@ -197,30 +194,32 @@ function eventStartLevel()
 		},
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"COFactoryEast": {
 			assembly: camMakePos("eastAssembly"),
 			order: CAM_ORDER_ATTACK,
 			groupSize: 6,
-			throttle: camChangeOnDiff(70000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(70)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [cohct, comtathh, comorb] //Heavy factory
+			templates: [cTempl.cohct, cTempl.comtathh, cTempl.comorb] //Heavy factory
 		},
 		"COFactoryWest": {
 			assembly: camMakePos("westAssembly"),
 			order: CAM_ORDER_DEFEND,
-			throttle: camChangeOnDiff(50000),
+			groupSize: 5,
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(80)),
 			data: {
+				pos: camMakePos("westAssembly"),
 				regroup: false,
-				repair: 45,
-				radius: 15,
+				repair: 67,
+				radius: 18,
 				count: -1,
 			},
-			templates: [comtath] //Hover lancers
+			templates: [cTempl.comtath] //Hover lancers
 		},
 	});
 
@@ -231,6 +230,5 @@ function eventStartLevel()
 
 	hackAddMessage("C22_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER, true);
 
-	queue("enableReinforcements", 20000);
-	queue("vtolAttack", 120000);
+	queue("vtolAttack", camMinutesToMilliseconds(2));
 }

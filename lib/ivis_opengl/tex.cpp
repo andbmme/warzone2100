@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -26,7 +26,6 @@
 #include "lib/ivis_opengl/piepalette.h"
 #include "lib/ivis_opengl/png_util.h"
 
-#include <QtCore/QList>
 #include "screen.h"
 
 //*************************************************************************
@@ -117,8 +116,7 @@ int pie_AddTexPage(iV_Image *s, const char *filename, bool gameTexture, int page
 		if (_TEX_PAGE[page].id)
 			delete _TEX_PAGE[page].id;
 		_TEX_PAGE[page].id = gfx_api::context::get().create_texture(s->width, s->height, format, filename);
-		pie_Texture(page).upload(0u, 0u, 0u, s->width, s->height, iV_getPixelFormat(s), s->bmp);
-		pie_Texture(page).generate_mip_levels();
+		pie_Texture(page).upload(0u, 0u, 0u, s->width, s->height, iV_getPixelFormat(s), s->bmp, true);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 	}
 	else	// this is an interface texture, do not use compression
@@ -139,7 +137,7 @@ int pie_AddTexPage(iV_Image *s, const char *filename, bool gameTexture, int page
 	// Use anisotropic filtering, if available, but only max 4.0 to reduce processor burden
 	if (GLEW_EXT_texture_filter_anisotropic)
 	{
-		GLfloat max;
+		gfx_api::gfxFloat max;
 		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &max);
 		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, MIN(4.0f, max));
 	}
@@ -203,7 +201,7 @@ int iV_GetTexture(const char *filename, bool compression)
 	/* Have we already loaded this one then? */
 	sstrcpy(path, filename);
 	pie_MakeTexPageName(path);
-	for (int i = 0; i < _TEX_PAGE.size(); i++)
+	for (size_t i = 0; i < _TEX_PAGE.size(); i++)
 	{
 		if (strncmp(path, _TEX_PAGE[i].name, iV_TEXNAME_MAX) == 0)
 		{
@@ -224,27 +222,27 @@ int iV_GetTexture(const char *filename, bool compression)
 	return pie_AddTexPage(&sSprite, path, compression);
 }
 
-bool replaceTexture(const QString &oldfile, const QString &newfile)
+bool replaceTexture(const WzString &oldfile, const WzString &newfile)
 {
 	char tmpname[iV_TEXNAME_MAX];
 
 	// Load new one to replace it
 	iV_Image image;
-	if (!iV_loadImage_PNG(QString("texpages/" + newfile).toUtf8().constData(), &image))
+	if (!iV_loadImage_PNG(WzString("texpages/" + newfile).toUtf8().c_str(), &image))
 	{
-		debug(LOG_ERROR, "Failed to load image: %s", newfile.toUtf8().constData());
+		debug(LOG_ERROR, "Failed to load image: %s", newfile.toUtf8().c_str());
 		return false;
 	}
-	sstrcpy(tmpname, oldfile.toUtf8().constData());
+	sstrcpy(tmpname, oldfile.toUtf8().c_str());
 	pie_MakeTexPageName(tmpname);
 	// Have we already loaded this one?
-	for (int i = 0; i < _TEX_PAGE.size(); i++)
+	for (size_t i = 0; i < _TEX_PAGE.size(); i++)
 	{
 		if (strcmp(tmpname, _TEX_PAGE[i].name) == 0)
 		{
 			GL_DEBUG("Replacing texture");
-			debug(LOG_TEXTURE, "Replacing texture %s with %s from index %d (tex id %u)", _TEX_PAGE[i].name, newfile.toUtf8().constData(), i, _TEX_PAGE[i].id->id());
-			sstrcpy(tmpname, newfile.toUtf8().constData());
+			debug(LOG_TEXTURE, "Replacing texture %s with %s from index %zu (tex id %u)", _TEX_PAGE[i].name, newfile.toUtf8().c_str(), i, _TEX_PAGE[i].id->id());
+			sstrcpy(tmpname, newfile.toUtf8().c_str());
 			pie_MakeTexPageName(tmpname);
 			pie_AddTexPage(&image, tmpname, true, i);
 			iV_unloadImage(&image);

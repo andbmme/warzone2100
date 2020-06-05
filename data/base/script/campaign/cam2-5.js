@@ -5,8 +5,7 @@ const COLLECTIVE_RES = [
 	"R-Defense-WallUpgrade03", "R-Struc-Materials05",
 	"R-Struc-Factory-Upgrade05", "R-Struc-Factory-Cyborg-Upgrade05",
 	"R-Struc-VTOLFactory-Upgrade02", "R-Struc-VTOLPad-Upgrade01",
-	"R-Vehicle-Engine04", "R-Vehicle-Metals04", "R-Cyborg-Metals05",
-	"R-Vehicle-Armor-Heat02", "R-Cyborg-Armor-Heat02",
+	"R-Vehicle-Engine04", "R-Vehicle-Metals05", "R-Cyborg-Metals05",
 	"R-Sys-Engineering02", "R-Wpn-Cannon-Accuracy02", "R-Wpn-Cannon-Damage04",
 	"R-Wpn-Cannon-ROF02", "R-Wpn-Flamer-Damage06", "R-Wpn-Flamer-ROF03",
 	"R-Wpn-MG-Damage07", "R-Wpn-MG-ROF03", "R-Wpn-Mortar-Acc02",
@@ -14,25 +13,41 @@ const COLLECTIVE_RES = [
 	"R-Wpn-Rocket-Accuracy02", "R-Wpn-Rocket-Damage06",
 	"R-Wpn-Rocket-ROF03", "R-Wpn-RocketSlow-Accuracy03",
 	"R-Wpn-RocketSlow-Damage05", "R-Sys-Sensor-Upgrade01",
-	"R-Wpn-Howitzer-Accuracy01", "R-Wpn-RocketSlow-ROF03",
+	"R-Wpn-Howitzer-Accuracy01", "R-Wpn-RocketSlow-ROF02",
 	"R-Wpn-Howitzer-Damage01",
 ];
 
 camAreaEvent("factoryTrigger", function(droid)
 {
-	camEnableFactory("COMediumFactory");
-	camEnableFactory("COCyborgFactoryL");
-	camEnableFactory("COCyborgFactoryR");
-
+	enableFactories();
 	camManageGroup(camMakeGroup("canalGuards"), CAM_ORDER_ATTACK, {
 		morale: 60,
-		fallback: camMakePos("mediumFactoryAssembly"),
-		repair: 30,
+		fallback: camMakePos("COMediumFactoryAssembly"),
+		repair: 67,
 		regroup: false,
 	});
 });
 
-camAreaEvent("damTrigger", function(droid)
+function camEnemyBaseEliminated_COEastBase()
+{
+	hackRemoveMessage("C25_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER);
+}
+
+//Tell everything not grouped on map to attack
+function camEnemyBaseDetected_COEastBase()
+{
+	var droids = enumArea(0, 0, mapWidth, mapHeight, THE_COLLECTIVE, false).filter(function(obj) {
+		return obj.type === DROID && obj.group === null && obj.canHitGround;
+	});
+
+	camManageGroup(camMakeGroup(droids), CAM_ORDER_ATTACK, {
+		count: -1,
+		regroup: false,
+		repair: 80
+	});
+}
+
+function setupDamHovers()
 {
 	camManageGroup(camMakeGroup("damGroup"), CAM_ORDER_PATROL, {
 		pos: [
@@ -42,22 +57,17 @@ camAreaEvent("damTrigger", function(droid)
 		],
 		//morale: 10,
 		//fallback: camMakePos("damWaypoint1"),
-		repair: 40,
+		repair: 67,
 		regroup: true,
 	});
-});
-
-function camEnemyBaseEliminated_COEastBase()
-{
-	hackRemoveMessage("C25_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER);
 }
 
 function setupCyborgsNorth()
 {
 	camManageGroup(camMakeGroup("northCyborgs"), CAM_ORDER_ATTACK, {
 		morale: 70,
-		fallback: camMakePos("mediumFactoryAssembly"),
-		repair: 30,
+		fallback: camMakePos("COMediumFactoryAssembly"),
+		repair: 67,
 		regroup: false,
 	});
 }
@@ -73,14 +83,11 @@ function setupCyborgsEast()
 	});
 }
 
-function enableReinforcements()
+function enableFactories()
 {
-	playSound("pcv440.ogg"); // Reinforcements are available.
-	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "SUB_2DS", {
-		area: "RTLZ",
-		message: "C25_LZ",
-		reinforcements: 180 //3 min
-	});
+	camEnableFactory("COMediumFactory");
+	camEnableFactory("COCyborgFactoryL");
+	camEnableFactory("COCyborgFactoryR");
 }
 
 function eventStartLevel()
@@ -88,7 +95,7 @@ function eventStartLevel()
 	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "SUB_2DS",{
 		area: "RTLZ",
 		message: "C25_LZ",
-		reinforcements: -1
+		reinforcements: camMinutesToSeconds(3)
 	});
 
 	var startpos = getObject("startPosition");
@@ -100,13 +107,16 @@ function eventStartLevel()
 	startTransporterEntry(tent.x, tent.y, CAM_HUMAN_PLAYER);
 	setTransporterExit(text.x, text.y, CAM_HUMAN_PLAYER);
 
+	var enemyLz = getObject("COLandingZone");
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, THE_COLLECTIVE);
+
 	camSetArtifacts({
 		"NuclearReactor": { tech: "R-Struc-Power-Upgrade01" },
 		"COMediumFactory": { tech: "R-Wpn-Cannon4AMk1" },
 		"COCyborgFactoryL": { tech: "R-Wpn-MG4" },
+		"COTankKillerHardpoint": { tech: "R-Wpn-RocketSlow-ROF02" },
 	});
 
-	setPower(AI_POWER, THE_COLLECTIVE);
 	camCompleteRequiredResearch(COLLECTIVE_RES, THE_COLLECTIVE);
 
 	camSetEnemyBases({
@@ -116,50 +126,57 @@ function eventStartLevel()
 			detectSnd: "pcv379.ogg",
 			eliminateSnd: "pcv394.ogg",
 		},
+		"CODamBase": {
+			cleanup: "damBaseCleanup",
+			detectMsg: "C25_BASE2",
+			detectSnd: "pcv379.ogg",
+			eliminateSnd: "pcv394.ogg",
+		},
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"COMediumFactory": {
 			assembly: "COMediumFactoryAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(60000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(50)),
 			data: {
 				regroup: false,
 				repair: 20,
 				count: -1,
 			},
-			templates: [comct, comatt, comhpv]
+			templates: [cTempl.comct, cTempl.comatt, cTempl.comhpv]
 		},
 		"COCyborgFactoryL": {
 			assembly: "COCyborgFactoryLAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(30)),
 			data: {
 				regroup: false,
 				repair: 30,
 				count: -1,
 			},
-			templates: [cocybag, npcybf, npcybr]
+			templates: [cTempl.cocybag, cTempl.npcybf, cTempl.npcybr]
 		},
 		"COCyborgFactoryR": {
 			assembly: "COCyborgFactoryRAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(30)),
 			data: {
 				regroup: false,
 				repair: 30,
 				count: -1,
 			},
-			templates: [npcybr, npcybc]
+			templates: [cTempl.npcybr, cTempl.npcybc]
 		},
 	});
 
 	hackAddMessage("C25_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER, true);
 
-	queue("enableReinforcements", 15000);
-	queue("setupCyborgsEast", camChangeOnDiff(180000));//3 min
-	queue("setupCyborgsNorth", camChangeOnDiff(600000));//10 min
+	queue("setupDamHovers", camSecondsToMilliseconds(3));
+	queue("setupCyborgsEast", camChangeOnDiff(camMinutesToMilliseconds(3)));
+	queue("enableFactories", camChangeOnDiff(camMinutesToMilliseconds(8)));
+	queue("setupCyborgsNorth", camChangeOnDiff(camMinutesToMilliseconds(10)));
 }

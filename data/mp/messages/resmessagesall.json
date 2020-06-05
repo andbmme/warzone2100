@@ -489,9 +489,9 @@
         "sequenceName": "res_systech.ogg",
         "text": [
             "New Systems Tower Available",
-            "Radar detector tower detects enemy sensors",
-            "Orders assigned indirect fire units to fire at the enemy sensors",
-            "Counter-battery fire continues until enemy sensor is suppressed"
+            "New Systems Turret Available",
+            "Radar detector detects enemy sensors",
+            "Farther range compared to other sensors"
         ]
     },
     "RES_SY_SPT": {
@@ -525,6 +525,17 @@
             "Extended sensor range",
             "Keeps map areas under constant surveillance",
             "May be assigned as spotter for indirect fire weapons"
+        ]
+    },
+    "RES_SY_SUE1": {
+        "id": "RES_SY_SUE1",
+        "imdName": "MICAPSUL.PIE",
+        "sequenceName": "res_systech.ogg",
+        "text": [
+            "New Systems Sensor Available",
+            "New Thermal Emissions detection",
+            "Objects become difficult to locate near it",
+            "May be assigned to follow units"
         ]
     },
     "RES_SY_SU1": {

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 #include "lib/framework/math_ext.h"
 #include "lib/gamelib/gtime.h"
 #include "lib/ivis_opengl/pietypes.h"
+#include "lib/framework/physfs_ext.h"
 
 #include "tracklib.h"
 #include "aud.h"
@@ -95,7 +96,7 @@ bool audio_Disabled(void)
 // =======================================================================================================================
 // =======================================================================================================================
 //
-bool audio_Init(AUDIO_CALLBACK pStopTrackCallback, bool really_enable)
+bool audio_Init(AUDIO_CALLBACK pStopTrackCallback, HRTFMode hrtf, bool really_enable)
 {
 	// init audio system
 	g_sPreviousSample.iTrack = NO_SAMPLE;
@@ -105,7 +106,7 @@ bool audio_Init(AUDIO_CALLBACK pStopTrackCallback, bool really_enable)
 	g_bAudioEnabled = really_enable;
 	if (g_bAudioEnabled)
 	{
-		g_bAudioEnabled = sound_Init();
+		g_bAudioEnabled = sound_Init(hrtf);
 	}
 	if (g_bAudioEnabled)
 	{
@@ -863,7 +864,7 @@ bool audio_PlayObjDynamicTrack(SIMPLE_OBJECT *psObj, int iTrack, AUDIO_CALLBACK 
  *  \note You must _never_ manually free() the memory used by the returned
  *        pointer.
  */
-AUDIO_STREAM *audio_PlayStream(const char *fileName, float volume, void (*onFinished)(void *), void *user_data)
+AUDIO_STREAM *audio_PlayStream(const char *fileName, float volume, void (*onFinished)(const void *), const void *user_data)
 {
 	PHYSFS_file *fileHandle;
 	AUDIO_STREAM *stream;
@@ -880,7 +881,7 @@ AUDIO_STREAM *audio_PlayStream(const char *fileName, float volume, void (*onFini
 	debug(LOG_WZ, "Reading...[directory: %s] %s", PHYSFS_getRealDir(fileName), fileName);
 	if (fileHandle == nullptr)
 	{
-		debug(LOG_ERROR, "sound_LoadTrackFromFile: PHYSFS_openRead(\"%s\") failed with error: %s\n", fileName, PHYSFS_getLastError());
+		debug(LOG_ERROR, "sound_LoadTrackFromFile: PHYSFS_openRead(\"%s\") failed with error: %s\n", fileName, WZ_PHYSFS_getLastError());
 		return nullptr;
 	}
 
@@ -1120,7 +1121,7 @@ void audio_RemoveObj(SIMPLE_OBJECT const *psObj)
 			// Make sure to keep our linked list iterator valid
 			psSample = psSample->psNext;
 
-			debug(LOG_MEMORY, "audio_RemoveObj: callback %p sample %d\n", toRemove->pCallback, toRemove->iTrack);
+			debug(LOG_MEMORY, "audio_RemoveObj: callback %p sample %d\n", reinterpret_cast<void *>(toRemove->pCallback), toRemove->iTrack);
 			// Remove sound from global active list
 			sound_RemoveActiveSample(toRemove);   //remove from global active list.
 
@@ -1139,7 +1140,7 @@ void audio_RemoveObj(SIMPLE_OBJECT const *psObj)
 
 	if (count)
 	{
-		debug(LOG_MEMORY, "audio_RemoveObj: BASE_OBJECT* 0x%p was found %u times in the audio sample queue", psObj, count);
+		debug(LOG_MEMORY, "audio_RemoveObj: BASE_OBJECT* 0x%p was found %u times in the audio sample queue", static_cast<const void *>(psObj), count);
 	}
 
 	// Reset the deletion count
@@ -1159,7 +1160,7 @@ void audio_RemoveObj(SIMPLE_OBJECT const *psObj)
 			// Make sure to keep our linked list iterator valid
 			psSample = psSample->psNext;
 
-			debug(LOG_MEMORY, "audio_RemoveObj: callback %p sample %d\n", toRemove->pCallback, toRemove->iTrack);
+			debug(LOG_MEMORY, "audio_RemoveObj: callback %p sample %d\n", reinterpret_cast<void *>(toRemove->pCallback), toRemove->iTrack);
 			// Stop this sound sample
 			sound_RemoveActiveSample(toRemove);   //remove from global active list.
 
@@ -1178,6 +1179,6 @@ void audio_RemoveObj(SIMPLE_OBJECT const *psObj)
 
 	if (count)
 	{
-		debug(LOG_MEMORY, "audio_RemoveObj: ***Warning! psOBJ %p was found %u times in the list of playing audio samples", psObj, count);
+		debug(LOG_MEMORY, "audio_RemoveObj: ***Warning! psOBJ %p was found %u times in the list of playing audio samples", static_cast<const void *>(psObj), count);
 	}
 }

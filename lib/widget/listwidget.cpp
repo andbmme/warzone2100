@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -23,8 +23,9 @@
 
 #include "listwidget.h"
 #include "button.h"
-#include <QtCore/QSignalMapper>
 #include "lib/framework/math_ext.h"
+
+#include <algorithm>
 
 TabSelectionStyle::TabSelectionStyle(Image tab, Image tabDown, Image tabHighlight, Image prev, Image prevDown, Image prevHighlight, Image next, Image nextDown, Image nextHighlight, int gap)
 	: tabSize(tab.width(), tab.height())
@@ -36,7 +37,7 @@ TabSelectionStyle::TabSelectionStyle(Image tab, Image tabDown, Image tabHighligh
 {
 	if (!prev.isNull())
 	{
-		scrollTabSize = QSize(prev.width(), prev.height());
+		scrollTabSize = WzSize(prev.width(), prev.height());
 	}
 }
 
@@ -46,11 +47,17 @@ TabSelectionWidget::TabSelectionWidget(WIDGET *parent)
 	, tabsAtOnce(1)
 	, prevTabPageButton(new W_BUTTON(this))
 	, nextTabPageButton(new W_BUTTON(this))
-	, setTabMapper(new QSignalMapper(this))
 {
-	connect(setTabMapper, SIGNAL(mapped(int)), this, SLOT(setTab(int)));
-	connect(prevTabPageButton, SIGNAL(clicked()), this, SLOT(prevTabPage()));
-	connect(nextTabPageButton, SIGNAL(clicked()), this, SLOT(nextTabPage()));
+	prevTabPageButton->addOnClickHandler([](W_BUTTON& button) {
+		TabSelectionWidget* pParent = static_cast<TabSelectionWidget*>(button.parent());
+		assert(pParent != nullptr);
+		pParent->prevTabPage();
+	});
+	nextTabPageButton->addOnClickHandler([](W_BUTTON& button) {
+		TabSelectionWidget* pParent = static_cast<TabSelectionWidget*>(button.parent());
+		assert(pParent != nullptr);
+		pParent->nextTabPage();
+	});
 
 	prevTabPageButton->setTip(_("Tab Scroll left"));
 	nextTabPageButton->setTip(_("Tab Scroll right"));
@@ -64,9 +71,9 @@ void TabSelectionWidget::setHeight(int height)
 	setGeometry(x(), y(), width(), height);
 }
 
-void TabSelectionWidget::addStyle(TabSelectionStyle const &style)
+void TabSelectionWidget::addStyle(TabSelectionStyle const &tabStyle)
 {
-	styles.push_back(style);
+	styles.push_back(tabStyle);
 
 	doLayoutAll();
 }
@@ -80,7 +87,21 @@ void TabSelectionWidget::setTab(int tab)
 		return;  // Nothing to do.
 	}
 	doLayoutAll();
-	emit tabChanged(currentTab);
+
+	/* Call all onTabChanged event handlers */
+	for (auto it = onTabChangedHandlers.begin(); it != onTabChangedHandlers.end(); it++)
+	{
+		auto onTabChanged = *it;
+		if (onTabChanged)
+		{
+			onTabChanged(*this, currentTab);
+		}
+	}
+}
+
+void TabSelectionWidget::addOnTabChangedHandler(const W_TABSELECTION_ON_TAB_CHANGED_FUNC& onTabChangedFunc)
+{
+	onTabChangedHandlers.push_back(onTabChangedFunc);
 }
 
 void TabSelectionWidget::setNumberOfTabs(int tabs)
@@ -96,8 +117,11 @@ void TabSelectionWidget::setNumberOfTabs(int tabs)
 	for (unsigned n = previousSize; n < tabButtons.size(); ++n)
 	{
 		tabButtons[n] = new W_BUTTON(this);
-		connect(tabButtons[n], SIGNAL(clicked()), setTabMapper, SLOT(map()));
-		setTabMapper->setMapping(tabButtons[n], n);
+		tabButtons[n]->addOnClickHandler([n](W_BUTTON& button) {
+			TabSelectionWidget* pParent = static_cast<TabSelectionWidget*>(button.parent());
+			assert(pParent != nullptr);
+			pParent->setTab(n);
+		});
 	}
 
 	doLayoutAll();
@@ -105,22 +129,22 @@ void TabSelectionWidget::setNumberOfTabs(int tabs)
 
 void TabSelectionWidget::prevTabPage()
 {
-	setTab(currentTab - tabsAtOnce);
+	setTab(currentTab - currentTab % tabsAtOnce - 1);
 }
 
 void TabSelectionWidget::nextTabPage()
 {
-	setTab(currentTab + tabsAtOnce);
+	setTab(currentTab + (tabsAtOnce - currentTab % tabsAtOnce));
 }
 
 void TabSelectionWidget::doLayoutAll()
 {
-	TabSelectionStyle style;
+	TabSelectionStyle tabStyle;
 	int scrollSpace = 0;
 	tabsAtOnce = tabs();
-	style.tabSize = QSize(width() / tabs(), height());
-	style.scrollTabSize = QSize(0, 0);
-	style.tabGap = 0;
+	tabStyle.tabSize = WzSize(width() / tabs(), height());
+	tabStyle.scrollTabSize = WzSize(0, 0);
+	tabStyle.tabGap = 0;
 	for (unsigned n = 0; n < styles.size(); ++n)
 	{
 		bool haveScroll_ = !styles[n].scrollTabSize.isEmpty();
@@ -130,20 +154,20 @@ void TabSelectionWidget::doLayoutAll()
 		{
 			scrollSpace = scrollSpace_;
 			tabsAtOnce = tabsAtOnce_;
-			style = styles[n];
+			tabStyle = styles[n];
 			break;
 		}
 	}
-	prevTabPageButton->setGeometry(0, 0, style.scrollTabSize.width(), style.scrollTabSize.height());
-	prevTabPageButton->setImages(style.prevScrollTabImage, style.prevScrollTabImageDown, style.prevScrollTabImageHighlight);
+	prevTabPageButton->setGeometry(0, 0, tabStyle.scrollTabSize.width(), tabStyle.scrollTabSize.height());
+	prevTabPageButton->setImages(tabStyle.prevScrollTabImage, tabStyle.prevScrollTabImageDown, tabStyle.prevScrollTabImageHighlight);
 	prevTabPageButton->show(currentTab >= tabsAtOnce);
-	nextTabPageButton->setGeometry(width() - style.scrollTabSize.width(), 0, style.scrollTabSize.width(), style.scrollTabSize.height());
-	nextTabPageButton->setImages(style.nextScrollTabImage, style.nextScrollTabImageDown, style.nextScrollTabImageHighlight);
+	nextTabPageButton->setGeometry(width() - tabStyle.scrollTabSize.width(), 0, tabStyle.scrollTabSize.width(), tabStyle.scrollTabSize.height());
+	nextTabPageButton->setImages(tabStyle.nextScrollTabImage, tabStyle.nextScrollTabImageDown, tabStyle.nextScrollTabImageHighlight);
 	nextTabPageButton->show(currentTab / tabsAtOnce < (tabs() - 1) / tabsAtOnce);
 	for (unsigned n = 0; n < tabButtons.size(); ++n)
 	{
-		tabButtons[n]->setGeometry(scrollSpace + n % tabsAtOnce * (style.tabSize.width() + style.tabGap), 0, style.tabSize.width(), style.tabSize.height());
-		tabButtons[n]->setImages(style.tabImage, style.tabImageDown, style.tabImageHighlight);
+		tabButtons[n]->setGeometry(scrollSpace + n % tabsAtOnce * (tabStyle.tabSize.width() + tabStyle.tabGap), 0, tabStyle.tabSize.width(), tabStyle.tabSize.height());
+		tabButtons[n]->setImages(tabStyle.tabImage, tabStyle.tabImageDown, tabStyle.tabImageHighlight);
 		tabButtons[n]->show(currentTab / tabsAtOnce == n / tabsAtOnce);
 		tabButtons[n]->setState(n == currentTab ? WBUT_LOCK : 0);
 	}
@@ -173,13 +197,13 @@ void ListWidget::widgetLost(WIDGET *widget)
 
 void ListWidget::setChildSize(int width, int height)
 {
-	childSize = QSize(width, height);
+	childSize = WzSize(width, height);
 	doLayoutAll();
 }
 
 void ListWidget::setChildSpacing(int width, int height)
 {
-	spacing = QSize(width, height);
+	spacing = WzSize(width, height);
 	doLayoutAll();
 }
 
@@ -199,7 +223,15 @@ void ListWidget::addWidgetToLayout(WIDGET *widget)
 	int numPages = pages();
 	if (oldNumPages != numPages)
 	{
-		emit numberOfPagesChanged(numPages);
+		/* Call all onNumberOfPagesChanged event handlers */
+		for (auto it = onNumberOfPagesChangedHandlers.begin(); it != onNumberOfPagesChangedHandlers.end(); it++)
+		{
+			auto onNumberOfPagesChanged = *it;
+			if (onNumberOfPagesChanged)
+			{
+				onNumberOfPagesChanged(*this, numPages);
+			}
+		}
 	}
 }
 
@@ -220,7 +252,16 @@ void ListWidget::setCurrentPage(int page)
 	{
 		myChildren[n]->show();
 	}
-	emit currentPageChanged(currentPage_);
+
+	/* Call all onCurrentPageChanged event handlers */
+	for (auto it = onCurrentPageChangedHandlers.begin(); it != onCurrentPageChangedHandlers.end(); it++)
+	{
+		auto onCurrentPageChanged = *it;
+		if (onCurrentPageChanged)
+		{
+			onCurrentPageChanged(*this, currentPage_);
+		}
+	}
 }
 
 void ListWidget::doLayoutAll()
@@ -251,15 +292,37 @@ void ListWidget::doLayout(int num)
 	myChildren[num]->show(page == currentPage_);
 }
 
+void ListWidget::addOnCurrentPageChangedHandler(const W_LISTWIDGET_ON_CURRENTPAGECHANGED_FUNC& handlerFunc)
+{
+	onCurrentPageChangedHandlers.push_back(handlerFunc);
+}
+
+void ListWidget::addOnNumberOfPagesChangedHandler(const W_LISTWIDGET_ON_NUMBEROFPAGESCHANGED_FUNC& handlerFunc)
+{
+	onNumberOfPagesChangedHandlers.push_back(handlerFunc);
+}
+
 ListTabWidget::ListTabWidget(WIDGET *parent)
 	: WIDGET(parent)
 	, tabs(new TabSelectionWidget(this))
 	, widgets(new ListWidget(this))
 	, tabPos(Top)
 {
-	connect(tabs, SIGNAL(tabChanged(int)), widgets, SLOT(setCurrentPage(int)));
-	connect(widgets, SIGNAL(currentPageChanged(int)), tabs, SLOT(setTab(int)));
-	connect(widgets, SIGNAL(numberOfPagesChanged(int)), tabs, SLOT(setNumberOfTabs(int)));
+	tabs->addOnTabChangedHandler([](TabSelectionWidget& tabsWidget, int currentTab) {
+		ListTabWidget* pParent = static_cast<ListTabWidget*>(tabsWidget.parent());
+		assert(pParent != nullptr);
+		pParent->setCurrentPage(currentTab);
+	});
+	widgets->addOnCurrentPageChangedHandler([](ListWidget& listWidget, int currentPage) {
+		ListTabWidget* pParent = static_cast<ListTabWidget*>(listWidget.parent());
+		assert(pParent != nullptr);
+		pParent->tabs->setTab(currentPage);
+	});
+	widgets->addOnNumberOfPagesChangedHandler([](ListWidget& listWidget, int numberOfPages) {
+		ListTabWidget* pParent = static_cast<ListTabWidget*>(listWidget.parent());
+		assert(pParent != nullptr);
+		pParent->tabs->setNumberOfTabs(numberOfPages);
+	});
 	tabs->setNumberOfTabs(widgets->pages());
 }
 

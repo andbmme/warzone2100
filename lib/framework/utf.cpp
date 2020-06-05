@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 2007  Giel van Schijndel
-	Copyright (C) 2007-2017  Warzone 2100 Project
+	Copyright (C) 2007-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -170,7 +170,7 @@ static size_t unicode_utf8_char_length(const utf_32_char unicode_char)
 	return 0;
 }
 
-char *UTF8CharacterAtOffset(const char *utf8_string, size_t index)
+const char *UTF8CharacterAtOffset(const char *utf8_string, size_t index)
 {
 	while (*utf8_string != '\0'
 	       && index != 0)
@@ -186,7 +186,7 @@ char *UTF8CharacterAtOffset(const char *utf8_string, size_t index)
 		return nullptr;
 	}
 
-	return (char *)utf8_string;
+	return utf8_string;
 }
 
 /** Encodes a single Unicode character to a UTF-8 encoded string.
@@ -208,14 +208,14 @@ static char *encode_utf8_char(const utf_32_char unicode_char, char *out_char)
 	// 7 bits
 	if (unicode_char < 0x00000080)
 	{
-		*(next_char++) = unicode_char;
+		*(next_char++) = static_cast<char>(unicode_char);
 	}
 	// 11 bits
 	else if (unicode_char < 0x00000800)
 	{
 		// 0xc0 provides the counting bits: 110
 		// then append the 5 most significant bits
-		*(next_char++) = 0xc0 | (unicode_char >> 6);
+		*(next_char++) = static_cast<char>(0xc0 | (unicode_char >> 6));
 		// Put the next 6 bits in a byte of their own
 		*(next_char++) = 0x80 | (unicode_char & 0x3f);
 	}
@@ -224,7 +224,7 @@ static char *encode_utf8_char(const utf_32_char unicode_char, char *out_char)
 	{
 		// 0xe0 provides the counting bits: 1110
 		// then append the 4 most significant bits
-		*(next_char++) = 0xe0 | (unicode_char >> 12);
+		*(next_char++) = static_cast<char>(0xe0 | (unicode_char >> 12));
 		// Put the next 12 bits in two bytes of their own
 		*(next_char++) = 0x80 | ((unicode_char >> 6) & 0x3f);
 		*(next_char++) = 0x80 | (unicode_char & 0x3f);
@@ -237,7 +237,7 @@ static char *encode_utf8_char(const utf_32_char unicode_char, char *out_char)
 	{
 		// 0xf0 provides the counting bits: 11110
 		// then append the 3 most significant bits
-		*(next_char++) = 0xf0 | (unicode_char >> 18);
+		*(next_char++) = static_cast<char>(0xf0 | (unicode_char >> 18));
 		// Put the next 18 bits in three bytes of their own
 		*(next_char++) = 0x80 | ((unicode_char >> 12) & 0x3f);
 		*(next_char++) = 0x80 | ((unicode_char >> 6) & 0x3f);
@@ -299,11 +299,11 @@ static utf_16_char *encode_utf16_char(const utf_32_char unicode_char, utf_16_cha
 	// 16 bits
 	if (unicode_char < 0x10000)
 	{
-		*(next_char++) = unicode_char;
+		*(next_char++) = static_cast<utf_16_char>(unicode_char);
 	}
 	else if (unicode_char < 0x110000)
 	{
-		const utf_16_char v = unicode_char - 0x10000;
+		const utf_16_char v = static_cast<utf_16_char>(unicode_char - 0x10000);
 
 		*(next_char++) = 0xD800 | (v >> 10);
 		*(next_char++) = 0xDC00 | (v & 0x3ff);
@@ -434,7 +434,7 @@ utf_16_char *UTF8toUTF16(const char *utf8_string, size_t *nbytes)
 	return unicode_string;
 }
 
-utf_16_char *UTF16CharacterAtOffset(const utf_16_char *utf16_string, size_t index)
+const utf_16_char *UTF16CharacterAtOffset(const utf_16_char *utf16_string, size_t index)
 {
 	while (*utf16_string != '\0'
 	       && index != 0)
@@ -450,7 +450,7 @@ utf_16_char *UTF16CharacterAtOffset(const utf_16_char *utf16_string, size_t inde
 		return nullptr;
 	}
 
-	return (utf_16_char *)utf16_string;
+	return utf16_string;
 }
 
 

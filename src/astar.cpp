@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -148,7 +148,10 @@ struct PathNonblockingArea
 		return x >= x1 && x < x2 && y >= y1 && y < y2;
 	}
 
-	int16_t x1, x2, y1, y2;
+	int16_t x1 = 0;
+	int16_t x2 = 0;
+	int16_t y1 = 0;
+	int16_t y2 = 0;
 };
 
 // Data structures used for pathfinding, can contain cached results.
@@ -513,7 +516,7 @@ ASR_RETVAL fpathAStarRoute(MOVE_CONTROL *psMove, PATHJOB *psJob)
 	static std::vector<Vector2i> path;  // Declared static to save allocations.
 	path.clear();
 
-	Vector2i newP;
+	Vector2i newP(0, 0);
 	for (Vector2i p(world_coord(endCoord.x) + TILE_UNITS / 2, world_coord(endCoord.y) + TILE_UNITS / 2); true; p = newP)
 	{
 		ASSERT_OR_RETURN(ASR_FAILED, worldOnMap(p.x, p.y), "Assigned XY coordinates (%d, %d) not on map!", (int)p.x, (int)p.y);
@@ -553,17 +556,8 @@ ASR_RETVAL fpathAStarRoute(MOVE_CONTROL *psMove, PATHJOB *psJob)
 		}
 	}
 
-	// TODO FIXME once we can change numPoints to something larger than int
-	psMove->numPoints = std::min<size_t>(INT32_MAX - 1, path.size());
-
 	// Allocate memory
-	psMove->asPath = static_cast<Vector2i *>(malloc(sizeof(*psMove->asPath) * path.size()));
-	ASSERT(psMove->asPath, "Out of memory");
-	if (!psMove->asPath)
-	{
-		fpathHardTableReset();
-		return ASR_FAILED;
-	}
+	psMove->asPath.resize(path.size());
 
 	// get the route in the correct order
 	// If as I suspect this is to reverse the list, then it's my suspicion that
@@ -579,7 +573,7 @@ ASR_RETVAL fpathAStarRoute(MOVE_CONTROL *psMove, PATHJOB *psJob)
 	if (mustReverse)
 	{
 		// Copy the list, in reverse.
-		std::copy(path.rbegin(), path.rend(), psMove->asPath);
+		std::copy(path.rbegin(), path.rend(), psMove->asPath.data());
 
 		if (!context.isBlocked(tileOrig.x, tileOrig.y))  // If blocked, searching from tileDest to tileOrig wouldn't find the tileOrig tile.
 		{
@@ -590,7 +584,7 @@ ASR_RETVAL fpathAStarRoute(MOVE_CONTROL *psMove, PATHJOB *psJob)
 	else
 	{
 		// Copy the list.
-		std::copy(path.begin(), path.end(), psMove->asPath);
+		std::copy(path.begin(), path.end(), psMove->asPath.data());
 	}
 
 	// Move context to beginning of last recently used list.

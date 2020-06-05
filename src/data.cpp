@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
  */
 
 #include <physfs.h>
+#include "lib/framework/physfs_ext.h"
 
 #include "lib/framework/frame.h"
 #include "lib/framework/frameresource.h"
@@ -33,7 +34,6 @@
 #include "lib/gamelib/parser.h"
 #include "lib/ivis_opengl/bitimage.h"
 #include "lib/ivis_opengl/png_util.h"
-#include "lib/script/script.h"
 #include "lib/sound/audio.h"
 
 #include "qtscript.h"
@@ -44,7 +44,6 @@
 #include "message.h"
 #include "multiplay.h"
 #include "research.h"
-#include "scriptvals.h"
 #include "stats.h"
 #include "template.h"
 #include "text.h"
@@ -65,7 +64,7 @@ uint32_t	DataHash[DATA_MAXDATA] = {0};
 *	This is almost the same routine that Pumpkin had, minus the ugly bug :)
 *	And minus the old algorithm and debugging trace, replaced with a simple CRC...
 */
-static UDWORD	hashBuffer(uint8_t *pData, uint32_t size)
+static UDWORD	hashBuffer(const uint8_t *pData, uint32_t size)
 {
 	char nl = '\n';
 	uint32_t crc = 0;
@@ -93,7 +92,7 @@ static UDWORD	hashBuffer(uint8_t *pData, uint32_t size)
 
 // create the hash for that data block.
 // Data should be converted to Network byte order
-static void calcDataHash(uint8_t *pBuffer, uint32_t size, uint32_t index)
+static void calcDataHash(const uint8_t *pBuffer, uint32_t size, uint32_t index)
 {
 	const uint32_t oldHash = DataHash[index];
 
@@ -112,6 +111,12 @@ static void calcDataHash(uint8_t *pBuffer, uint32_t size, uint32_t index)
 	debug(LOG_NET, "DataHash[%2u] = %08x", index, DataHash[index]);
 
 	return;
+}
+
+static void calcDataHash(const WzConfig &ini, uint32_t index)
+{
+	std::string jsonDump = ini.compactStringRepresentation();
+	calcDataHash(reinterpret_cast<const uint8_t *>(jsonDump.data()), jsonDump.size(), index);
 }
 
 void resetDataHash()
@@ -139,7 +144,10 @@ void dataClearSaveFlag()
 /* Load the body stats */
 static bool bufferSBODYLoad(const char *fileName, void **ppData)
 {
-	if (!loadBodyStats(fileName) || !allocComponentList(COMP_BODY, numBodyStats))
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SBODY);
+
+	if (!loadBodyStats(ini) || !allocComponentList(COMP_BODY, numBodyStats))
 	{
 		return false;
 	}
@@ -158,7 +166,10 @@ static void dataReleaseStats(WZ_DECL_UNUSED void *pData)
 /* Load the weapon stats */
 static bool bufferSWEAPONLoad(const char *fileName, void **ppData)
 {
-	if (!loadWeaponStats(fileName)
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SWEAPON);
+
+	if (!loadWeaponStats(ini)
 	    || !allocComponentList(COMP_WEAPON, numWeaponStats))
 	{
 		return false;
@@ -172,7 +183,10 @@ static bool bufferSWEAPONLoad(const char *fileName, void **ppData)
 /* Load the constructor stats */
 static bool bufferSCONSTRLoad(const char *fileName, void **ppData)
 {
-	if (!loadConstructStats(fileName)
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SCONSTR);
+
+	if (!loadConstructStats(ini)
 	    || !allocComponentList(COMP_CONSTRUCT, numConstructStats))
 	{
 		return false;
@@ -186,7 +200,10 @@ static bool bufferSCONSTRLoad(const char *fileName, void **ppData)
 /* Load the ECM stats */
 static bool bufferSECMLoad(const char *fileName, void **ppData)
 {
-	if (!loadECMStats(fileName)
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SECM);
+
+	if (!loadECMStats(ini)
 	    || !allocComponentList(COMP_ECM, numECMStats))
 	{
 		return false;
@@ -200,7 +217,10 @@ static bool bufferSECMLoad(const char *fileName, void **ppData)
 /* Load the Propulsion stats */
 static bool bufferSPROPLoad(const char *fileName, void **ppData)
 {
-	if (!loadPropulsionStats(fileName) || !allocComponentList(COMP_PROPULSION, numPropulsionStats))
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SPROP);
+
+	if (!loadPropulsionStats(ini) || !allocComponentList(COMP_PROPULSION, numPropulsionStats))
 	{
 		return false;
 	}
@@ -212,7 +232,10 @@ static bool bufferSPROPLoad(const char *fileName, void **ppData)
 
 static bool bufferSSENSORLoad(const char *fileName, void **ppData)
 {
-	if (!loadSensorStats(fileName)
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SSENSOR);
+
+	if (!loadSensorStats(ini)
 	    || !allocComponentList(COMP_SENSOR, numSensorStats))
 	{
 		return false;
@@ -226,7 +249,10 @@ static bool bufferSSENSORLoad(const char *fileName, void **ppData)
 /* Load the Repair stats */
 static bool bufferSREPAIRLoad(const char *fileName, void **ppData)
 {
-	if (!loadRepairStats(fileName) || !allocComponentList(COMP_REPAIRUNIT, numRepairStats))
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SREPAIR);
+
+	if (!loadRepairStats(ini) || !allocComponentList(COMP_REPAIRUNIT, numRepairStats))
 	{
 		return false;
 	}
@@ -239,7 +265,10 @@ static bool bufferSREPAIRLoad(const char *fileName, void **ppData)
 /* Load the Brain stats */
 static bool bufferSBRAINLoad(const char *fileName, void **ppData)
 {
-	if (!loadBrainStats(fileName) || !allocComponentList(COMP_BRAIN, numBrainStats))
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SBRAIN);
+
+	if (!loadBrainStats(ini) || !allocComponentList(COMP_BRAIN, numBrainStats))
 	{
 		return false;
 	}
@@ -251,11 +280,13 @@ static bool bufferSBRAINLoad(const char *fileName, void **ppData)
 /* Load the PropulsionType stats */
 static bool bufferSPROPTYPESLoad(const char *fileName, void **ppData)
 {
-	if (!loadPropulsionTypes(fileName))
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SPROPTY);
+
+	if (!loadPropulsionTypes(ini))
 	{
 		return false;
 	}
-
 
 	//not interested in this value
 	*ppData = nullptr;
@@ -278,7 +309,10 @@ static bool bufferSPROPSNDLoad(const char *fileName, void **ppData)
 /* Load the STERRTABLE stats */
 static bool bufferSTERRTABLELoad(const char *fileName, void **ppData)
 {
-	if (!loadTerrainTable(fileName))
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_STERRT);
+
+	if (!loadTerrainTable(ini))
 	{
 		return false;
 	}
@@ -299,7 +333,10 @@ static bool bufferSBPIMDLoad(const char *fileName, void **ppData)
 /* Load the Weapon Effect modifier stats */
 static bool bufferSWEAPMODLoad(const char *fileName, void **ppData)
 {
-	if (!loadWeaponModifiers(fileName))
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SWEAPMOD);
+
+	if (!loadWeaponModifiers(ini))
 	{
 		return false;
 	}
@@ -333,7 +370,10 @@ static void dataSTEMPLRelease(WZ_DECL_UNUSED void *pData)
 /* Load the Structure stats */
 static bool bufferSSTRUCTLoad(const char *fileName, void **ppData)
 {
-	if (!loadStructureStats(QString(fileName)))
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SSTRUCT);
+
+	if (!loadStructureStats(ini))
 	{
 		return false;
 	}
@@ -358,7 +398,10 @@ static void dataSSTRUCTRelease(WZ_DECL_UNUSED void *pData)
 /* Load the Structure strength modifier stats */
 static bool bufferSSTRMODLoad(const char *fileName, void **ppData)
 {
-	if (!loadStructureStrengthModifiers(fileName))
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SSTRMOD);
+
+	if (!loadStructureStrengthModifiers(ini))
 	{
 		return false;
 	}
@@ -371,7 +414,10 @@ static bool bufferSSTRMODLoad(const char *fileName, void **ppData)
 /* Load the Feature stats */
 static bool bufferSFEATLoad(const char *fileName, void **ppData)
 {
-	if (!loadFeatureStats(fileName))
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_SFEAT);
+
+	if (!loadFeatureStats(ini))
 	{
 		return false;
 	}
@@ -396,8 +442,6 @@ static void dataRESCHRelease(WZ_DECL_UNUSED void *pData)
 /* Load the Research stats */
 static bool bufferRESCHLoad(const char *fileName, void **ppData)
 {
-	//calcDataHash((uint8_t *)pBuffer, size, DATA_RESCH);
-
 	//check to see if already loaded
 	if (!asResearch.empty())
 	{
@@ -405,7 +449,10 @@ static bool bufferRESCHLoad(const char *fileName, void **ppData)
 		dataRESCHRelease(nullptr);
 	}
 
-	if (!loadResearch(QString(fileName)))
+	WzConfig ini(fileName, WzConfig::ReadOnlyAndRequired);
+	calcDataHash(ini, DATA_RESCH);
+
+	if (!loadResearch(ini))
 	{
 		return false;
 	}
@@ -416,9 +463,7 @@ static bool bufferRESCHLoad(const char *fileName, void **ppData)
 /* Load the message viewdata */
 static bool bufferSMSGLoad(const char *pBuffer, UDWORD size, void **ppData)
 {
-	const char *ptr;
-
-	ptr = loadViewData(pBuffer, size);
+	WzString *ptr = loadViewData(pBuffer, size);
 	if (!ptr)
 	{
 		return false;
@@ -432,7 +477,7 @@ static bool bufferSMSGLoad(const char *pBuffer, UDWORD size, void **ppData)
 /* Load research message viewdata */
 static bool dataResearchMsgLoad(const char *fileName, void **ppData)
 {
-	const char *ptr = loadResearchViewData(fileName);
+	WzString *ptr = loadResearchViewData(fileName);
 	if (!ptr)
 	{
 		return false;
@@ -446,7 +491,10 @@ static bool dataResearchMsgLoad(const char *fileName, void **ppData)
 // release the message viewdata
 static void dataSMSGRelease(void *pData)
 {
-	viewDataShutDown((const char *)pData);
+	ASSERT(pData, "pData unexpectedly null");
+	WzString *pFilename = static_cast<WzString *>(pData);
+	viewDataShutDown(pFilename->toUtf8().c_str());
+	delete pFilename;
 }
 
 /*!
@@ -591,120 +639,11 @@ static void dataStrResRelease(WZ_DECL_UNUSED void *pData)
 	}
 }
 
-
-/* Load a script file */
-// All scripts, binary or otherwise are now passed through this routine
-static bool dataScriptLoad(const char *fileName, void **ppData)
-{
-	static const bool printHack = false;
-	SCRIPT_CODE **psProg = (SCRIPT_CODE **)ppData;
-	PHYSFS_file *fileHandle;
-	uint8_t *pBuffer;
-	PHYSFS_sint64 fileSize = 0;
-
-	debug(LOG_WZ, "COMPILING SCRIPT ...%s", GetLastResourceFilename());
-
-	fileHandle = PHYSFS_openRead(fileName);
-	debug(LOG_WZ, "Reading...[directory: %s] %s", PHYSFS_getRealDir(fileName), fileName);
-	if (fileHandle == nullptr)
-	{
-		return false;
-	}
-
-	// due to the changes in r2531 we must do this routine a bit different.
-	fileSize = PHYSFS_fileLength(fileHandle);
-
-	pBuffer = (uint8_t *)malloc(fileSize * sizeof(uint8_t));
-	ASSERT_OR_RETURN(false, pBuffer, "Out of memory");
-
-	PHYSFS_read(fileHandle, pBuffer, 1, fileSize);
-
-	calcDataHash(pBuffer, fileSize, DATA_SCRIPT);
-
-	free(pBuffer);
-
-	PHYSFS_seek(fileHandle, 0);		//reset position
-
-	*psProg = scriptCompile(fileHandle, SCRIPTTYPE);
-
-	PHYSFS_close(fileHandle);
-
-	if (!*psProg)		// see script.h
-	{
-		debug(LOG_ERROR, "Script %s did not compile", GetLastResourceFilename());
-		return false;
-	}
-
-	if (printHack)
-	{
-		cpPrintProgram(*psProg);
-	}
-
-	return true;
-}
-
-
-static void dataScriptRelease(void *pData)
-{
-	SCRIPT_CODE *psCode = (SCRIPT_CODE *)pData;
-	scriptFreeCode(psCode);
-}
-
 static bool jsLoad(const char *fileName, void **ppData)
 {
 	debug(LOG_WZ, "jsload: %s", fileName);
 	*ppData = nullptr;
 	return loadGlobalScript(fileName);
-}
-
-// Load a script variable values file
-static bool dataScriptLoadVals(const char *fileName, void **ppData)
-{
-	bool success;
-	PHYSFS_file *fileHandle;
-	uint8_t *pBuffer;
-	PHYSFS_sint64 fileSize = 0;
-
-	*ppData = nullptr;
-
-	// don't load anything if a saved game is being loaded
-	if (saveFlag)
-	{
-		return true;
-	}
-
-	debug(LOG_WZ, "Loading script data %s", GetLastResourceFilename());
-
-	fileHandle = PHYSFS_openRead(fileName);
-	debug(LOG_WZ, "Reading...[directory: %s] %s", PHYSFS_getRealDir(fileName), fileName);
-	if (fileHandle == nullptr)
-	{
-		return false;
-	}
-	// due to the changes in r2532 we must do this routine a bit different.
-	fileSize = PHYSFS_fileLength(fileHandle);
-
-	pBuffer = (uint8_t *)malloc(fileSize * sizeof(uint8_t));
-	ASSERT_OR_RETURN(false, pBuffer, "Out of memory");
-
-	PHYSFS_read(fileHandle, pBuffer, 1, fileSize);
-
-	calcDataHash(pBuffer, fileSize, DATA_SCRIPTVAL);
-
-	free(pBuffer);
-
-	PHYSFS_seek(fileHandle, 0);		//reset position
-
-	success = scrvLoad(fileHandle);
-
-	if (!success)
-	{
-		debug(LOG_FATAL, "Script %s did not compile", GetLastResourceFilename());
-	}
-
-	PHYSFS_close(fileHandle);
-
-	return success;
 }
 
 // New reduced resource type ... specially for PSX
@@ -755,8 +694,6 @@ static const RES_TYPE_MIN_FILE FileResourceTypes[] =
 	{"IMG", dataIMGLoad, dataIMGRelease},
 	{"TEXPAGE", nullptr, nullptr}, // ignored
 	{"TCMASK", nullptr, nullptr}, // ignored
-	{"SCRIPT", dataScriptLoad, dataScriptRelease},
-	{"SCRIPTVAL", dataScriptLoadVals, nullptr},
 	{"STR_RES", dataStrResLoad, dataStrResRelease},
 	{"RESEARCHMSG", dataResearchMsgLoad, dataSMSGRelease },
 	{"SSTRMOD", bufferSSTRMODLoad, nullptr},

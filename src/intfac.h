@@ -1,6 +1,7 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2013-2017  Warzone 2100 Project
+	Copyright (C) 1999-2004  Eidos Interactive
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -296,10 +297,8 @@ enum INTFAC_TYPE
 	IMAGE_VDP_UP,
 	IMAGE_VDP_HI,
 	IMAGE_OBSOLETE_HIDE_UP,
-	IMAGE_OBSOLETE_HIDE_DOWN,
 	IMAGE_OBSOLETE_HIDE_HI,
 	IMAGE_OBSOLETE_SHOW_UP,
-	IMAGE_OBSOLETE_SHOW_DOWN,
 	IMAGE_OBSOLETE_SHOW_HI,
 	IMAGE_GN_STAR,
 	IMAGE_GN_15,

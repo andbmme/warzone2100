@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -48,10 +48,10 @@ struct PROJECTILE : public SIMPLE_OBJECT
 		if (died == 0 || died >= gameTime - deltaGameTime)
 		{
 			return false;
-		} delete this;
+		}
+		delete this;
 		return true;
 	}
-
 
 	UBYTE           state;                  ///< current projectile state
 	UBYTE           bVisible;               ///< whether the selected player should see the projectile
@@ -60,8 +60,8 @@ struct PROJECTILE : public SIMPLE_OBJECT
 	BASE_OBJECT    *psDest;                 ///< target of this projectile
 	std::vector<BASE_OBJECT *> psDamaged;   ///< the targets that have already been dealt damage to (don't damage the same target twice)
 
-	Vector3i        src;                    ///< Where projectile started
-	Vector3i        dst;                    ///< The target coordinates
+	Vector3i        src = Vector3i(0, 0, 0); ///< Where projectile started
+	Vector3i        dst = Vector3i(0, 0, 0); ///< The target coordinates
 	SDWORD          vXY, vZ;                ///< axis velocities
 	Spacetime       prevSpacetime;          ///< Location of projectile in previous tick.
 	UDWORD          expectedDamageCaused;   ///< Expected damage that this projectile will cause to the target.

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -67,6 +67,9 @@
 
 #include "multiplay.h"
 #include "component.h"
+#ifndef GLM_ENABLE_EXPERIMENTAL
+	#define GLM_ENABLE_EXPERIMENTAL
+#endif
 #include <glm/gtx/transform.hpp>
 
 #define	GRAVITON_GRAVITY	((float)-800)
@@ -1368,7 +1371,7 @@ static void renderFirework(const EFFECT *psEffect, const glm::mat4 &viewMatrix)
 
 	glm::mat4 modelMatrix = positionEffect(psEffect);
 	modelMatrix *= glm::rotate(UNDEG(-player.r.y), glm::vec3(0.f, 1.f, 0.f)) * glm::rotate(UNDEG(-player.r.x), glm::vec3(1.f, 0.f, 0.f))
-	               * glm::scale(psEffect->size / 100.f, psEffect->size / 100.f, psEffect->size / 100.f);
+	               * glm::scale(glm::vec3(psEffect->size / 100.f));
 
 	pie_Draw3DShape(psEffect->imd, psEffect->frameNumber, 0, WZCOL_WHITE, pie_ADDITIVE, EFFECT_EXPLOSION_ADDITIVE, viewMatrix * modelMatrix);
 }
@@ -1378,7 +1381,7 @@ static void renderBloodEffect(const EFFECT *psEffect, const glm::mat4 &viewMatri
 {
 	glm::mat4 modelMatrix = positionEffect(psEffect);
 	modelMatrix *= glm::rotate(UNDEG(-player.r.y), glm::vec3(0.f, 1.f, 0.f)) * glm::rotate(UNDEG(-player.r.x), glm::vec3(1.f, 0.f, 0.f))
-	               * glm::scale(psEffect->size / 100.f, psEffect->size / 100.f, psEffect->size / 100.f);
+	               * glm::scale(glm::vec3(psEffect->size / 100.f));
 
 	pie_Draw3DShape(getImdFromIndex(MI_BLOOD), psEffect->frameNumber, 0, WZCOL_WHITE, pie_TRANSLUCENT, EFFECT_BLOOD_TRANSPARENCY, viewMatrix * modelMatrix);
 }
@@ -1478,16 +1481,16 @@ static void renderExplosionEffect(const EFFECT *psEffect, const glm::mat4 &viewM
 		{
 			scale = .45f;
 		}
-		modelMatrix *= glm::scale(psEffect->size / 100.f - scale, psEffect->size / 100.f - scale, psEffect->size / 100.f - scale);
+		modelMatrix *= glm::scale(glm::vec3(psEffect->size / 100.f - scale));
 	}
 	else if (psEffect->type == EXPLOSION_TYPE_PLASMA)
 	{
 		float scale = (graphicsTime - psEffect->birthTime) / (float)psEffect->lifeSpan / 3.f;
-		modelMatrix *= glm::scale(BASE_PLASMA_SIZE / 100.f + scale, BASE_PLASMA_SIZE / 100.f + scale, BASE_PLASMA_SIZE / 100.f + scale);
+		modelMatrix *= glm::scale(glm::vec3(BASE_PLASMA_SIZE / 100.f + scale));
 	}
 	else
 	{
-		modelMatrix *= glm::scale(psEffect->size / 100.f, psEffect->size / 100.f, psEffect->size / 100.f);
+		modelMatrix *= glm::scale(glm::vec3(psEffect->size / 100.f));
 	}
 
 	bool premultiplied = false;
@@ -1526,7 +1529,7 @@ static void renderGravitonEffect(const EFFECT *psEffect, const glm::mat4 &viewMa
 	if (psEffect->type == GRAVITON_TYPE_EMITTING_ST)
 	{
 		/* Twice as big - 150 percent */
-		modelMatrix *= glm::scale(psEffect->size / 100.f, psEffect->size / 100.f, psEffect->size / 100.f);
+		modelMatrix *= glm::scale(glm::vec3(psEffect->size / 100.f));
 	}
 
 	pie_Draw3DShape(psEffect->imd, psEffect->frameNumber, psEffect->player, WZCOL_WHITE, 0, 0, viewMatrix * modelMatrix);
@@ -1574,7 +1577,7 @@ static void renderConstructionEffect(const EFFECT *psEffect, const glm::mat4 &vi
 	}
 	translucency += 10;
 	size = MIN(2.f * translucency / 100.f, .90f);
-	modelMatrix *= glm::scale(size, size, size);
+	modelMatrix *= glm::scale(glm::vec3(size));
 
 	pie_Draw3DShape(psEffect->imd, psEffect->frameNumber, 0, WZCOL_WHITE, pie_TRANSLUCENT, translucency, viewMatrix * modelMatrix);
 }
@@ -1620,7 +1623,7 @@ static void renderSmokeEffect(const EFFECT *psEffect, const glm::mat4 &viewMatri
 		}
 
 		float scale = (percent + psEffect->baseScale) / 100.f;
-		modelMatrix *= glm::scale(scale, scale, scale);
+		modelMatrix *= glm::scale(glm::vec3(scale));
 		transparency = (EFFECT_SMOKE_TRANSPARENCY * (100 - percent)) / 100;
 	}
 
@@ -2176,7 +2179,7 @@ static void effectStructureUpdates()
 				*/
 				if (psStructure->sDisplay.imd->nconnectors == 1)
 				{
-					Vector3i eventPos = psStructure->pos.xzy + Vector3i(
+					Vector3i eventPos = psStructure->pos.xzy() + Vector3i(
 					                        psStructure->sDisplay.imd->connectors->x,
 					                        psStructure->sDisplay.imd->connectors->z,
 					                        -psStructure->sDisplay.imd->connectors->y
@@ -2189,7 +2192,7 @@ static void effectStructureUpdates()
 				break;
 			case REF_POWER_GEN:
 				{
-					Vector3i eventPos = psStructure->pos.xzy;
+					Vector3i eventPos = psStructure->pos.xzy();
 
 					// Add an effect over the central spire.
 
@@ -2216,11 +2219,11 @@ void effectResetUpdates()
 bool writeFXData(const char *fileName)
 {
 	int i = 0;
-	WzConfig ini(fileName, WzConfig::ReadAndWrite);
+	WzConfig ini(WzString::fromUtf8(fileName), WzConfig::ReadAndWrite);
 	for (auto iter = activeList.cbegin(); iter != activeList.end(); ++iter, i++)
 	{
 		EFFECT *it = *iter;
-		ini.beginGroup("effect_" + QString::number(i));
+		ini.beginGroup("effect_" + WzString::number(i));
 		ini.setValue("control", it->control);
 		ini.setValue("group", it->group);
 		ini.setValue("type", it->type);
@@ -2240,8 +2243,7 @@ bool writeFXData(const char *fileName)
 
 		if (it->imd)
 		{
-			const QString &imd_name = modelName(it->imd);
-			ini.setValue("imd_name", imd_name);
+			ini.setValue("imd_name", modelName(it->imd));
 		}
 
 		// Move on to reading the next effect
@@ -2258,8 +2260,8 @@ bool readFXData(const char *fileName)
 	// Clear out anything that's there already!
 	initEffectsSystem();
 
-	WzConfig ini(fileName, WzConfig::ReadOnly);
-	QStringList list = ini.childGroups();
+	WzConfig ini(WzString::fromUtf8(fileName), WzConfig::ReadOnly);
+	std::vector<WzString> list = ini.childGroups();
 
 	for (int i = 0; i < list.size(); ++i)
 	{
@@ -2284,7 +2286,7 @@ bool readFXData(const char *fileName)
 		curEffect->radius       = ini.value("radius").toInt();
 		if (ini.contains("imd_name"))
 		{
-			QString imd_name = ini.value("imd_name").toString();
+			WzString imd_name = ini.value("imd_name").toWzString();
 			if (!imd_name.isEmpty())
 			{
 				curEffect->imd = modelGet(imd_name);

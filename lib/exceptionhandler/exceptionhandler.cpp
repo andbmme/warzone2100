@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2007-2017  Warzone 2100 Project
+	Copyright (C) 2007-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -17,99 +17,29 @@
 	Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA
 */
 
+#define _WITH_DPRINTF  // Required for FreeBSD < 12 (?) for dprintf(); Must be before any include of stdio.h
+
 #include "lib/framework/frame.h"
 #include "lib/framework/string_ext.h"
 #include "exceptionhandler.h"
 #include "dumpinfo.h"
+#include <LaunchInfo.h>
 
 #if defined(WZ_OS_WIN)
 #include <tchar.h>
+#if defined( _MSC_VER )
+	// Silence warning when using MSVC + the Windows 7 SDK (required for XP compatibility)
+	//	warning C4091: 'typedef ': ignored on left of 'tagGPFIDL_FLAGS' when no variable is declared
+	#pragma warning( push )
+	#pragma warning( disable : 4091 )
+#endif
 #include <shlobj.h>
+#if defined( _MSC_VER )
+	#pragma warning( pop )
+#endif
 #include <shlwapi.h>
 
-# include "dbghelp.h"
-# include "exchndl.h"
-
-#if !defined(WZ_CC_MINGW)
-static LPTOP_LEVEL_EXCEPTION_FILTER prevExceptionHandler = NULL;
-
-/**
- * Exception handling on Windows.
- * Ask the user whether he wants to safe a Minidump and then dump it into the temp directory.
- * NOTE: This is only for MSVC compiled programs.
- *
- * \param pExceptionInfo Information on the exception, passed from Windows
- * \return whether further exception handlers (i.e. the Windows internal one) should be invoked
- */
-static LONG WINAPI windowsExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
-{
-	LPCSTR applicationName = "Warzone 2100";
-
-	char miniDumpPath[PATH_MAX] = {'\0'}, resultMessage[PATH_MAX] = {'\0'};
-
-	// Write to temp dir, to support unprivileged users
-	if (!GetTempPathA(sizeof(miniDumpPath), miniDumpPath))
-	{
-		sstrcpy(miniDumpPath, "c:\\temp\\");
-	}
-
-	// Append the filename
-	sstrcat(miniDumpPath, "warzone2100.mdmp");
-
-	/*
-	Alternative:
-	GetModuleFileName( NULL, miniDumpPath, MAX_PATH );
-
-	// Append extension
-	sstrcat(miniDumpPath, ".mdmp");
-	*/
-
-	if (MessageBoxA(NULL, "Warzone crashed unexpectedly, would you like to save a diagnostic file?", applicationName, MB_YESNO) == IDYES)
-	{
-		HANDLE miniDumpFile = CreateFileA(miniDumpPath, GENERIC_WRITE, FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-
-		if (miniDumpFile != INVALID_HANDLE_VALUE)
-		{
-			MINIDUMP_USER_STREAM uStream = { LastReservedStream + 1, strlen(PACKAGE_VERSION), PACKAGE_VERSION };
-			MINIDUMP_USER_STREAM_INFORMATION uInfo = { 1, &uStream };
-			MINIDUMP_EXCEPTION_INFORMATION eInfo = { GetCurrentThreadId(), pExceptionInfo, false };
-
-			if (MiniDumpWriteDump(
-			        GetCurrentProcess(),
-			        GetCurrentProcessId(),
-			        miniDumpFile,
-			        MiniDumpNormal,
-			        pExceptionInfo ? &eInfo : NULL,
-			        &uInfo,
-			        NULL))
-			{
-				snprintf(resultMessage, sizeof(resultMessage), "Saved dump file to '%s'", miniDumpPath);
-			}
-			else
-			{
-				snprintf(resultMessage, sizeof(resultMessage), "Failed to save dump file to '%s' (error %d)", miniDumpPath, (int)GetLastError());
-			}
-
-			CloseHandle(miniDumpFile);
-		}
-		else
-		{
-			snprintf(resultMessage, sizeof(resultMessage), "Failed to create dump file '%s' (error %d)", miniDumpPath, (int)GetLastError());
-		}
-
-		MessageBoxA(NULL, resultMessage, applicationName, MB_OK);
-	}
-
-	if (prevExceptionHandler)
-	{
-		return prevExceptionHandler(pExceptionInfo);
-	}
-	else
-	{
-		return EXCEPTION_CONTINUE_SEARCH;
-	}
-}
-#endif
+#include "exchndl.h"
 
 #elif defined(WZ_OS_UNIX) && !defined(WZ_OS_MAC)
 
@@ -193,34 +123,56 @@ static const char *wz_strsignal(int signum, int sigcode)
 	case SIGBUS:
 		switch (sigcode)
 		{
+#ifdef BUS_ADRALN
 		case BUS_ADRALN:
 			return "SIGBUS: Access to an undefined portion of a memory object: Invalid address alignment";
+#endif /* BUS_ADRALN */
+#ifdef BUS_ADRERR
 		case BUS_ADRERR:
 			return "SIGBUS: Access to an undefined portion of a memory object: Nonexistent physical address";
+#endif /* BUS_ADRERR */
+#ifdef BUS_OBJERR
 		case BUS_OBJERR:
 			return "SIGBUS: Access to an undefined portion of a memory object: Object-specific hardware error";
+#endif /* BUS_OBJERR */
 		default:
 			return "SIGBUS: Access to an undefined portion of a memory object";
 		}
 	case SIGFPE:
 		switch (sigcode)
 		{
+#ifdef FPE_INTDIV
 		case FPE_INTDIV:
 			return "SIGFPE: Erroneous arithmetic operation: Integer divide by zero";
+#endif /* FPE_INTDIV */
+#ifdef FPE_INTOVF
 		case FPE_INTOVF:
 			return "SIGFPE: Erroneous arithmetic operation: Integer overflow";
+#endif /* FPE_INTOVF */
+#ifdef FPE_FLTDIV
 		case FPE_FLTDIV:
 			return "SIGFPE: Erroneous arithmetic operation: Floating-point divide by zero";
+#endif /* FPE_FLTDIV */
+#ifdef FPE_FLTOVF
 		case FPE_FLTOVF:
 			return "SIGFPE: Erroneous arithmetic operation: Floating-point overflow";
+#endif /* FPE_FLTOVF */
+#ifdef FPE_FLTUND
 		case FPE_FLTUND:
 			return "SIGFPE: Erroneous arithmetic operation: Floating-point underflow";
+#endif /* FPE_FLTUND */
+#ifdef FPE_FLTRES
 		case FPE_FLTRES:
 			return "SIGFPE: Erroneous arithmetic operation: Floating-point inexact result";
+#endif /* FPE_FLTRES */
+#ifdef FPE_FLTINV
 		case FPE_FLTINV:
 			return "SIGFPE: Erroneous arithmetic operation: Invalid floating-point operation";
+#endif /* FPE_FLTINV */
+#ifdef FPE_FLTSUB
 		case FPE_FLTSUB:
 			return "SIGFPE: Erroneous arithmetic operation: Subscript out of range";
+#endif /* FPE_FLTSUB */
 		default:
 			return "SIGFPE: Erroneous arithmetic operation";
 		};
@@ -229,22 +181,38 @@ static const char *wz_strsignal(int signum, int sigcode)
 	case SIGILL:
 		switch (sigcode)
 		{
+#ifdef ILL_ILLOPC
 		case ILL_ILLOPC:
 			return "SIGILL: Illegal instruction: Illegal opcode";
+#endif /* ILL_ILLOPC */
+#ifdef ILL_ILLOPN
 		case ILL_ILLOPN:
 			return "SIGILL: Illegal instruction: Illegal operand";
+#endif /* ILL_ILLOPN */
+#ifdef ILL_ILLADR
 		case ILL_ILLADR:
 			return "SIGILL: Illegal instruction: Illegal addressing mode";
+#endif /* ILL_ILLADR */
+#ifdef ILL_ILLTRP
 		case ILL_ILLTRP:
 			return "SIGILL: Illegal instruction: Illegal trap";
+#endif /* ILL_ILLTRP */
+#ifdef ILL_PRVOPC
 		case ILL_PRVOPC:
 			return "SIGILL: Illegal instruction: Privileged opcode";
+#endif /* ILL_PRVOPC */
+#ifdef ILL_PRVREG
 		case ILL_PRVREG:
 			return "SIGILL: Illegal instruction: Privileged register";
+#endif /* ILL_PRVREG */
+#ifdef ILL_COPROC
 		case ILL_COPROC:
 			return "SIGILL: Illegal instruction: Coprocessor error";
+#endif /* ILL_COPROC */
+#ifdef ILL_BADSTK
 		case ILL_BADSTK:
 			return "SIGILL: Illegal instruction: Internal stack error";
+#endif /* ILL_BADSTK */
 		default:
 			return "SIGILL: Illegal instruction";
 		}
@@ -259,10 +227,14 @@ static const char *wz_strsignal(int signum, int sigcode)
 	case SIGSEGV:
 		switch (sigcode)
 		{
+#ifdef SEGV_MAPERR
 		case SEGV_MAPERR:
 			return "SIGSEGV: Invalid memory reference: Address not mapped to object";
+#endif /* SEGV_MAPERR */
+#ifdef SEGV_ACCERR
 		case SEGV_ACCERR:
 			return "SIGSEGV: Invalid memory reference: Invalid permissions for mapped object";
+#endif /* SEGV_ACCERR */
 		default:
 			return "SIGSEGV: Invalid memory reference";
 		}
@@ -280,21 +252,31 @@ static const char *wz_strsignal(int signum, int sigcode)
 	case SIGTRAP:
 		switch (sigcode)
 		{
+#ifdef TRAP_BRKPT
 		case TRAP_BRKPT:
 			return "SIGTRAP: Trace/breakpoint trap: Process breakpoint";
+#endif /* TRAP_BRKPT */
+#ifdef TRAP_TRACE
 		case TRAP_TRACE:
 			return "SIGTRAP: Trace/breakpoint trap: Process trace trap";
+#endif /* TRAP_TRACE */
 		default:
 			return "SIGTRAP: Trace/breakpoint trap";
 		}
 #endif // _XOPEN_UNIX
 #if _XOPEN_UNIX
+# ifdef SIGVTALRM
 	case SIGVTALRM:
 		return "SIGVTALRM: Virtual timer expired";
+# endif /* SIGVTALRM */
+# ifdef SIGXCPU
 	case SIGXCPU:
 		return "SIGXCPU: CPU time limit exceeded";
+# endif /* SIGXCPU */
+# ifdef SIGXFSZ
 	case SIGXFSZ:
 		return "SIGXFSZ: File size limit exceeded";
+# endif /* SIGXFSZ */
 #endif // _XOPEN_UNIX
 	default:
 		return "Unknown signal";
@@ -758,6 +740,7 @@ static bool fetchProgramPath(char *const programPath, size_t const bufSize, cons
 		return false;
 	}
 
+	programPath[bytesRead] = 0;
 	// Cut of the linefeed (and everything following it) if it's present.
 	linefeed = strchr(programPath, '\n');
 	if (linefeed)
@@ -782,23 +765,20 @@ static bool fetchProgramPath(char *const programPath, size_t const bufSize, cons
  *
  * \param programCommand Command used to launch this program. Only used for POSIX handler.
  */
-void setupExceptionHandler(int argc, const char **argv, const char *packageVersion)
+void setupExceptionHandler(int argc, const char * const *argv, const char *packageVersion, const std::string &writeDir, bool portable_mode)
 {
 #if defined(WZ_OS_UNIX) && !defined(WZ_OS_MAC)
 	const char *programCommand;
 	time_t currentTime;
 #endif
+	LaunchInfo::initialize(argc, argv);
 #if !defined(WZ_OS_MAC)
 	// Initialize info required for the debug dumper
 	dbgDumpInit(argc, argv, packageVersion);
 #endif
 
 #if defined(WZ_OS_WIN)
-# if defined(WZ_CC_MINGW)
-	ExchndlSetup(packageVersion);
-# else
-	prevExceptionHandler = SetUnhandledExceptionFilter(windowsExceptionHandler);
-# endif // !defined(WZ_CC_MINGW)
+	ExchndlSetup(packageVersion, writeDir, portable_mode);
 #elif defined(WZ_OS_UNIX) && !defined(WZ_OS_MAC)
 	programCommand = argv[0];
 
@@ -818,9 +798,9 @@ void setupExceptionHandler(int argc, const char **argv, const char *packageVersi
 	setFatalSignalHandler(posixExceptionHandler);
 #endif // WZ_OS_*
 }
-bool OverrideRPTDirectory(char *newPath)
+bool OverrideRPTDirectory(const char *newPath)
 {
-# if defined(WZ_CC_MINGW)
+# if defined(WZ_OS_WIN)
 	wchar_t buf[MAX_PATH];
 
 	if (!MultiByteToWideChar(CP_UTF8, 0, newPath, -1, buf, MAX_PATH))
@@ -849,8 +829,6 @@ bool OverrideRPTDirectory(char *newPath)
 		return false;
 	}
 	PathRemoveFileSpecW(buf);
-	wcscat(buf, L"\\logs\\"); // stuff it in the logs directory
-	wcscat(buf, L"Warzone2100.RPT");
 	ResetRPTDirectory(buf);
 #elif defined(WZ_OS_UNIX) && !defined(WZ_OS_MAC)
 	sstrcpy(WritePath, newPath);

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -22,11 +22,41 @@
 #define __INCLUDED_WZAPP_C_H__
 
 #include "frame.h"
+#include "wzstring.h"
 #include <vector>
+#include <functional>
 
 struct WZ_THREAD;
 struct WZ_MUTEX;
 struct WZ_SEMAPHORE;
+
+class WZ_MAINTHREADEXEC
+{
+public:
+	WZ_MAINTHREADEXEC() { }
+	virtual ~WZ_MAINTHREADEXEC() { };
+
+	// subclass should override this
+	virtual void doExecOnMainThread() { };
+};
+
+class WZ_MAINTHREADEXECFUNC: public WZ_MAINTHREADEXEC
+{
+public:
+	typedef std::function<void ()> execFuncType;
+public:
+	WZ_MAINTHREADEXECFUNC(const execFuncType &execFunc)
+	: execFunc(execFunc)
+	{ }
+	virtual ~WZ_MAINTHREADEXECFUNC() { };
+
+	void doExecOnMainThread()
+	{
+		execFunc();
+	};
+private:
+	execFuncType execFunc;
+};
 
 struct screeninfo
 {
@@ -37,26 +67,42 @@ struct screeninfo
 };
 
 void wzMain(int &argc, char **argv);
-bool wzMainScreenSetup(int antialiasing = 0, bool fullscreen = false, bool vsync = true);
+bool wzMainScreenSetup(int antialiasing = 0, bool fullscreen = false, bool vsync = true, bool highDPI = true);
+void wzGetGameToRendererScaleFactor(float *horizScaleFactor, float *vertScaleFactor);
 void wzMainEventLoop();
 void wzQuit();              ///< Quit game
 void wzShutdown();
 void wzToggleFullscreen();
 bool wzIsFullscreen();
+void wzSetWindowIsResizable(bool resizable);
+bool wzIsWindowResizable();
+bool wzSupportsLiveResolutionChanges();
+bool wzChangeDisplayScale(unsigned int displayScale);
+bool wzChangeWindowResolution(int screen, unsigned int width, unsigned int height);
+unsigned int wzGetMaximumDisplayScaleForWindowSize(unsigned int windowWidth, unsigned int windowHeight);
+unsigned int wzGetCurrentDisplayScale();
+void wzGetWindowResolution(int *screen, unsigned int *width, unsigned int *height);
 void wzSetCursor(CURSOR index);
+void wzApplyCursor();
 void wzScreenFlip();	///< Swap the graphics buffers
 void wzShowMouse(bool visible); ///< Show the Mouse?
 void wzGrabMouse();		///< Trap mouse cursor in application window
 void wzReleaseMouse();	///< Undo the wzGrabMouse operation
 bool wzActiveWindow();	///< Whether application currently has the mouse pointer over it
 int wzGetTicks();		///< Milliseconds since start of game
-WZ_DECL_NONNULL(1) void wzFatalDialog(const char *text);	///< Throw up a modal warning dialog
+enum DialogType {
+	Dialog_Error,
+	Dialog_Warning,
+	Dialog_Information
+};
+WZ_DECL_NONNULL(2, 3) void wzDisplayDialog(DialogType type, const char *title, const char *message);	///< Throw up a modal warning dialog - title & message are UTF-8 text
 
+WzString wzGetPlatform();
 std::vector<screeninfo> wzAvailableResolutions();
+std::vector<unsigned int> wzAvailableDisplayScales();
 void wzSetSwapInterval(int swap);
 int wzGetSwapInterval();
-QString wzGetSelection();
-QString wzGetCurrentText();
+WzString wzGetSelection();
 unsigned int wzGetCurrentKey();
 void wzDelay(unsigned int delay);	//delay in ms
 // unicode text support
@@ -64,6 +110,7 @@ void StartTextInput();
 void StopTextInput();
 // Thread related
 WZ_THREAD *wzThreadCreate(int (*threadFunc)(void *), void *data);
+unsigned long wzThreadID(WZ_THREAD *thread);
 WZ_DECL_NONNULL(1) int wzThreadJoin(WZ_THREAD *thread);
 WZ_DECL_NONNULL(1) void wzThreadDetach(WZ_THREAD *thread);
 WZ_DECL_NONNULL(1) void wzThreadStart(WZ_THREAD *thread);
@@ -76,6 +123,19 @@ WZ_SEMAPHORE *wzSemaphoreCreate(int startValue);
 WZ_DECL_NONNULL(1) void wzSemaphoreDestroy(WZ_SEMAPHORE *semaphore);
 WZ_DECL_NONNULL(1) void wzSemaphoreWait(WZ_SEMAPHORE *semaphore);
 WZ_DECL_NONNULL(1) void wzSemaphorePost(WZ_SEMAPHORE *semaphore);
+WZ_DECL_NONNULL(1) void wzAsyncExecOnMainThread(WZ_MAINTHREADEXEC *exec);
+
+// Asynchronously executes execFunc() on the main thread.
+// This function must be thread-safe, and may be safely called from any thread.
+//
+// No guarantees are made about when execFunc() will be called relative to the
+// calling of this function - this function may return before, during, or after
+// execFunc()'s execution on the main thread.
+inline void wzAsyncExecOnMainThread(const std::function<void ()> &execFunc)
+{
+	wzAsyncExecOnMainThread(new WZ_MAINTHREADEXECFUNC(execFunc));
+	// receiver handles deleting the parameter on the main thread after doExecOnMainThread() has been called
+}
 
 #if !defined(WZ_CC_MINGW)
 

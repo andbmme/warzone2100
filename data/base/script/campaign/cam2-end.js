@@ -2,8 +2,6 @@ include("script/campaign/libcampaign.js");
 include("script/campaign/templates.js");
 
 var allowWin;
-var launchedBeforeExit;
-var launchCount;
 const COLLECTIVE_RES = [
 	"R-Defense-WallUpgrade06", "R-Struc-Materials06",
 	"R-Struc-Factory-Upgrade06", "R-Struc-Factory-Cyborg-Upgrade06",
@@ -38,61 +36,30 @@ function checkEnemyVtolArea()
 		}
 	}
 
-	queue("checkEnemyVtolArea", 1000);
+	queue("checkEnemyVtolArea", camSecondsToMilliseconds(1));
 }
 
 //Play last video sequence and destroy all droids on map.
 function playLastVideo()
 {
-	var droids = enumArea(0, 0, mapWidth, mapHeight, false).filter(function(obj) {
-		return obj.type === DROID;
+	var droids = enumArea(0, 0, mapWidth, mapHeight, CAM_HUMAN_PLAYER, false).filter(function(obj) {
+		return (obj.type === DROID && !camIsTransporter(obj));
 	});
 
 	for (var i = 0, l = droids.length; i < l; ++i)
 	{
 		camSafeRemoveObject(droids[i], false);
 	}
-
 	camPlayVideos("CAM2_OUT");
 }
 
-function eventMissionTimeout()
-{
-	camCallOnce("playLastVideo");
-}
-
-// Allow win if the transporter was launched at least three times.
+//Allow a win if a transporter was launched.
 function eventTransporterLaunch(transport)
 {
 	if (transport.player === CAM_HUMAN_PLAYER)
 	{
-		launchedBeforeExit = true;
-		launchCount = launchCount + 1;
-		if (launchCount > 2)
-		{
-			allowWin = true;
-		}
+		allowWin = true;
 	}
-}
-
-//This is triggered all over the source to end these type of missions if no
-//droids remain on map.
-function eventTransporterExit(transport)
-{
-	var len = enumDroid(CAM_HUMAN_PLAYER).filter(function(dr) {
-		return !camIsTransporter(dr);
-	}).length;
-	if ((!launchedBeforeExit || (!len && launchedBeforeExit)) && transport.player === CAM_HUMAN_PLAYER)
-	{
-		camCallOnce("fastMissionEnd");
-	}
-
-	launchedBeforeExit = false;
-}
-
-function fastMissionEnd()
-{
-	setMissionTime(1);
 }
 
 //Return randomly selected droid templates.
@@ -121,21 +88,21 @@ function vtolAttack()
 	];
 	var vtolRemovePos = {"x": 127, "y": 64};
 
-	var list; with (camTemplates) list = [commorv, colcbv, colagv, comhvat];
-	camSetVtolData(THE_COLLECTIVE, VTOL_POSITIONS, vtolRemovePos, list, camChangeOnDiff(30000));
+	var list = [cTempl.commorv, cTempl.colcbv, cTempl.colagv, cTempl.comhvat];
+	camSetVtolData(THE_COLLECTIVE, VTOL_POSITIONS, vtolRemovePos, list, camChangeOnDiff(camSecondsToMilliseconds(30)));
 }
 
 //SouthEast attackers which are mostly cyborgs.
 function cyborgAttack()
 {
 	var southCyborgAssembly = {"x": 123, "y": 125};
-	var list; with (camTemplates) list = [npcybr, cocybag, npcybc, comhltat, cohhpv];
+	var list = [cTempl.npcybr, cTempl.cocybag, cTempl.npcybc, cTempl.comhltat, cTempl.cohhpv];
 
 	camSendReinforcement(THE_COLLECTIVE, camMakePos(southCyborgAssembly), randomTemplates(list), CAM_REINFORCE_GROUND, {
 		data: { regroup: false, count: -1 }
 	});
 
-	queue("cyborgAttack", camChangeOnDiff(240000));
+	queue("cyborgAttack", camChangeOnDiff(camMinutesToMilliseconds(4)));
 }
 
 //North road attacker consisting of powerful weaponry.
@@ -144,27 +111,33 @@ function tankAttack()
 	var northTankAssembly = {"x": 95, "y": 3};
 	//var westTankAssembly = {"x": 3, "y": 112}; //This was unused.
 
-	var list; with (camTemplates) list = [comhltat, cohact, cohhpv, comagt, cohbbt];
+	var list = [cTempl.comhltat, cTempl.cohact, cTempl.cohhpv, cTempl.comagt, cTempl.cohbbt];
 	var pos = [];
 	pos.push(northTankAssembly);
 
 	camSendReinforcement(THE_COLLECTIVE, camMakePos(northTankAssembly), randomTemplates(list), CAM_REINFORCE_GROUND, {
 		data: { regroup: false, count: -1, },
 	});
-	queue("tankAttack", camChangeOnDiff(180000));
+	queue("tankAttack", camChangeOnDiff(camMinutesToMilliseconds(3)));
 }
 
+//NOTE: this is only called once from the library's eventMissionTimeout().
 function checkIfLaunched()
 {
-	if (allowWin)
+	var transporters = enumArea(0, 0, mapWidth, mapHeight, CAM_HUMAN_PLAYER, false).filter(function(obj) {
+		return (obj.type === DROID && camIsTransporter(obj));
+	});
+	if (transporters.length > 0)
 	{
-		return true;
+		allowWin = false;
 	}
 
-	if ((getMissionTime() <= 1) && !allowWin)
+	if (allowWin)
 	{
-		return false;
+		camCallOnce("playLastVideo");
+		return true;
 	}
+	return false;
 }
 
 //Everything in this level mostly just requeues itself until the mission ends.
@@ -175,27 +148,25 @@ function eventStartLevel()
 	var tCoords = {"xStart": 87, "yStart": 100, "xOut": 0, "yOut": 55};
 
 	camSetStandardWinLossConditions(CAM_VICTORY_TIMEOUT, "CAM_3A", {
-		reinforcements: 420, //Duration the transport "leaves" map.
+		reinforcements: camMinutesToSeconds(7), //Duration the transport "leaves" map.
 		callback: "checkIfLaunched"
 	});
 	centreView(startpos.x, startpos.y);
 	setNoGoArea(lz.x, lz.y, lz.x2, lz.y2, CAM_HUMAN_PLAYER);
 	camSetupTransporter(tCoords.xStart, tCoords.yStart, tCoords.xOut, tCoords.yOut);
 
-	setMissionTime(1800); // 30 min.
-	camCompleteRequiredResearch(COLLECTIVE_RES, THE_COLLECTIVE);
-	setPower(AI_POWER, THE_COLLECTIVE);
+	var enemyLz = {"x": 49, "y": 83, "x2": 51, "y2": 85};
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, THE_COLLECTIVE);
 
-	videoIndex = 0;
+	setMissionTime(camMinutesToSeconds(30));
+	camCompleteRequiredResearch(COLLECTIVE_RES, THE_COLLECTIVE);
+
 	allowWin = false;
-	launchedBeforeExit = false;
-	launchCount = 0;
 	camPlayVideos(["MB2_DII_MSG", "MB2_DII_MSG2"]);
 
 	//These requeue themselves every so often.
 	vtolAttack();
 	cyborgAttack();
 	tankAttack();
-	//collectiveTransportScouts();
 	checkEnemyVtolArea();
 }

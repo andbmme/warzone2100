@@ -13,49 +13,60 @@ const NEW_PARADIGM_RES = [
 	"R-Wpn-RocketSlow-Damage03", "R-Struc-RprFac-Upgrade03",
 ];
 
-
-camAreaEvent("tankTrapTrig", function()
+camAreaEvent("tankTrapTrig", function(droid)
 {
 	camEnableFactory("NPFactoryW");
 	camEnableFactory("NPCybFactoryW");
-	camEnableFactory("NPFactoryE");
-	camEnableFactory("NPCybFactoryE");
-	mrlGroupAttack();
+	camCallOnce("mrlGroupAttack");
 });
 
-camAreaEvent("causeWayTrig", function()
+camAreaEvent("northWayTrigger", function(droid)
+{
+	camEnableFactory("NPFactoryE");
+	camEnableFactory("NPCybFactoryE");
+	camCallOnce("mrlGroupAttack");
+});
+
+camAreaEvent("causeWayTrig", function(droid)
 {
 	camEnableFactory("NPFactoryNE");
 	camEnableFactory("NPCybFactoryNE");
-	cyborgGroupPatrol();
-
-	camDetectEnemyBase("NPLZGroup");
-	camSetBaseReinforcements("NPLZGroup", camChangeOnDiff(600000), "getDroidsForNPLZ",
-		CAM_REINFORCE_TRANSPORT, {
-			entry: { x: 0, y: 0 },
-			exit: { x: 0, y: 0 },
-			data: {
-				regroup: false,
-				count: -1,
-				repair: 40,
-			},
-		}
-	);
+	camCallOnce("transportBaseSetup");
 });
+
+camAreaEvent("westWayTrigger", function(droid)
+{
+	camEnableFactory("NPFactoryNE");
+	camEnableFactory("NPCybFactoryNE");
+	camEnableFactory("NPFactoryE");
+	camEnableFactory("NPCybFactoryE");
+	camCallOnce("mrlGroupAttack");
+	camCallOnce("transportBaseSetup");
+});
+
+function transportBaseSetup()
+{
+	camDetectEnemyBase("NPLZGroup");
+	camSetBaseReinforcements("NPLZGroup", camChangeOnDiff(camMinutesToMilliseconds(10)), "getDroidsForNPLZ", CAM_REINFORCE_TRANSPORT, {
+		entry: { x: 2, y: 2 },
+		exit: { x: 2, y: 2 },
+		data: {
+			regroup: false,
+			count: -1,
+			repair: 40,
+		},
+	});
+}
 
 function getDroidsForNPLZ()
 {
-	const count = 4; //Last alpha mission always has 8 transport units
-	var templates;
-	with (camTemplates) templates = [ nphct, npsbb, npmorb ];
+	const LIM = 8; //Last alpha mission always has 8 transport units
+	var templates = [ cTempl.nphct, cTempl.nphct, cTempl.npmorb, cTempl.npmorb, cTempl.npsbb ];
 
 	var droids = [];
-	for (var i = 0; i < count; ++i)
+	for (var i = 0; i < LIM; ++i)
 	{
-		var t = templates[camRand(templates.length)];
-		// two droids of each template
-		droids[droids.length] = t;
-		droids[droids.length] = t;
+		droids.push(templates[camRand(templates.length)]);
 	}
 	return droids;
 }
@@ -75,7 +86,8 @@ function HoverGroupPatrol()
 			camMakePos("hoverDefense3"),
 			camMakePos("hoverDefense4")
 		],
-		interval: 90000 //90 sec
+		interval: camMinutesToMilliseconds(1.5),
+		repair: 70
 	});
 }
 
@@ -86,67 +98,45 @@ function cyborgGroupPatrol()
 			camMakePos("genRetreatPoint"),
 			camMakePos("cybRetreatPoint"),
 			camMakePos("NPTransportPos")
-		]
+		],
+		repair: 66
 	});
 	camManageGroup(camMakeGroup("cyborgs2"), CAM_ORDER_PATROL, {
 		pos: [
 			camMakePos("genRetreatPoint"),
 			camMakePos("cybRetreatPoint"),
 			camMakePos("NPTransportPos")
-		]
+		],
+		repair: 66
 	});
 }
 
 function mrlGroupAttack()
 {
 	camManageGroup(camMakeGroup("MRL1"), CAM_ORDER_ATTACK, {
-		pos: camMakePos("attackPoint3"),
-		fallback: camMakePos("genRetreatPoint"),
-		morale: 60,
-		regroup: true
-	});
-}
-
-function sensorGroupAttack()
-{
-	camManageGroup(camMakeGroup("sensor1"), CAM_ORDER_ATTACK, {
-		pos: camMakePos("attackPoint3"),
-		fallback: camMakePos("genRetreatPoint"),
-		morale: 50,
-		regroup: true
-	});
-	camManageGroup(camMakeGroup("sensor2"), CAM_ORDER_ATTACK, {
-		pos: camMakePos("attackPoint3"),
-		fallback: camMakePos("genRetreatPoint"),
-		morale: 50,
-		regroup: true
+		count: -1,
+		repair: 80,
+		regroup: false
 	});
 }
 
 function IDFGroupAmbush()
 {
-	camManageGroup(camMakeGroup("IDF1"), CAM_ORDER_ATTACK,
-		{ pos: camMakePos("attackPoint3") });
-	camManageGroup(camMakeGroup("IDF2"), CAM_ORDER_ATTACK,
-		{ pos: camMakePos("attackPoint3") });
+	camManageGroup(camMakeGroup("IDF1"), CAM_ORDER_ATTACK, {
+		count: -1,
+		regroup: false
+	});
+	camManageGroup(camMakeGroup("IDF2"), CAM_ORDER_ATTACK, {
+		count: -1,
+		regroup: false
+	});
 }
 
 function setupPatrols()
 {
 	IDFGroupAmbush();
-	sensorGroupAttack();
 	HoverGroupPatrol();
-}
-
-function enableReinforcements()
-{
-	playSound("pcv440.ogg"); // Reinforcements are available.
-	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "CAM_1END", {
-		area: "RTLZ",
-		message: "C1D_LZ",
-		reinforcements: 120, //2 min
-		eliminateBases: true
-	});
+	cyborgGroupPatrol();
 }
 
 function eventStartLevel()
@@ -154,7 +144,7 @@ function eventStartLevel()
 	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "CAM_1END", {
 		area: "RTLZ",
 		message: "C1D_LZ",
-		reinforcements: -1,
+		reinforcements: camMinutesToSeconds(2),
 		eliminateBases: true
 	});
 
@@ -175,7 +165,6 @@ function eventStartLevel()
 		"NPFactoryNE": { tech: "R-Vehicle-Body12" }, //Main base factory
 	});
 
-	setPower(AI_POWER, NEW_PARADIGM);
 	camCompleteRequiredResearch(NEW_PARADIGM_RES, NEW_PARADIGM);
 
 	camSetEnemyBases({
@@ -205,83 +194,82 @@ function eventStartLevel()
 		},
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"NPFactoryW": {
 			assembly: "NPFactoryWAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(60000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(65)),
 			data: {
 				regroup: false,
-				repair: 45,
+				repair: 66,
 				count: -1,
 			},
-			templates: [ nphmgh, npltath, nphch ] //Hover factory
+			templates: [ cTempl.nphmgh, cTempl.npltath, cTempl.nphch ] //Hover factory
 		},
 		"NPFactoryE": {
 			assembly: "NPFactoryEAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(90000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(75)),
 			data: {
 				regroup: false,
-				repair: 30,
+				repair: 33,
 				count: -1,
 			},
-			templates: [ npltat, npmsens, npmorb, npsmct, nphct ] //variety
+			templates: [ cTempl.npltat, cTempl.npmsens, cTempl.npmorb, cTempl.npsmct, cTempl.nphct ] //variety
 		},
 		"NPFactoryNE": {
 			assembly: "NPFactoryNEAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(120000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(90)),
 			data: {
 				regroup: false,
-				repair: 25,
+				repair: 33,
 				count: -1,
 			},
-			templates: [ nphct, npsbb, npmorb ] //tough units
+			templates: [ cTempl.nphct, cTempl.npsbb, cTempl.npmorb ] //tough units
 		},
 		"NPCybFactoryW": {
 			assembly: "NPCybFactoryWAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(50000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(55)),
 			data: {
 				regroup: false,
-				repair: 25,
+				repair: 33,
 				count: -1,
 			},
-			templates: [ npcybc, npcybf, npcybr ]
+			templates: [ cTempl.npcybc, cTempl.npcybf, cTempl.npcybr ]
 		},
 		"NPCybFactoryE": {
 			assembly: "NPCybFactoryEAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(50000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
-				repair: 25,
+				repair: 33,
 				count: -1,
 			},
-			templates: [ npcybc, npcybf, npcybr ]
+			templates: [ cTempl.npcybc, cTempl.npcybf, cTempl.npcybr ]
 		},
 		"NPCybFactoryNE": {
 			assembly: "NPCybFactoryNEAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 4,
-			throttle: camChangeOnDiff(70000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(70)),
 			data: {
 				regroup: false,
-				repair: 25,
+				repair: 33,
 				count: -1,
 			},
-			templates: [ npcybc, npcybf, npcybr ]
+			templates: [ cTempl.npcybc, cTempl.npcybf, cTempl.npcybr ]
 		},
 	});
 
 	hackAddMessage("C1D_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER, true);
 
-	queue("enableReinforcements", 15000);
-	queue("setupPatrols", 160000); // 2.5 min.
+	queue("setupPatrols", camMinutesToMilliseconds(2.5));
 }

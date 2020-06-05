@@ -6,6 +6,7 @@ noinst_LIBRARIES = libivis_opengl.a
 noinst_HEADERS = \
 	piematrix.h \
 	gfx_api.h \
+	gfx_api_gl.h \
 	screen.h \
 	bitimage.h \
 	imd.h \
@@ -16,6 +17,7 @@ noinst_HEADERS = \
 	piedef.h \
 	piefunc.h \
 	piemode.h \
+	pienormalize.h \
 	piepalette.h \
 	piestate.h \
 	pietypes.h \

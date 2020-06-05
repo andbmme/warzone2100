@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -22,6 +22,25 @@
 #define _LIBIVIS_COMMON_PNG_H_
 
 #include "pietypes.h"
+#include <vector>
+
+struct IMGSaveError
+{
+	IMGSaveError()
+	{ }
+
+	IMGSaveError(std::string error)
+	: text(error)
+	{ }
+
+	inline bool noError() const
+	{
+		return text.empty();
+	}
+	std::string text;
+
+	static IMGSaveError None;
+};
 
 /*!
  * Load a PNG from file into image
@@ -33,22 +52,35 @@
 bool iV_loadImage_PNG(const char *fileName, iV_Image *image);
 
 /*!
+ * Load a PNG from a memory buffer into an image
+ *
+ * \param memoryBuffer input memory buffer to load from
+ * \param image Sprite to read into
+ * \return true on success, false otherwise
+ */
+IMGSaveError iV_loadImage_PNG(const std::vector<unsigned char>& memoryBuffer, iV_Image *image);
+
+/*!
  * Save a PNG from image into file
+ *
+ * This function is safe to call from any thread
  *
  * \param fileName output file to save to
  * \param image Texture to read from
- * \return true on success, false otherwise
+ * \return an IMGSaveError struct. On failure, its "text" contains a description of the error.
  */
-void iV_saveImage_PNG(const char *fileName, const iV_Image *image);
+IMGSaveError iV_saveImage_PNG(const char *fileName, const iV_Image *image);
 
 /*!
  * Save a PNG from image into file using grayscale colour model.
  *
+ * This function is safe to call from any thread
+ *
  * \param fileName output file to save to
  * \param image Texture to read from
- * \return true on success, false otherwise
+ * \return an IMGSaveError struct. On failure, its "text" contains a description of the error.
  */
-void iV_saveImage_PNG_Gray(const char *fileName, const iV_Image *image);
+IMGSaveError iV_saveImage_PNG_Gray(const char *fileName, const iV_Image *image);
 
 void iV_saveImage_JPEG(const char *fileName, const iV_Image *image);
 

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -36,7 +36,6 @@
 #include "lib/netplay/netplay.h"
 #include "lib/sound/audio.h"
 #include "lib/sound/audio_id.h"
-#include "lib/script/script.h"
 
 #include "multijoin.h"
 
@@ -60,7 +59,7 @@
 #include "wrappers.h"
 #include "intimage.h"
 #include "data.h"
-#include "scripttabs.h"
+#include "activity.h"
 
 #include "multimenu.h"
 #include "multiplay.h"
@@ -69,12 +68,30 @@
 #include "multistat.h"
 #include "multigifts.h"
 #include "qtscript.h"
-#include "scriptcb.h"
 
 // ////////////////////////////////////////////////////////////////////////////
 // Local Functions
 
 static void resetMultiVisibility(UDWORD player);
+
+// ////////////////////////////////////////////////////////////////////////////
+// Local Variables
+
+struct DisplayMultiJoiningStatusCache {
+	WzText wzMainProgressText;
+	WzText wzPlayerCountText;
+	std::vector<WzText> wzPlayerNameAndStatus;
+};
+
+DisplayMultiJoiningStatusCache textCache;
+
+// ////////////////////////////////////////////////////////////////////////////
+// Clear Local Display Caches
+
+void clearDisplayMultiJoiningStatusCache()
+{
+	textCache = DisplayMultiJoiningStatusCache();
+}
 
 // ////////////////////////////////////////////////////////////////////////////
 // Wait For Players
@@ -92,9 +109,10 @@ bool intDisplayMultiJoiningStatus(UBYTE joinCount)
 	RenderWindowFrame(FRAME_NORMAL, x, y , w, h);		// draw a wee blue box.
 
 	// display how far done..
-	iV_DrawText(_("Players Still Joining"),
-	            x + (w / 2) - (iV_GetTextWidth(_("Players Still Joining"), font_regular) / 2),
-	            y + (h / 2) - 8, font_regular);
+	textCache.wzMainProgressText.setText(_("Players Still Joining"), font_regular);
+	textCache.wzMainProgressText.render(x + (w / 2) - (textCache.wzMainProgressText.width() / 2),
+										y + (h / 2) - 8, WZCOL_TEXT_BRIGHT);
+
 	unsigned playerCount = 0;  // Calculate what NetPlay.playercount should be, which is apparently only non-zero for the host.
 	for (unsigned player = 0; player < game.maxPlayers; ++player)
 	{
@@ -108,7 +126,8 @@ bool intDisplayMultiJoiningStatus(UBYTE joinCount)
 		return true;
 	}
 	sprintf(sTmp, "%d%%", PERCENT(playerCount - joinCount, playerCount));
-	iV_DrawText(sTmp , x + (w / 2) - 10, y + (h / 2) + 10, font_large);
+	textCache.wzPlayerCountText.setText(sTmp, font_large);
+	textCache.wzPlayerCountText.render(x + (w / 2) - 10, y + (h / 2) + 10, WZCOL_TEXT_BRIGHT);
 
 	int yStep = iV_GetTextLineSize(font_small);
 	int yPos = RET_Y - yStep * game.maxPlayers;
@@ -128,7 +147,12 @@ bool intDisplayMultiJoiningStatus(UBYTE joinCount)
 		}
 		if (status >= 0)
 		{
-			iV_DrawText((statusStrings[status] + getPlayerName(player)).c_str(), x + 5, yPos + yStep * NetPlay.players[player].position, font_small);
+			if (player >= textCache.wzPlayerNameAndStatus.size())
+			{
+				textCache.wzPlayerNameAndStatus.resize(player + 1);
+			}
+			textCache.wzPlayerNameAndStatus[player].setText((statusStrings[status] + getPlayerName(player)).c_str(), font_small);
+			textCache.wzPlayerNameAndStatus[player].render(x + 5, yPos + yStep * NetPlay.players[player].position, WZCOL_TEXT_BRIGHT);
 		}
 	}
 
@@ -266,6 +290,7 @@ void recvPlayerLeft(NETQUEUE queue)
 	NETsetPlayerConnectionStatus(CONNECTIONSTATUS_PLAYER_DROPPED, playerIndex);
 
 	debug(LOG_INFO, "** player %u has dropped, in-game!", playerIndex);
+	ActivityManager::instance().updateMultiplayGameData(game, ingame, NETGameIsLocked());
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -308,8 +333,6 @@ bool MultiPlayerLeave(UDWORD playerIndex)
 	}
 
 	// fire script callback to reassign skirmish players.
-	CBPlayerLeft = playerIndex;
-	eventFireCallbackTrigger((TRIGGER_TYPE)CALL_PLAYERLEFT);
 	triggerEventPlayerLeft(playerIndex);
 
 	netPlayersUpdated = true;

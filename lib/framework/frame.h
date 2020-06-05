@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -50,11 +50,9 @@
 #include "trig.h"
 #include "cursors.h"
 
-#if __clang__
+#if defined(__clang__)
 // workaround LLVM bug https://bugs.llvm.org//show_bug.cgi?id=21629
 #pragma clang diagnostic ignored "-Wmissing-braces"
-// workaround bad implementations in our code
-#pragma clang diagnostic ignored "-Wcast-align"
 #endif
 
 #define REALCONCAT(x, y) x ## y
@@ -73,14 +71,6 @@ typedef uint8_t PlayerMask;
 typedef uint16_t PlayerMask;
 #else
 #error Warzone 2100 is not a MMO.
-#endif
-
-#if defined(WZ_OS_WIN)
-# define WZ_WRITEDIR "Warzone 2100 master"
-#elif defined(WZ_OS_MAC)
-# define WZ_WRITEDIR "Warzone 2100 master"
-#else
-# define WZ_WRITEDIR ".warzone2100-master"
 #endif
 
 enum QUEUE_MODE

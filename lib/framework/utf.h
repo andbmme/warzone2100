@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 2007  Giel van Schijndel
-	Copyright (C) 2007-2017  Warzone 2100 Project
+	Copyright (C) 2007-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -86,8 +86,8 @@ char *UTF16toUTF8(const utf_16_char *unicode_string, size_t *nbytes);
  */
 utf_16_char *UTF8toUTF16(const char *utf8_string, size_t *nbytes);
 
-char *UTF8CharacterAtOffset(const char *utf8_string, size_t index);
-utf_16_char *UTF16CharacterAtOffset(const utf_16_char *utf16_string, size_t index);
+const char *UTF8CharacterAtOffset(const char *utf8_string, size_t index);
+const utf_16_char *UTF16CharacterAtOffset(const utf_16_char *utf16_string, size_t index);
 
 /** Encodes a UTF-32 string to a UTF-8 encoded string
  *  \param unicode_string the UTF-32 string to encode into UTF-8

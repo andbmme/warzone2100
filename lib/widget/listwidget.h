@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -28,6 +28,8 @@
 #include "lib/ivis_opengl/ivisdef.h"
 
 #include "widget.h"
+#include <functional>
+#include <algorithm>
 
 
 struct TabSelectionStyle
@@ -35,8 +37,8 @@ struct TabSelectionStyle
 	TabSelectionStyle() {}
 	TabSelectionStyle(Image tab, Image tabDown, Image tabHighlight, Image prev, Image prevDown, Image prevHighlight, Image next, Image nextDown, Image nextHighlight, int gap);
 
-	QSize tabSize;
-	QSize scrollTabSize;
+	WzSize tabSize;
+	WzSize scrollTabSize;
 	Image tabImage, tabImageDown, tabImageHighlight;
 	Image prevScrollTabImage, prevScrollTabImageDown, prevScrollTabImageHighlight;
 	Image nextScrollTabImage, nextScrollTabImageDown, nextScrollTabImageHighlight;
@@ -45,27 +47,28 @@ struct TabSelectionStyle
 
 class TabSelectionWidget : public WIDGET
 {
-	Q_OBJECT
 
 public:
 	TabSelectionWidget(WIDGET *parent);
 
 	void setHeight(int height);
-	void addStyle(TabSelectionStyle const &style);
+	void addStyle(TabSelectionStyle const &tabStyle);
 
 	int tabs() const
 	{
 		return tabButtons.size();
 	}
 
-signals:
-	void tabChanged(int);
+	/* The optional "onTabChanged" callback function */
+	typedef std::function<void (TabSelectionWidget& widget, int currentTab)> W_TABSELECTION_ON_TAB_CHANGED_FUNC;
 
-public slots:
+	void addOnTabChangedHandler(const W_TABSELECTION_ON_TAB_CHANGED_FUNC& onTabChangedFunc);
+
+public:
 	void setTab(int tab);
 	void setNumberOfTabs(int tabs);
 
-private slots:
+private:
 	void prevTabPage();
 	void nextTabPage();
 
@@ -78,19 +81,18 @@ private:
 	std::vector<W_BUTTON *> tabButtons;
 	W_BUTTON *prevTabPageButton;
 	W_BUTTON *nextTabPageButton;
-	class QSignalMapper *setTabMapper;
+	std::vector<W_TABSELECTION_ON_TAB_CHANGED_FUNC> onTabChangedHandlers;
 };
 
 class ListWidget : public WIDGET
 {
-	Q_OBJECT
 
 public:
 	enum Order {RightThenDown, DownThenRight};
 
 	ListWidget(WIDGET *parent);
 
-	virtual void widgetLost(WIDGET *widget);
+	void widgetLost(WIDGET *widget) override;
 
 	void setChildSize(int width, int height);  ///< Sets the size of all child widgets (applied by calling addWidgetToLayout).
 	void setChildSpacing(int width, int height);  ///< Sets the distance between child widgets (applied by calling addWidgetToLayout).
@@ -106,11 +108,16 @@ public:
 		return std::max(((int)myChildren.size() - 1) / widgetsPerPage(), 0) + 1;
 	}
 
-signals:
-	void currentPageChanged(int);
-	void numberOfPagesChanged(int);
+	/* The optional "onCurrentPageChanged" callback function */
+	typedef std::function<void (ListWidget& psWidget, int currentPage)> W_LISTWIDGET_ON_CURRENTPAGECHANGED_FUNC;
 
-public slots:
+	/* The optional "onNumberOfPagesChanged" callback function */
+	typedef std::function<void (ListWidget& psWidget, int numberOfPages)> W_LISTWIDGET_ON_NUMBEROFPAGESCHANGED_FUNC;
+
+	void addOnCurrentPageChangedHandler(const W_LISTWIDGET_ON_CURRENTPAGECHANGED_FUNC& handlerFunc);
+	void addOnNumberOfPagesChangedHandler(const W_LISTWIDGET_ON_NUMBEROFPAGESCHANGED_FUNC& handlerFunc);
+
+public:
 	void setCurrentPage(int page);
 
 private:
@@ -138,23 +145,24 @@ private:
 		return childSize.height() + spacing.height();
 	}
 
-	QSize childSize;
-	QSize spacing;
+	WzSize childSize;
+	WzSize spacing;
 	unsigned currentPage_;
 	std::vector<WIDGET *> myChildren;
 	Order order;
+	std::vector<W_LISTWIDGET_ON_CURRENTPAGECHANGED_FUNC> onCurrentPageChangedHandlers;
+	std::vector<W_LISTWIDGET_ON_NUMBEROFPAGESCHANGED_FUNC> onNumberOfPagesChangedHandlers;
 };
 
 class ListTabWidget : public WIDGET
 {
-	Q_OBJECT
 
 public:
 	enum TabPosition {Top, Bottom};
 
 	ListTabWidget(WIDGET *parent);
 
-	virtual void geometryChanged();
+	void geometryChanged() override;
 
 	void setChildSize(int width, int height)
 	{

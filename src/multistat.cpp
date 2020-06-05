@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -25,6 +25,17 @@
  * load / update / store multiplayer statistics for league tables etc...
  */
 
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__) && (9 <= __GNUC__)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wdeprecated-copy" // Workaround Qt < 5.13 `deprecated-copy` issues with GCC 9
+#endif
+
+#include <QtCore/QSettings> // **NOTE: Qt headers _must_ be before platform specific headers so we don't get conflicts.
+
+#if defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__) && (9 <= __GNUC__)
+# pragma GCC diagnostic pop // Workaround Qt < 5.13 `deprecated-copy` issues with GCC 9
+#endif
+
 #include "lib/framework/frame.h"
 #include "lib/framework/file.h"
 #include "lib/netplay/nettypes.h"
@@ -32,7 +43,6 @@
 #include "main.h"
 #include "mission.h" // for cheats
 #include "multistat.h"
-#include <QtCore/QSettings>
 #include <utility>
 
 
@@ -175,21 +185,24 @@ bool loadMultiStats(char *sPlayerName, PLAYERSTATS *st)
 	// check player already exists
 	if (PHYSFS_exists(fileName))
 	{
-		loadFile(fileName, &pFileData, &size);
-
-		if (strncmp(pFileData, "WZ.STA.v3", 9) != 0)
+		if (loadFile(fileName, &pFileData, &size))
 		{
-			return false; // wrong version or not a stats file
-		}
+			if (strncmp(pFileData, "WZ.STA.v3", 9) != 0)
+			{
+				free(pFileData);
+				pFileData = nullptr;
+				return false; // wrong version or not a stats file
+			}
 
-		char identity[1001];
-		identity[0] = '\0';
-		sscanf(pFileData, "WZ.STA.v3\n%u %u %u %u %u\n%1000[A-Za-z0-9+/=]",
-		       &st->wins, &st->losses, &st->totalKills, &st->totalScore, &st->played, identity);
-		free(pFileData);
-		if (identity[0] != '\0')
-		{
-			st->identity.fromBytes(base64Decode(identity), EcKey::Private);
+			char identity[1001];
+			identity[0] = '\0';
+			sscanf(pFileData, "WZ.STA.v3\n%u %u %u %u %u\n%1000[A-Za-z0-9+/=]",
+				   &st->wins, &st->losses, &st->totalKills, &st->totalScore, &st->played, identity);
+			free(pFileData);
+			if (identity[0] != '\0')
+			{
+				st->identity.fromBytes(base64Decode(identity), EcKey::Private);
+			}
 		}
 	}
 
@@ -240,30 +253,24 @@ bool saveMultiStats(const char *sFileName, const char *sPlayerName, const PLAYER
 // update players damage stats.
 void updateMultiStatsDamage(UDWORD attacker, UDWORD defender, UDWORD inflicted)
 {
-	// FIXME: Why in the world are we using two different structs for stats when we can use only one?
-	if (attacker < MAX_PLAYERS)
+	// damaging features like skyscrapers does not count
+	if (defender != PLAYER_FEATURE)
 	{
 		if (NetPlay.bComms)
 		{
-			playerStats[attacker].totalScore  += 2 * inflicted;
-			playerStats[attacker].recentScore += 2 * inflicted;
+			// killing and getting killed by scavengers does not influence scores in MP games
+			if (attacker != scavengerSlot() && defender != scavengerSlot())
+			{
+				// FIXME: Why in the world are we using two different structs for stats when we can use only one?
+				playerStats[attacker].totalScore  += 2 * inflicted;
+				playerStats[attacker].recentScore += 2 * inflicted;
+				playerStats[defender].totalScore  -= inflicted;
+				playerStats[defender].recentScore -= inflicted;
+			}
 		}
 		else
 		{
 			ingame.skScores[attacker][0] += 2 * inflicted;  // increment skirmish players rough score.
-		}
-	}
-
-	// FIXME: Why in the world are we using two different structs for stats when we can use only one?
-	if (defender < MAX_PLAYERS)
-	{
-		if (NetPlay.bComms)
-		{
-			playerStats[defender].totalScore  -= inflicted;
-			playerStats[defender].recentScore -= inflicted;
-		}
-		else
-		{
 			ingame.skScores[defender][0] -= inflicted;  // increment skirmish players rough score.
 		}
 	}
@@ -302,19 +309,22 @@ void updateMultiStatsLoses()
 // update kills
 void updateMultiStatsKills(BASE_OBJECT *psKilled, UDWORD player)
 {
-	if (player >= MAX_PLAYERS)
+	if (player < MAX_PLAYERS)
 	{
-		return;
-	}
-	// FIXME: Why in the world are we using two different structs for stats when we can use only one?
-	if (NetPlay.bComms)
-	{
-		++playerStats[player].totalKills;
-		++playerStats[player].recentKills;
-	}
-	else
-	{
-		ingame.skScores[player][1]++;
+		if (NetPlay.bComms)
+		{
+			// killing scavengers does not count in MP games
+			if (psKilled != nullptr && psKilled->player != scavengerSlot())
+			{
+				// FIXME: Why in the world are we using two different structs for stats when we can use only one?
+				++playerStats[player].totalKills;
+				++playerStats[player].recentKills;
+			}
+		}
+		else
+		{
+			ingame.skScores[player][1]++;
+		}
 	}
 }
 

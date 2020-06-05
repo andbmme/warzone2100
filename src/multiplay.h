@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -30,6 +30,9 @@
 #include "lib/framework/crc.h"
 #include "orderdef.h"
 #include "stringdef.h"
+#include "messagedef.h"
+#include <vector>
+#include <string>
 
 class DROID_GROUP;
 struct BASE_OBJECT;
@@ -57,6 +60,7 @@ struct MULTIPLAYERGAME
 	uint8_t		skDiff[MAX_PLAYERS];		// skirmish game difficulty settings. 0x0=OFF 0xff=HUMAN
 	bool		mapHasScavengers;
 	bool		isMapMod;					// if a map has mods
+	uint32_t	techLevel;					// what technology level is being used
 };
 
 struct MULTISTRUCTLIMITS
@@ -77,10 +81,16 @@ struct MULTIPLAYERINGAME
 	int32_t				TimeEveryoneIsInGame;
 	bool				isAllPlayersDataOK;
 	UDWORD				startTime;
-	UDWORD				numStructureLimits;					// number of limits
-	MULTISTRUCTLIMITS	*pStructureLimits;					// limits chunk.
+	std::vector<MULTISTRUCTLIMITS> structureLimits;
 	uint8_t				flags;  ///< Bitmask, shows which structures are disabled.
-	UDWORD		skScores[MAX_PLAYERS][2];			// score+kills for local skirmish players.
+#define MPFLAGS_NO_TANKS	0x01  		///< Flag for tanks disabled
+#define MPFLAGS_NO_CYBORGS	0x02  		///< Flag for cyborgs disabled
+#define MPFLAGS_NO_VTOLS	0x04  		///< Flag for VTOLs disabled
+#define MPFLAGS_NO_UPLINK	0x08  		///< Flag for Satellite Uplink disabled
+#define MPFLAGS_NO_LASSAT	0x10  		///< Flag for Laser Satellite Command Post disabled
+#define MPFLAGS_FORCELIMITS	0x20  		///< Flag to force structure limits
+#define MPFLAGS_MAX		0x3f
+	SDWORD		skScores[MAX_PLAYERS][2];			// score+kills for local skirmish players.
 	char		phrases[5][255];					// 5 favourite text messages.
 };
 
@@ -188,7 +198,26 @@ bool multiShutdown();
 bool sendLeavingMsg();
 
 bool hostCampaign(char *sGame, char *sPlayer);
-bool joinGame(const char *host, uint32_t port);
+struct JoinConnectionDescription
+{
+public:
+	JoinConnectionDescription() { }
+	JoinConnectionDescription(const std::string& host, uint32_t port)
+	: host(host)
+	, port(port)
+	{ }
+public:
+	std::string host;
+	uint32_t port = 0;
+};
+std::vector<JoinConnectionDescription> findLobbyGame(const std::string& lobbyAddress, unsigned int lobbyPort, uint32_t lobbyGameId);
+enum class JoinGameResult {
+	FAILED,
+	JOINED,
+	PENDING_PASSWORD
+};
+JoinGameResult joinGame(const char *host, uint32_t port);
+JoinGameResult joinGame(const std::vector<JoinConnectionDescription>& connection_list);
 void playerResponding();
 bool multiGameInit();
 bool multiGameShutdown();
@@ -203,19 +232,7 @@ bool sendResearchStatus(STRUCTURE *psBuilding, UDWORD index, UBYTE player, bool 
 void displayAIMessage(char *pStr, SDWORD from, SDWORD to);  //make AI process a message
 
 
-/* for multiplayer message stack */
-UDWORD	msgStackPush(SDWORD CBtype, SDWORD plFrom, SDWORD plTo, const char *tStr, SDWORD x, SDWORD y, DROID *psDroid);
-bool	isMsgStackEmpty();
-bool	msgStackGetFrom(SDWORD  *psVal);
-bool	msgStackGetTo(SDWORD  *psVal);
-bool	msgStackGetMsg(char  *psVal);
-bool	msgStackPop();
-SDWORD	msgStackGetCount();
-void	msgStackReset();
-bool msgStackGetDroid(DROID **ppsDroid);
-
 bool sendBeacon(int32_t locX, int32_t locY, int32_t forPlayer, int32_t sender, const char *pStr);
-bool msgStackFireTop();
 
 bool multiplayPlayersReady(bool bNotifyStatus);
 void startMultiplayerGame();
@@ -224,5 +241,10 @@ void resetReadyStatus(bool bSendOptions);
 STRUCTURE *findResearchingFacilityByResearchIndex(unsigned player, unsigned index);
 
 void sendSyncRequest(int32_t req_id, int32_t x, int32_t y, BASE_OBJECT *psObj, BASE_OBJECT *psObj2);
+
+
+bool sendBeaconToPlayer(SDWORD locX, SDWORD locY, SDWORD forPlayer, SDWORD sender, const char *beaconMsg);
+MESSAGE *findBeaconMsg(UDWORD player, SDWORD sender);
+VIEWDATA *CreateBeaconViewData(SDWORD sender, UDWORD LocX, UDWORD LocY);
 
 #endif // __INCLUDED_SRC_MULTIPLAY_H__

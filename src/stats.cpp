@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -25,7 +25,6 @@
  */
 #include <string.h>
 #include <algorithm>
-#include <QtCore/QHash>
 
 #include "lib/framework/frame.h"
 #include "lib/framework/strres.h"
@@ -40,6 +39,7 @@
 #include "lib/sound/audio_id.h"
 #include "projectile.h"
 #include "text.h"
+#include <unordered_map>
 
 #define WEAPON_TIME		100
 
@@ -52,7 +52,7 @@ ECM_STATS		*asECMStats;
 REPAIR_STATS		*asRepairStats;
 WEAPON_STATS		*asWeaponStats;
 CONSTRUCT_STATS		*asConstructStats;
-PROPULSION_TYPES	*asPropulsionTypes;
+std::vector<PROPULSION_TYPES> asPropulsionTypes;
 static int		*asTerrainTable;
 
 //used to hold the modifiers cross refd by weapon effect and propulsion type
@@ -89,10 +89,10 @@ UBYTE		*apCompLists[MAX_PLAYERS][COMP_NUMCOMPONENTS];
 //store for each players Structure states
 UBYTE		*apStructTypeLists[MAX_PLAYERS];
 
-static QHash<QString, BASE_STATS *> lookupStatPtr;
+static std::unordered_map<WzString, BASE_STATS *> lookupStatPtr;
 
-static bool getMovementModel(const char *movementModel, MOVEMENT_MODEL *model);
-static bool statsGetAudioIDFromString(const QString &szStatName, const QString &szWavName, int *piWavID);
+static bool getMovementModel(const WzString &movementModel, MOVEMENT_MODEL *model);
+static bool statsGetAudioIDFromString(const WzString &szStatName, const WzString &szWavName, int *piWavID);
 
 //Access functions for the max values to be used in the Design Screen
 static void setMaxComponentWeight(UDWORD weight);
@@ -122,8 +122,7 @@ static void updateMaxConstStats(UWORD maxValue);
 //Deallocate the storage assigned for the Propulsion Types table
 static void deallocPropulsionTypes()
 {
-	free(asPropulsionTypes);
-	asPropulsionTypes = nullptr;
+	asPropulsionTypes.clear();
 }
 
 //dealloc the storage assigned for the terrain table
@@ -189,22 +188,6 @@ bool statsShutDown()
 	return true;
 }
 
-/* Return the number of newlines in a file buffer */
-UDWORD numCR(const char *pFileBuffer, UDWORD fileSize)
-{
-	UDWORD  lines = 0;
-
-	while (fileSize-- > 0)
-	{
-		if (*pFileBuffer++ == '\n')
-		{
-			lines++;
-		}
-	}
-
-	return lines;
-}
-
 
 /*******************************************************************************
 *		Allocate stats functions
@@ -256,39 +239,40 @@ bool statsAllocConstruct(UDWORD	numStats)
 *		Load stats functions
 *******************************************************************************/
 
-static iIMDShape *statsGetIMD(WzConfig &json, BASE_STATS *psStats, const QString& key, const QString& key2 = QString())
+static iIMDShape *statsGetIMD(WzConfig &json, BASE_STATS *psStats, const WzString& key, const WzString& key2 = WzString())
 {
 	iIMDShape *retval = nullptr;
 	if (json.contains(key))
 	{
-		QJsonValue value = json.json(key);
-		if (value.isObject())
+		auto value = json.json(key);
+		if (value.is_object())
 		{
 			ASSERT(!key2.isEmpty(), "Cannot look up a JSON object with an empty key!");
-			QJsonObject obj = value.toObject();
-			if (!obj.contains(key2))
+			auto obj = value;
+			if (obj.find(key2.toUtf8()) == obj.end())
 			{
 				return nullptr;
 			}
-			value = obj[key2];
+			value = obj[key2.toUtf8()];
 		}
-		retval = modelGet(value.toString());
+		WzString filename = json_variant(value).toWzString();
+		retval = modelGet(filename);
 		ASSERT(retval != nullptr, "Cannot find the PIE model %s for stat %s in %s",
-		       value.toString().toUtf8().constData(), getName(psStats), json.fileName().toUtf8().constData());
+		       filename.toUtf8().c_str(), getName(psStats), json.fileName().toUtf8().c_str());
 	}
 	return retval;
 }
 
-void loadStats(WzConfig &json, BASE_STATS *psStats, int index)
+void loadStats(WzConfig &json, BASE_STATS *psStats, size_t index)
 {
 	psStats->id = json.group();
-	psStats->name = json.value("name").toString();
+	psStats->name = json.string("name");
 	psStats->index = index;
-	ASSERT(!lookupStatPtr.contains(psStats->id), "Duplicate ID found! (%s)", psStats->id.toUtf8().constData());
-	lookupStatPtr.insert(psStats->id, psStats);
+	ASSERT(lookupStatPtr.find(psStats->id) == lookupStatPtr.end(), "Duplicate ID found! (%s)", psStats->id.toUtf8().c_str());
+	lookupStatPtr.insert(std::make_pair(psStats->id, psStats));
 }
 
-static void loadCompStats(WzConfig &json, COMPONENT_STATS *psStats, int index)
+static void loadCompStats(WzConfig &json, COMPONENT_STATS *psStats, size_t index)
 {
 	loadStats(json, psStats, index);
 	psStats->buildPower = json.value("buildPower", 0).toUInt();
@@ -298,7 +282,7 @@ static void loadCompStats(WzConfig &json, COMPONENT_STATS *psStats, int index)
 	psStats->pBase->hitpoints = json.value("hitpoints", 0).toUInt();
 	psStats->pBase->hitpointPct = json.value("hitpointPct", 100).toUInt();
 
-	QString dtype = json.value("droidType", "DROID").toString();
+	WzString dtype = json.value("droidType", "DROID").toWzString();
 	psStats->droidTypeOverride = DROID_ANY;
 	if (dtype.compare("PERSON") == 0)
 	{
@@ -346,24 +330,24 @@ static void loadCompStats(WzConfig &json, COMPONENT_STATS *psStats, int index)
 	}
 	else if (dtype.compare("DROID") != 0)
 	{
-		debug(LOG_ERROR, "Unrecognized droidType %s", dtype.toUtf8().constData());
+		debug(LOG_ERROR, "Unrecognized droidType %s", dtype.toUtf8().c_str());
 	}
 }
 
 /*Load the weapon stats from the file exported from Access*/
-bool loadWeaponStats(const char *pFileName)
+bool loadWeaponStats(WzConfig &ini)
 {
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 	statsAllocWeapons(list.size());
 	// Hack to make sure ZNULLWEAPON is always first in list
-	int nullweapon = list.indexOf("ZNULLWEAPON");
-	ASSERT_OR_RETURN(false, nullweapon >= 0, "ZNULLWEAPON is mandatory");
-	list.swap(nullweapon, 0);
-	for (int i = 0; i < list.size(); ++i)
+	auto nullweapon = std::find(list.begin(), list.end(), WzString::fromUtf8("ZNULLWEAPON"));
+	ASSERT_OR_RETURN(false, nullweapon != list.end(), "ZNULLWEAPON is mandatory");
+	std::iter_swap(nullweapon, list.begin());
+	for (size_t i = 0; i < list.size(); ++i)
 	{
 		WEAPON_STATS *psStats = &asWeaponStats[i];
-		QStringList flags;
+		std::vector<WzString> flags;
 
 		ini.beginGroup(list[i]);
 		loadCompStats(ini, psStats, i);
@@ -371,9 +355,11 @@ bool loadWeaponStats(const char *pFileName)
 
 		psStats->radiusLife = ini.value("radiusLife", 0).toUInt();
 
+		psStats->base.shortRange = ini.value("shortRange").toUInt();
 		psStats->base.maxRange = ini.value("longRange").toUInt();
 		psStats->base.minRange = ini.value("minRange", 0).toUInt();
 		psStats->base.hitChance = ini.value("longHit", 100).toUInt();
+		psStats->base.shortHitChance = ini.value("shortHit", 100).toUInt();
 		psStats->base.firePause = ini.value("firePause").toUInt();
 		psStats->base.numRounds = ini.value("numRounds").toUInt();
 		psStats->base.reloadTime = ini.value("reloadTime").toUInt();
@@ -402,15 +388,22 @@ bool loadWeaponStats(const char *pFileName)
 		psStats->maxElevation = ini.value("maxElevation").toInt();
 		psStats->recoilValue = ini.value("recoilValue").toUInt();
 		psStats->effectSize = ini.value("effectSize").toUInt();
-		flags = ini.value("flags", 0).toStringList();
+		std::vector<WzString> flags_raw = ini.value("flags", 0).toWzStringList();
+		// convert flags entries to lowercase
+		std::transform(
+					   flags_raw.begin(),
+					   flags_raw.end(),
+					   std::back_inserter(flags),
+					   [](const WzString& in) { return in.toLower(); }
+		);
 		psStats->vtolAttackRuns = ini.value("numAttackRuns", 0).toUInt();
 		psStats->penetrate = ini.value("penetrate", false).toBool();
 		// weapon size limitation
 		int weaponSize = ini.value("weaponSize", WEAPON_SIZE_ANY).toInt();
-		ASSERT(weaponSize <= WEAPON_SIZE_ANY, "Bad weapon size for %s", list[i].toUtf8().constData());
+		ASSERT(weaponSize <= WEAPON_SIZE_ANY, "Bad weapon size for %s", list[i].toUtf8().c_str());
 		psStats->weaponSize = (WEAPON_SIZE)weaponSize;
 
-		ASSERT(psStats->flightSpeed > 0, "Invalid flight speed for %s", list[i].toUtf8().constData());
+		ASSERT(psStats->flightSpeed > 0, "Invalid flight speed for %s", list[i].toUtf8().c_str());
 
 		psStats->ref = REF_WEAPON_START + i;
 
@@ -429,14 +422,14 @@ bool loadWeaponStats(const char *pFileName)
 		psStats->fireOnMove = ini.value("fireOnMove", true).toBool();
 
 		//set the weapon class
-		if (!getWeaponClass(ini.value("weaponClass").toString(), &psStats->weaponClass))
+		if (!getWeaponClass(ini.value("weaponClass").toWzString(), &psStats->weaponClass))
 		{
 			debug(LOG_ERROR, "Invalid weapon class for weapon %s - assuming KINETIC", getName(psStats));
 			psStats->weaponClass = WC_KINETIC;
 		}
 
 		//set the subClass
-		if (!getWeaponSubClass(ini.value("weaponSubClass").toString().toUtf8().data(), &psStats->weaponSubClass))
+		if (!getWeaponSubClass(ini.value("weaponSubClass").toWzString().toUtf8().c_str(), &psStats->weaponSubClass))
 		{
 			return false;
 		}
@@ -456,14 +449,14 @@ bool loadWeaponStats(const char *pFileName)
 		}
 
 		//set the weapon effect
-		if (!getWeaponEffect(ini.value("weaponEffect").toString().toUtf8().constData(), &psStats->weaponEffect))
+		if (!getWeaponEffect(ini.value("weaponEffect").toWzString(), &psStats->weaponEffect))
 		{
 			debug(LOG_FATAL, "loadWepaonStats: Invalid weapon effect for weapon %s", getName(psStats));
 			return false;
 		}
 
 		//set periodical damage weapon class
-		QString periodicalDamageWeaponClass = ini.value("periodicalDamageWeaponClass", "").toString();
+		WzString periodicalDamageWeaponClass = ini.value("periodicalDamageWeaponClass", "").toWzString();
 		if (periodicalDamageWeaponClass.compare("") == 0)
 		{
 			//was not setted in ini - use default value
@@ -476,35 +469,48 @@ bool loadWeaponStats(const char *pFileName)
 		}
 
 		//set periodical damage weapon subclass
-		QString periodicalDamageWeaponSubClass = ini.value("periodicalDamageWeaponSubClass", "").toString();
+		WzString periodicalDamageWeaponSubClass = ini.value("periodicalDamageWeaponSubClass", "").toWzString();
 		if (periodicalDamageWeaponSubClass.compare("") == 0)
 		{
 			//was not setted in ini - use default value
 			psStats->periodicalDamageWeaponSubClass = psStats->weaponSubClass;
 		}
-		else if (!getWeaponSubClass(periodicalDamageWeaponSubClass.toUtf8().data(), &psStats->periodicalDamageWeaponSubClass))
+		else if (!getWeaponSubClass(periodicalDamageWeaponSubClass.toUtf8().c_str(), &psStats->periodicalDamageWeaponSubClass))
 		{
 			debug(LOG_ERROR, "Invalid periodicalDamageWeaponSubClass for weapon %s - assuming same subclass as weapon", getName(psStats));
 			psStats->periodicalDamageWeaponSubClass = psStats->weaponSubClass;
 		}
 
 		//set periodical damage weapon effect
-		QString periodicalDamageWeaponEffect = ini.value("periodicalDamageWeaponEffect", "").toString();
+		WzString periodicalDamageWeaponEffect = ini.value("periodicalDamageWeaponEffect", "").toWzString();
 		if (periodicalDamageWeaponEffect.compare("") == 0)
 		{
 			//was not setted in ini - use default value
 			psStats->periodicalDamageWeaponEffect = psStats->weaponEffect;
 		}
-		else if (!getWeaponEffect(periodicalDamageWeaponEffect.toUtf8().data(), &psStats->periodicalDamageWeaponEffect))
+		else if (!getWeaponEffect(periodicalDamageWeaponEffect.toUtf8().c_str(), &psStats->periodicalDamageWeaponEffect))
 		{
 			debug(LOG_ERROR, "Invalid periodicalDamageWeaponEffect for weapon %s - assuming same effect as weapon", getName(psStats));
 			psStats->periodicalDamageWeaponEffect = psStats->weaponEffect;
 		}
 
 		//set the movement model
-		if (!getMovementModel(ini.value("movement").toString().toUtf8().constData(), &psStats->movementModel))
+		if (!getMovementModel(ini.value("movement").toWzString(), &psStats->movementModel))
 		{
 			return false;
+		}
+
+		unsigned int shortRange = psStats->upgrade[0].shortRange;
+		unsigned int longRange = psStats->upgrade[0].maxRange;
+		unsigned int shortHit = psStats->upgrade[0].shortHitChance;
+		unsigned int longHit = psStats->upgrade[0].hitChance;
+		if (shortRange > longRange)
+		{
+			debug(LOG_ERROR, "%s, Short range (%d) is greater than long range (%d)", getName(psStats), shortRange, longRange);
+		}
+		if (shortRange == longRange && shortHit != longHit)
+		{
+			debug(LOG_ERROR, "%s, shortHit and longHit should be equal if the ranges are the same", getName(psStats));
 		}
 
 		// set the face Player value
@@ -518,13 +524,17 @@ bool loadWeaponStats(const char *pFileName)
 
 		// interpret flags
 		psStats->surfaceToAir = SHOOT_ON_GROUND; // default
-		if (flags.contains("AirOnly", Qt::CaseInsensitive))
+		if (std::find(flags.begin(), flags.end(), "aironly") != flags.end()) // "AirOnly"
 		{
 			psStats->surfaceToAir = SHOOT_IN_AIR;
 		}
-		else if (flags.contains("ShootAir", Qt::CaseInsensitive))
+		else if (std::find(flags.begin(), flags.end(), "shootair") != flags.end()) // "ShootAir"
 		{
 			psStats->surfaceToAir |= SHOOT_IN_AIR;
+		}
+		if (std::find(flags.begin(), flags.end(), "nofriendlyfire") != flags.end()) // "NoFriendlyFire"
+		{
+			psStats->flags.set(WEAPON_FLAG_NO_FRIENDLY_FIRE, true);
 		}
 
 		//set the weapon sounds to default value
@@ -533,12 +543,12 @@ bool loadWeaponStats(const char *pFileName)
 
 		// load sounds
 		int weaponSoundID, explosionSoundID;
-		QString szWeaponWav = ini.value("weaponWav", "-1").toString();
-		QString szExplosionWav = ini.value("explosionWav", "-1").toString();
+		WzString szWeaponWav = ini.value("weaponWav", "-1").toWzString();
+		WzString szExplosionWav = ini.value("explosionWav", "-1").toWzString();
 		bool result = statsGetAudioIDFromString(list[i], szWeaponWav, &weaponSoundID);
-		ASSERT_OR_RETURN(false, result, "Weapon sound %s not found for %s", szWeaponWav.toUtf8().constData(), getName(psStats));
+		ASSERT_OR_RETURN(false, result, "Weapon sound %s not found for %s", szWeaponWav.toUtf8().c_str(), getName(psStats));
 		result = statsGetAudioIDFromString(list[i], szExplosionWav, &explosionSoundID);
-		ASSERT_OR_RETURN(false, result, "Explosion sound %s not found for %s", szExplosionWav.toUtf8().constData(), getName(psStats));
+		ASSERT_OR_RETURN(false, result, "Explosion sound %s not found for %s", szExplosionWav.toUtf8().c_str(), getName(psStats));
 		psStats->iAudioFireID = weaponSoundID;
 		psStats->iAudioImpactID = explosionSoundID;
 
@@ -557,16 +567,16 @@ bool loadWeaponStats(const char *pFileName)
 	return true;
 }
 
-bool loadBodyStats(const char *pFileName)
+bool loadBodyStats(WzConfig &ini)
 {
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 	statsAllocBody(list.size());
 	// Hack to make sure ZNULLBODY is always first in list
-	int nullbody = list.indexOf("ZNULLBODY");
-	ASSERT_OR_RETURN(false, nullbody >= 0, "ZNULLBODY is mandatory");
-	list.swap(nullbody, 0);
-	for (int i = 0; i < list.size(); ++i)
+	auto nullbody = std::find(list.begin(), list.end(), WzString::fromUtf8("ZNULLBODY"));
+	ASSERT_OR_RETURN(false, nullbody != list.end(), "ZNULLBODY is mandatory");
+	std::iter_swap(nullbody, list.begin());
+	for (size_t i = 0; i < list.size(); ++i)
 	{
 		BODY_STATS *psStats = &asBodyStats[i];
 
@@ -575,7 +585,7 @@ bool loadBodyStats(const char *pFileName)
 		psStats->compType = COMP_BODY;
 
 		psStats->weaponSlots = ini.value("weaponSlots").toInt();
-		psStats->bodyClass = ini.value("class").toString();
+		psStats->bodyClass = ini.value("class").toWzString();
 		psStats->base.thermal = ini.value("armourHeat").toInt();
 		psStats->base.armour = ini.value("armourKinetic").toInt();
 		psStats->base.power = ini.value("powerOutput").toInt();
@@ -585,7 +595,7 @@ bool loadBodyStats(const char *pFileName)
 			psStats->upgrade[j] = psStats->base;
 		}
 		psStats->ref = REF_BODY_START + i;
-		if (!getBodySize(ini.value("size").toString().toUtf8().constData(), &psStats->size))
+		if (!getBodySize(ini.value("size").toWzString(), &psStats->size))
 		{
 			ASSERT(false, "Unknown body size for %s", getName(psStats));
 			return false;
@@ -616,9 +626,9 @@ bool loadBodyStats(const char *pFileName)
 		psBodyStat->ppMoveIMDList.resize(numPropulsionStats * NUM_PROP_SIDES, nullptr);
 		psBodyStat->ppStillIMDList.resize(numPropulsionStats * NUM_PROP_SIDES, nullptr);
 	}
-	for (int i = 0; i < list.size(); ++i)
+	for (size_t i = 0; i < list.size(); ++i)
 	{
-		QString propulsionName, leftIMD, rightIMD;
+		WzString propulsionName, leftIMD, rightIMD;
 		BODY_STATS *psBodyStat = nullptr;
 		int numStats;
 
@@ -640,11 +650,11 @@ bool loadBodyStats(const char *pFileName)
 		}
 		if (numStats == numBodyStats) // not found
 		{
-			debug(LOG_FATAL, "Invalid body name %s", list[i].toUtf8().constData());
+			debug(LOG_FATAL, "Invalid body name %s", list[i].toUtf8().c_str());
 			return false;
 		}
-		QStringList keys = ini.childKeys();
-		for (int j = 0; j < keys.size(); j++)
+		std::vector<WzString> keys = ini.childKeys();
+		for (size_t j = 0; j < keys.size(); j++)
 		{
 			for (numStats = 0; numStats < numPropulsionStats; numStats++)
 			{
@@ -656,14 +666,14 @@ bool loadBodyStats(const char *pFileName)
 			}
 			if (numStats == numPropulsionStats)
 			{
-				debug(LOG_FATAL, "Invalid propulsion name %s", keys[j].toUtf8().constData());
+				debug(LOG_FATAL, "Invalid propulsion name %s", keys[j].toUtf8().c_str());
 				return false;
 			}
 			//allocate the left and right propulsion IMDs + movement and standing still animations
-			psBodyStat->ppIMDList[numStats * NUM_PROP_SIDES + LEFT_PROP] = statsGetIMD(ini, psBodyStat, keys[j], "left");
-			psBodyStat->ppIMDList[numStats * NUM_PROP_SIDES + RIGHT_PROP] = statsGetIMD(ini, psBodyStat, keys[j], "right");
-			psBodyStat->ppMoveIMDList[numStats] = statsGetIMD(ini, psBodyStat, keys[j], "moving");
-			psBodyStat->ppStillIMDList[numStats] = statsGetIMD(ini, psBodyStat, keys[j], "still");
+			psBodyStat->ppIMDList[numStats * NUM_PROP_SIDES + LEFT_PROP] = statsGetIMD(ini, psBodyStat, keys[j], WzString::fromUtf8("left"));
+			psBodyStat->ppIMDList[numStats * NUM_PROP_SIDES + RIGHT_PROP] = statsGetIMD(ini, psBodyStat, keys[j], WzString::fromUtf8("right"));
+			psBodyStat->ppMoveIMDList[numStats] = statsGetIMD(ini, psBodyStat, keys[j], WzString::fromUtf8("moving"));
+			psBodyStat->ppStillIMDList[numStats] = statsGetIMD(ini, psBodyStat, keys[j], WzString::fromUtf8("still"));
 		}
 		ini.endGroup();
 		ini.endGroup();
@@ -673,16 +683,16 @@ bool loadBodyStats(const char *pFileName)
 }
 
 /*Load the Brain stats from the file exported from Access*/
-bool loadBrainStats(const char *pFileName)
+bool loadBrainStats(WzConfig &ini)
 {
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 	statsAllocBrain(list.size());
 	// Hack to make sure ZNULLBRAIN is always first in list
-	int nullbrain = list.indexOf("ZNULLBRAIN");
-	ASSERT_OR_RETURN(false, nullbrain >= 0, "ZNULLBRAIN is mandatory");
-	list.swap(nullbrain, 0);
-	for (int i = 0; i < list.size(); ++i)
+	auto nullbrain = std::find(list.begin(), list.end(), WzString::fromUtf8("ZNULLBRAIN"));
+	ASSERT_OR_RETURN(false, nullbrain != list.end(), "ZNULLBRAIN is mandatory");
+	std::iter_swap(nullbrain, list.begin());
+	for (size_t i = 0; i < list.size(); ++i)
 	{
 		BRAIN_STATS *psStats = &asBrainStats[i];
 
@@ -693,15 +703,16 @@ bool loadBrainStats(const char *pFileName)
 		psStats->weight = ini.value("weight", 0).toInt();
 		psStats->base.maxDroids = ini.value("maxDroids").toInt();
 		psStats->base.maxDroidsMult = ini.value("maxDroidsMult").toInt();
-		QVariant rankNames = ini.value("ranks");
-		for (const QVariant &v : rankNames.toList())
+		auto rankNames = ini.json("ranks");
+		ASSERT(rankNames.is_array(), "ranks is not an array");
+		for (const auto& v : rankNames)
 		{
-			psStats->rankNames.push_back(v.toString().toStdString());
+			psStats->rankNames.push_back(v);
 		}
-		QVariant rankThresholds = ini.value("thresholds");
-		for (const QVariant &v : rankThresholds.toList())
+		auto rankThresholds = ini.json("thresholds");
+		for (const auto& v : rankThresholds)
 		{
-			psStats->base.rankThresholds.push_back(v.toInt());
+			psStats->base.rankThresholds.push_back(v);
 		}
 		psStats->ref = REF_BRAIN_START + i;
 
@@ -714,7 +725,7 @@ bool loadBrainStats(const char *pFileName)
 		psStats->psWeaponStat = nullptr;
 		if (ini.contains("turret"))
 		{
-			int weapon = getCompFromName(COMP_WEAPON, ini.value("turret").toString());
+			int weapon = getCompFromName(COMP_WEAPON, ini.value("turret").toWzString());
 			ASSERT_OR_RETURN(false, weapon >= 0, "Unable to find weapon for brain %s", getName(psStats));
 			psStats->psWeaponStat = asWeaponStats + weapon;
 		}
@@ -766,16 +777,16 @@ bool getPropulsionType(const char *typeName, PROPULSION_TYPE *type)
 }
 
 /*Load the Propulsion stats from the file exported from Access*/
-bool loadPropulsionStats(const char *pFileName)
+bool loadPropulsionStats(WzConfig &ini)
 {
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 	statsAllocPropulsion(list.size());
 	// Hack to make sure ZNULLPROP is always first in list
-	int nullprop = list.indexOf("ZNULLPROP");
-	ASSERT_OR_RETURN(false, nullprop >= 0, "ZNULLPROP is mandatory");
-	list.swap(nullprop, 0);
-	for (int i = 0; i < list.size(); ++i)
+	auto nullprop = std::find(list.begin(), list.end(), WzString::fromUtf8("ZNULLPROP"));
+	ASSERT_OR_RETURN(false, nullprop != list.end(), "ZNULLPROP is mandatory");
+	std::iter_swap(nullprop, list.begin());
+	for (size_t i = 0; i < list.size(); ++i)
 	{
 		PROPULSION_STATS *psStats = &asPropulsionStats[i];
 
@@ -798,7 +809,7 @@ bool loadPropulsionStats(const char *pFileName)
 		{
 			psStats->upgrade[j] = psStats->base;
 		}
-		if (!getPropulsionType(ini.value("type").toString().toUtf8().constData(), &psStats->propulsionType))
+		if (!getPropulsionType(ini.value("type").toWzString().toUtf8().c_str(), &psStats->propulsionType))
 		{
 			debug(LOG_FATAL, "loadPropulsionStats: Invalid Propulsion type for %s", getName(psStats));
 			return false;
@@ -838,16 +849,16 @@ bool loadPropulsionStats(const char *pFileName)
 }
 
 /*Load the Sensor stats from the file exported from Access*/
-bool loadSensorStats(const char *pFileName)
+bool loadSensorStats(WzConfig &ini)
 {
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 	statsAllocSensor(list.size());
 	// Hack to make sure ZNULLSENSOR is always first in list
-	int nullsensor = list.indexOf("ZNULLSENSOR");
-	ASSERT_OR_RETURN(false, nullsensor >= 0, "ZNULLSENSOR is mandatory");
-	list.swap(nullsensor, 0);
-	for (int i = 0; i < list.size(); ++i)
+	auto nullsensor = std::find(list.begin(), list.end(), WzString::fromUtf8("ZNULLSENSOR"));
+	ASSERT_OR_RETURN(false, nullsensor != list.end(), "ZNULLSENSOR is mandatory");
+	std::iter_swap(nullsensor, list.begin());
+	for (size_t i = 0; i < list.size(); ++i)
 	{
 		SENSOR_STATS *psStats = &asSensorStats[i];
 
@@ -863,7 +874,7 @@ bool loadSensorStats(const char *pFileName)
 
 		psStats->ref = REF_SENSOR_START + i;
 
-		QString location = ini.value("location").toString();
+		WzString location = ini.value("location").toWzString();
 		if (location.compare("DEFAULT") == 0)
 		{
 			psStats->location = LOC_DEFAULT;
@@ -874,9 +885,9 @@ bool loadSensorStats(const char *pFileName)
 		}
 		else
 		{
-			ASSERT(false, "Invalid Sensor location");
+			ASSERT(false, "Invalid Sensor location: %s", location.toUtf8().c_str());
 		}
-		QString type = ini.value("type").toString();
+		WzString type = ini.value("type").toWzString();
 		if (type.compare("STANDARD") == 0)
 		{
 			psStats->type = STANDARD_SENSOR;
@@ -903,7 +914,7 @@ bool loadSensorStats(const char *pFileName)
 		}
 		else
 		{
-			ASSERT(false, "Invalid Sensor type");
+			ASSERT(false, "Invalid Sensor type: %s", type.toUtf8().c_str());
 		}
 
 		//get the IMD for the component
@@ -924,16 +935,16 @@ bool loadSensorStats(const char *pFileName)
 }
 
 /*Load the ECM stats from the file exported from Access*/
-bool loadECMStats(const char *pFileName)
+bool loadECMStats(WzConfig &ini)
 {
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 	statsAllocECM(list.size());
 	// Hack to make sure ZNULLECM is always first in list
-	int nullecm = list.indexOf("ZNULLECM");
-	ASSERT_OR_RETURN(false, nullecm >= 0, "ZNULLECM is mandatory");
-	list.swap(nullecm, 0);
-	for (int i = 0; i < list.size(); ++i)
+	auto nullecm = std::find(list.begin(), list.end(), WzString::fromUtf8("ZNULLECM"));
+	ASSERT_OR_RETURN(false, nullecm != list.end(), "ZNULLECM is mandatory");
+	std::iter_swap(nullecm, list.begin());
+	for (size_t i = 0; i < list.size(); ++i)
 	{
 		ECM_STATS *psStats = &asECMStats[i];
 
@@ -949,7 +960,7 @@ bool loadECMStats(const char *pFileName)
 
 		psStats->ref = REF_ECM_START + i;
 
-		QString location = ini.value("location").toString();
+		WzString location = ini.value("location").toWzString();
 		if (location.compare("DEFAULT") == 0)
 		{
 			psStats->location = LOC_DEFAULT;
@@ -960,7 +971,7 @@ bool loadECMStats(const char *pFileName)
 		}
 		else
 		{
-			ASSERT(false, "Invalid ECM location");
+			ASSERT(false, "Invalid ECM location: %s", location.toUtf8().c_str());
 		}
 
 		//get the IMD for the component
@@ -980,16 +991,16 @@ bool loadECMStats(const char *pFileName)
 }
 
 /*Load the Repair stats from the file exported from Access*/
-bool loadRepairStats(const char *pFileName)
+bool loadRepairStats(WzConfig &ini)
 {
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 	statsAllocRepair(list.size());
 	// Hack to make sure ZNULLREPAIR is always first in list
-	int nullrepair = list.indexOf("ZNULLREPAIR");
-	ASSERT_OR_RETURN(false, nullrepair >= 0, "ZNULLREPAIR is mandatory");
-	list.swap(nullrepair, 0);
-	for (int i = 0; i < list.size(); ++i)
+	auto nullrepair = std::find(list.begin(), list.end(), WzString::fromUtf8("ZNULLREPAIR"));
+	ASSERT_OR_RETURN(false, nullrepair != list.end(), "ZNULLREPAIR is mandatory");
+	std::iter_swap(nullrepair, list.begin());
+	for (size_t i = 0; i < list.size(); ++i)
 	{
 		REPAIR_STATS *psStats = &asRepairStats[i];
 
@@ -1006,7 +1017,7 @@ bool loadRepairStats(const char *pFileName)
 
 		psStats->ref = REF_REPAIR_START + i;
 
-		QString location = ini.value("location").toString();
+		WzString location = ini.value("location").toWzString();
 		if (location.compare("DEFAULT") == 0)
 		{
 			psStats->location = LOC_DEFAULT;
@@ -1017,7 +1028,7 @@ bool loadRepairStats(const char *pFileName)
 		}
 		else
 		{
-			ASSERT(false, "Invalid Repair location");
+			ASSERT(false, "Invalid Repair location: %s", location.toUtf8().c_str());
 		}
 
 		//check its not 0 since we will be dividing by it at a later stage
@@ -1040,16 +1051,16 @@ bool loadRepairStats(const char *pFileName)
 }
 
 /*Load the Construct stats from the file exported from Access*/
-bool loadConstructStats(const char *pFileName)
+bool loadConstructStats(WzConfig &ini)
 {
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 	statsAllocConstruct(list.size());
 	// Hack to make sure ZNULLCONSTRUCT is always first in list
-	int nullconstruct = list.indexOf("ZNULLCONSTRUCT");
-	ASSERT_OR_RETURN(false, nullconstruct >= 0, "ZNULLCONSTRUCT is mandatory");
-	list.swap(nullconstruct, 0);
-	for (int i = 0; i < list.size(); ++i)
+	auto nullconstruct = std::find(list.begin(), list.end(), WzString::fromUtf8("ZNULLCONSTRUCT"));
+	ASSERT_OR_RETURN(false, nullconstruct != list.end(), "ZNULLCONSTRUCT is mandatory");
+	std::iter_swap(nullconstruct, list.begin());
+	for (size_t i = 0; i < list.size(); ++i)
 	{
 		CONSTRUCT_STATS *psStats = &asConstructStats[i];
 
@@ -1082,34 +1093,32 @@ bool loadConstructStats(const char *pFileName)
 
 
 /*Load the Propulsion Types from the file exported from Access*/
-bool loadPropulsionTypes(const char *pFileName)
+bool loadPropulsionTypes(WzConfig &ini)
 {
 	const unsigned int NumTypes = PROPULSION_TYPE_NUM;
-	PROPULSION_TYPES *pPropType;
-	unsigned int multiplier;
-	PROPULSION_TYPE type;
 
 	//allocate storage for the stats
-	asPropulsionTypes = (PROPULSION_TYPES *)malloc(sizeof(PROPULSION_TYPES) * NumTypes);
-	memset(asPropulsionTypes, 0, (sizeof(PROPULSION_TYPES)*NumTypes));
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	asPropulsionTypes.resize(NumTypes);
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 
 	for (int i = 0; i < NumTypes; ++i)
 	{
+		PROPULSION_TYPE type;
+
 		ini.beginGroup(list[i]);
-		multiplier = ini.value("multiplier").toInt();
+		unsigned multiplier = ini.value("multiplier").toUInt();
 
 		//set the pointer for this record based on the name
-		if (!getPropulsionType(list[i].toUtf8().constData(), &type))
+		if (!getPropulsionType(list[i].toUtf8().c_str(), &type))
 		{
-			debug(LOG_FATAL, "Invalid Propulsion type - %s", list[i].toUtf8().constData());
+			debug(LOG_FATAL, "Invalid Propulsion type - %s", list[i].toUtf8().c_str());
 			return false;
 		}
 
-		pPropType = asPropulsionTypes + type;
+		PROPULSION_TYPES *pPropType = &asPropulsionTypes[type];
 
-		QString flightName = ini.value("flightName").toString();
+		WzString flightName = ini.value("flightName").toWzString();
 		if (flightName.compare("GROUND") == 0)
 		{
 			pPropType->travel = GROUND;
@@ -1120,7 +1129,7 @@ bool loadPropulsionTypes(const char *pFileName)
 		}
 		else
 		{
-			ASSERT(false, "Invalid travel type for Propulsion");
+			ASSERT(false, "Invalid travel type for Propulsion: %s", flightName.toUtf8().c_str());
 		}
 
 		//don't care about this anymore! AB FRIDAY 13/11/98
@@ -1147,11 +1156,11 @@ bool loadPropulsionTypes(const char *pFileName)
 	return true;
 }
 
-bool loadTerrainTable(const char *pFileName)
+bool loadTerrainTable(WzConfig &ini)
 {
 	asTerrainTable = (int *)malloc(sizeof(*asTerrainTable) * PROPULSION_TYPE_NUM * TER_MAX);
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 	for (int i = 0; i < list.size(); ++i)
 	{
 		ini.beginGroup(list[i]);
@@ -1170,26 +1179,26 @@ bool loadTerrainTable(const char *pFileName)
 	return true;
 }
 
-static bool statsGetAudioIDFromString(const QString &szStatName, const QString &szWavName, int *piWavID)
+static bool statsGetAudioIDFromString(const WzString &szStatName, const WzString &szWavName, int *piWavID)
 {
 	if (szWavName.compare("-1") == 0)
 	{
 		*piWavID = NO_SOUND;
 	}
-	else if ((*piWavID = audio_GetIDFromStr(szWavName.toUtf8().constData())) == NO_SOUND)
+	else if ((*piWavID = audio_GetIDFromStr(szWavName.toUtf8().c_str())) == NO_SOUND)
 	{
-		debug(LOG_FATAL, "Could not get ID %d for sound %s", *piWavID, szWavName.toUtf8().constData());
+		debug(LOG_FATAL, "Could not get ID %d for sound %s", *piWavID, szWavName.toUtf8().c_str());
 		return false;
 	}
 	if ((*piWavID < 0 || *piWavID > ID_MAX_SOUND) && *piWavID != NO_SOUND)
 	{
-		debug(LOG_FATAL, "Invalid ID - %d for sound %s", *piWavID, szStatName.toUtf8().constData());
+		debug(LOG_FATAL, "Invalid ID - %d for sound %s", *piWavID, szStatName.toUtf8().c_str());
 		return false;
 	}
 	return true;
 }
 
-bool loadWeaponModifiers(const char *pFileName)
+bool loadWeaponModifiers(WzConfig &ini)
 {
 	//initialise to 100%
 	for (int i = 0; i < WE_NUMEFFECTS; i++)
@@ -1203,8 +1212,8 @@ bool loadWeaponModifiers(const char *pFileName)
 			asWeaponModifierBody[i][j] = 100;
 		}
 	}
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 	for (int i = 0; i < list.size(); i++)
 	{
 		WEAPON_EFFECT effectInc;
@@ -1212,12 +1221,12 @@ bool loadWeaponModifiers(const char *pFileName)
 
 		ini.beginGroup(list[i]);
 		//get the weapon effect inc
-		if (!getWeaponEffect(list[i].toUtf8().constData(), &effectInc))
+		if (!getWeaponEffect(list[i], &effectInc))
 		{
-			debug(LOG_FATAL, "Invalid Weapon Effect - %s", list[i].toUtf8().constData());
+			debug(LOG_FATAL, "Invalid Weapon Effect - %s", list[i].toUtf8().c_str());
 			continue;
 		}
-		QStringList keys = ini.childKeys();
+		std::vector<WzString> keys = ini.childKeys();
 		for (int j = 0; j < keys.size(); j++)
 		{
 			int modifier = ini.value(keys.at(j)).toInt();
@@ -1225,9 +1234,9 @@ bool loadWeaponModifiers(const char *pFileName)
 			{
 				// If not propulsion, must be body
 				BODY_SIZE body = SIZE_NUM;
-				if (!getBodySize(keys.at(j).toUtf8().data(), &body))
+				if (!getBodySize(keys.at(j), &body))
 				{
-					debug(LOG_FATAL, "Invalid Propulsion or Body type - %s", keys.at(j).toUtf8().constData());
+					debug(LOG_FATAL, "Invalid Propulsion or Body type - %s", keys.at(j).toUtf8().c_str());
 					continue;
 				}
 				asWeaponModifierBody[effectInc][body] = modifier;
@@ -1247,45 +1256,44 @@ bool loadPropulsionSounds(const char *pFileName)
 {
 	SDWORD	i, startID, idleID, moveOffID, moveID, hissID, shutDownID;
 	PROPULSION_TYPE type;
-	PROPULSION_TYPES *pPropType;
 
-	ASSERT(asPropulsionTypes != nullptr, "loadPropulsionSounds: Propulsion type stats not loaded");
+	ASSERT(asPropulsionTypes.size() != 0, "loadPropulsionSounds: Propulsion type stats not loaded");
 
 	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	std::vector<WzString> list = ini.childGroups();
 	for (i = 0; i < list.size(); ++i)
 	{
 		ini.beginGroup(list[i]);
-		if (!statsGetAudioIDFromString(list[i], ini.value("szStart").toString(), &startID))
+		if (!statsGetAudioIDFromString(list[i], ini.value("szStart").toWzString(), &startID))
 		{
 			return false;
 		}
-		if (!statsGetAudioIDFromString(list[i], ini.value("szIdle").toString(), &idleID))
+		if (!statsGetAudioIDFromString(list[i], ini.value("szIdle").toWzString(), &idleID))
 		{
 			return false;
 		}
-		if (!statsGetAudioIDFromString(list[i], ini.value("szMoveOff").toString(), &moveOffID))
+		if (!statsGetAudioIDFromString(list[i], ini.value("szMoveOff").toWzString(), &moveOffID))
 		{
 			return false;
 		}
-		if (!statsGetAudioIDFromString(list[i], ini.value("szMove").toString(), &moveID))
+		if (!statsGetAudioIDFromString(list[i], ini.value("szMove").toWzString(), &moveID))
 		{
 			return false;
 		}
-		if (!statsGetAudioIDFromString(list[i], ini.value("szHiss").toString(), &hissID))
+		if (!statsGetAudioIDFromString(list[i], ini.value("szHiss").toWzString(), &hissID))
 		{
 			return false;
 		}
-		if (!statsGetAudioIDFromString(list[i], ini.value("szShutDown").toString(), &shutDownID))
+		if (!statsGetAudioIDFromString(list[i], ini.value("szShutDown").toWzString(), &shutDownID))
 		{
 			return false;
 		}
-		if (!getPropulsionType(list[i].toUtf8().constData(), &type))
+		if (!getPropulsionType(list[i].toUtf8().c_str(), &type))
 		{
-			debug(LOG_FATAL, "Invalid Propulsion type - %s", list[i].toUtf8().constData());
+			debug(LOG_FATAL, "Invalid Propulsion type - %s", list[i].toUtf8().c_str());
 			return false;
 		}
-		pPropType = asPropulsionTypes + type;
+		PROPULSION_TYPES *pPropType = &asPropulsionTypes[type];
 		pPropType->startID = (SWORD)startID;
 		pPropType->idleID = (SWORD)idleID;
 		pPropType->moveOffID = (SWORD)moveOffID;
@@ -1410,24 +1418,35 @@ UDWORD statRefStart(UDWORD stat)
 	return start;
 }
 
-int getCompFromName(COMPONENT_TYPE compType, const QString &name)
+int getCompFromName(COMPONENT_TYPE compType, const WzString &name)
 {
 	return getCompFromID(compType, name);
 }
 
-int getCompFromID(COMPONENT_TYPE compType, const QString &name)
+int getCompFromID(COMPONENT_TYPE compType, const WzString &name)
 {
-	COMPONENT_STATS *psComp = (COMPONENT_STATS *)lookupStatPtr.value(name, nullptr);
-	ASSERT_OR_RETURN(-1, psComp, "No such component ID [%s] found", name.toUtf8().constData());
-	ASSERT_OR_RETURN(-1, compType == psComp->compType, "Wrong component type for ID %s", name.toUtf8().constData());
-	return psComp->index;
+	COMPONENT_STATS *psComp = nullptr;
+	auto it = lookupStatPtr.find(WzString::fromUtf8(name.toUtf8().c_str()));
+	if (it != lookupStatPtr.end())
+	{
+		psComp = (COMPONENT_STATS *)it->second;
+	}
+	ASSERT_OR_RETURN(-1, psComp, "No such component ID [%s] found", name.toUtf8().c_str());
+	ASSERT_OR_RETURN(-1, compType == psComp->compType, "Wrong component type for ID %s", name.toUtf8().c_str());
+	ASSERT_OR_RETURN(-1, psComp->index <= INT_MAX, "Component index is too large for ID %s", name.toUtf8().c_str());
+	return static_cast<int>(psComp->index);
 }
 
 /// Get the component for a stat based on the name alone.
 /// Returns NULL if record not found
-COMPONENT_STATS *getCompStatsFromName(const QString &name)
+COMPONENT_STATS *getCompStatsFromName(const WzString &name)
 {
-	COMPONENT_STATS *psComp = (COMPONENT_STATS *)lookupStatPtr.value(name, nullptr);
+	COMPONENT_STATS *psComp = nullptr;
+	auto it = lookupStatPtr.find(name);
+	if (it != lookupStatPtr.end())
+	{
+		psComp = (COMPONENT_STATS *)it->second;
+	}
 	/*if (!psComp)
 	{
 		debug(LOG_ERROR, "Not found: %s", name.toUtf8().constData());
@@ -1441,30 +1460,30 @@ COMPONENT_STATS *getCompStatsFromName(const QString &name)
 
 /*sets the store to the body size based on the name passed in - returns false
 if doesn't compare with any*/
-bool getBodySize(const char *pSize, BODY_SIZE *pStore)
+bool getBodySize(const WzString &size, BODY_SIZE *pStore)
 {
-	if (!strcmp(pSize, "LIGHT"))
+	if (!strcmp(size.toUtf8().c_str(), "LIGHT"))
 	{
 		*pStore = SIZE_LIGHT;
 		return true;
 	}
-	else if (!strcmp(pSize, "MEDIUM"))
+	else if (!strcmp(size.toUtf8().c_str(), "MEDIUM"))
 	{
 		*pStore = SIZE_MEDIUM;
 		return true;
 	}
-	else if (!strcmp(pSize, "HEAVY"))
+	else if (!strcmp(size.toUtf8().c_str(), "HEAVY"))
 	{
 		*pStore = SIZE_HEAVY;
 		return true;
 	}
-	else if (!strcmp(pSize, "SUPER HEAVY"))
+	else if (!strcmp(size.toUtf8().c_str(), "SUPER HEAVY"))
 	{
 		*pStore = SIZE_SUPER_HEAVY;
 		return true;
 	}
 
-	ASSERT(false, "Invalid size - %s", pSize);
+	ASSERT(false, "Invalid size - %s", size.toUtf8().c_str());
 	return false;
 }
 
@@ -1577,28 +1596,28 @@ const char *getWeaponSubClass(WEAPON_SUBCLASS wclass)
 }
 
 /*returns the movement model based on the string name passed in */
-bool getMovementModel(const char *movementModel, MOVEMENT_MODEL *model)
+bool getMovementModel(const WzString &movementModel, MOVEMENT_MODEL *model)
 {
-	if (strcmp(movementModel, "DIRECT") == 0)
+	if (strcmp(movementModel.toUtf8().c_str(), "DIRECT") == 0)
 	{
 		*model = MM_DIRECT;
 	}
-	else if (strcmp(movementModel, "INDIRECT") == 0)
+	else if (strcmp(movementModel.toUtf8().c_str(), "INDIRECT") == 0)
 	{
 		*model = MM_INDIRECT;
 	}
-	else if (strcmp(movementModel, "HOMING-DIRECT") == 0)
+	else if (strcmp(movementModel.toUtf8().c_str(), "HOMING-DIRECT") == 0)
 	{
 		*model = MM_HOMINGDIRECT;
 	}
-	else if (strcmp(movementModel, "HOMING-INDIRECT") == 0)
+	else if (strcmp(movementModel.toUtf8().c_str(), "HOMING-INDIRECT") == 0)
 	{
 		*model = MM_HOMINGINDIRECT;
 	}
 	else
 	{
 		// We've got problem if we got here
-		ASSERT(!"Invalid movement model", "Invalid movement model: %s", movementModel);
+		ASSERT(!"Invalid movement model", "Invalid movement model: %s", movementModel.toUtf8().c_str());
 		return false;
 	}
 
@@ -1617,42 +1636,42 @@ const StringToEnum<WEAPON_EFFECT> mapUnsorted_WEAPON_EFFECT[] =
 };
 const StringToEnumMap<WEAPON_EFFECT> map_WEAPON_EFFECT = mapUnsorted_WEAPON_EFFECT;
 
-bool getWeaponEffect(const char *weaponEffect, WEAPON_EFFECT *effect)
+bool getWeaponEffect(const WzString& weaponEffect, WEAPON_EFFECT *effect)
 {
-	if (strcmp(weaponEffect, "ANTI PERSONNEL") == 0)
+	if (strcmp(weaponEffect.toUtf8().c_str(), "ANTI PERSONNEL") == 0)
 	{
 		*effect = WE_ANTI_PERSONNEL;
 	}
-	else if (strcmp(weaponEffect, "ANTI TANK") == 0)
+	else if (strcmp(weaponEffect.toUtf8().c_str(), "ANTI TANK") == 0)
 	{
 		*effect = WE_ANTI_TANK;
 	}
-	else if (strcmp(weaponEffect, "BUNKER BUSTER") == 0)
+	else if (strcmp(weaponEffect.toUtf8().c_str(), "BUNKER BUSTER") == 0)
 	{
 		*effect = WE_BUNKER_BUSTER;
 	}
-	else if (strcmp(weaponEffect, "ARTILLERY ROUND") == 0)
+	else if (strcmp(weaponEffect.toUtf8().c_str(), "ARTILLERY ROUND") == 0)
 	{
 		*effect = WE_ARTILLERY_ROUND;
 	}
-	else if (strcmp(weaponEffect, "FLAMER") == 0)
+	else if (strcmp(weaponEffect.toUtf8().c_str(), "FLAMER") == 0)
 	{
 		*effect = WE_FLAMER;
 	}
-	else if (strcmp(weaponEffect, "ANTI AIRCRAFT") == 0 || strcmp(weaponEffect, "ALL ROUNDER") == 0)
+	else if (strcmp(weaponEffect.toUtf8().c_str(), "ANTI AIRCRAFT") == 0 || strcmp(weaponEffect.toUtf8().c_str(), "ALL ROUNDER") == 0)
 	{
 		*effect = WE_ANTI_AIRCRAFT;
 	}
 	else
 	{
-		ASSERT(!"Invalid weapon effect", "Invalid weapon effect: %s", weaponEffect);
+		ASSERT(!"Invalid weapon effect", "Invalid weapon effect: %s", weaponEffect.toUtf8().c_str());
 		return false;
 	}
 
 	return true;
 }
 
-bool getWeaponClass(const QString& weaponClassStr, WEAPON_CLASS *weaponClass)
+bool getWeaponClass(const WzString& weaponClassStr, WEAPON_CLASS *weaponClass)
 {
 	if (weaponClassStr.compare("KINETIC") == 0)
 	{
@@ -1664,7 +1683,7 @@ bool getWeaponClass(const QString& weaponClassStr, WEAPON_CLASS *weaponClass)
 	}
 	else
 	{
-		ASSERT(false, "Bad weapon class %s", weaponClassStr.toUtf8().constData());
+		ASSERT(false, "Bad weapon class %s", weaponClassStr.toUtf8().c_str());
 		return false;
 	};
 	return true;
@@ -1685,6 +1704,11 @@ int weaponReloadTime(const WEAPON_STATS *psStats, int player)
 int weaponLongHit(const WEAPON_STATS *psStats, int player)
 {
 	return psStats->upgrade[player].hitChance;
+}
+
+int weaponShortHit(const WEAPON_STATS *psStats, int player)
+{
+	return psStats->upgrade[player].shortHitChance;
 }
 
 int weaponDamage(const WEAPON_STATS *psStats, int player)
@@ -2055,14 +2079,14 @@ bool objHasWeapon(const BASE_OBJECT *psObj)
 	//check if valid type
 	if (psObj->type == OBJ_DROID)
 	{
-		if (((DROID *)psObj)->numWeaps > 0)
+		if (((const DROID *)psObj)->numWeaps > 0)
 		{
 			return true;
 		}
 	}
 	else if (psObj->type == OBJ_STRUCTURE)
 	{
-		if (((STRUCTURE *)psObj)->numWeaps > 0)
+		if (((const STRUCTURE *)psObj)->numWeaps > 0)
 		{
 			return true;
 		}
@@ -2079,17 +2103,17 @@ SENSOR_STATS *objActiveRadar(const BASE_OBJECT *psObj)
 	switch (psObj->type)
 	{
 	case OBJ_DROID:
-		if (((DROID *)psObj)->droidType != DROID_SENSOR && ((DROID *)psObj)->droidType != DROID_COMMAND)
+		if (((const DROID *)psObj)->droidType != DROID_SENSOR && ((const DROID *)psObj)->droidType != DROID_COMMAND)
 		{
 			return nullptr;
 		}
-		compIndex = ((DROID *)psObj)->asBits[COMP_SENSOR];
+		compIndex = ((const DROID *)psObj)->asBits[COMP_SENSOR];
 		ASSERT_OR_RETURN(nullptr, compIndex < numSensorStats, "Invalid range referenced for numSensorStats, %d > %d", compIndex, numSensorStats);
 		psStats = asSensorStats + compIndex;
 		break;
 	case OBJ_STRUCTURE:
-		psStats = ((STRUCTURE *)psObj)->pStructureType->pSensor;
-		if (psStats == nullptr || psStats->location != LOC_TURRET || ((STRUCTURE *)psObj)->status != SS_BUILT)
+		psStats = ((const STRUCTURE *)psObj)->pStructureType->pSensor;
+		if (psStats == nullptr || psStats->location != LOC_TURRET || ((const STRUCTURE *)psObj)->status != SS_BUILT)
 		{
 			return nullptr;
 		}
@@ -2104,13 +2128,13 @@ bool objRadarDetector(const BASE_OBJECT *psObj)
 {
 	if (psObj->type == OBJ_STRUCTURE)
 	{
-		STRUCTURE *psStruct = (STRUCTURE *)psObj;
+		const STRUCTURE *psStruct = (const STRUCTURE *)psObj;
 
 		return (psStruct->status == SS_BUILT && psStruct->pStructureType->pSensor && psStruct->pStructureType->pSensor->type == RADAR_DETECTOR_SENSOR);
 	}
 	else if (psObj->type == OBJ_DROID)
 	{
-		DROID *psDroid = (DROID *)psObj;
+		const DROID *psDroid = (const DROID *)psObj;
 		SENSOR_STATS *psSensor = getSensorStats(psDroid);
 
 		return (psSensor && psSensor->type == RADAR_DETECTOR_SENSOR);

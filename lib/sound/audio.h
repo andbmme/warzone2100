@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -22,8 +22,9 @@
 #define __INCLUDED_LIB_SOUND_AUDIO_H__
 
 #include "track.h"
+#include "sounddefs.h"
 
-bool audio_Init(AUDIO_CALLBACK pStopTrackCallback, bool really_init);
+bool audio_Init(AUDIO_CALLBACK pStopTrackCallback, HRTFMode hrtf, bool really_init);
 void audio_Update();
 bool audio_Shutdown();
 bool audio_Disabled();
@@ -38,7 +39,7 @@ bool audio_PlayObjDynamicTrack(SIMPLE_OBJECT *psObj, int iTrack, AUDIO_CALLBACK 
 void audio_StopObjTrack(SIMPLE_OBJECT *psObj, int iTrack);
 void audio_PlayTrack(int iTrack);
 void audio_PlayCallbackTrack(int iTrack, AUDIO_CALLBACK pUserCallback);
-AUDIO_STREAM *audio_PlayStream(const char *fileName, float volume, void (*onFinished)(void *), void *user_data);
+AUDIO_STREAM *audio_PlayStream(const char *fileName, float volume, void (*onFinished)(const void *), const void *user_data);
 void audio_QueueTrack(SDWORD iTrack);
 void audio_QueueTrackMinDelay(SDWORD iTrack, UDWORD iMinDelay);
 void audio_QueueTrackMinDelayPos(SDWORD iTrack, UDWORD iMinDelay, SDWORD iX, SDWORD iY, SDWORD iZ);

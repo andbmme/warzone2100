@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 1999-2004	 Eidos Interactive
-	Copyright (C) 2005-2017	 Warzone 2100 Project
+	Copyright (C) 1999-2004  Eidos Interactive
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -17,6 +17,7 @@
 	along with Warzone 2100; if not, write to the Free Software
 	Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA
 */
+
 #ifndef _piePalette_
 #define _piePalette_
 
@@ -119,8 +120,9 @@
 #define WZCOL_FORM_PLAYER_KNOWN_BY_SERVER			psPalette[94]
 #define WZCOL_TRANSPARENT_BOX						psPalette[95]
 #define WZCOL_CONS_TEXT_INFO						psPalette[96]
+#define WZCOL_NOTIFICATION_BOX						psPalette[97]
 
-#define WZCOL_MAX									97
+#define WZCOL_MAX									98
 
 //*************************************************************************
 
@@ -145,16 +147,6 @@ static inline PIELIGHT WZ_DECL_PURE pal_SetBrightness(UBYTE brightness)
 static inline PIELIGHT WZ_DECL_PURE pal_RGBA(UBYTE r, UBYTE g, UBYTE b, UBYTE a)
 {
 	return { r, g, b, a };
-}
-
-static inline glm::vec4 pal_PIELIGHTtoVec4(PIELIGHT rgba)
-{
-	return (1 / 255.0f) * glm::vec4{
-		rgba.byte.r,
-		rgba.byte.g,
-		rgba.byte.b,
-		rgba.byte.a
-	};
 }
 
 #endif

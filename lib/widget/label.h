@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -27,23 +27,31 @@
 #include "widget.h"
 #include "widgbase.h"
 #include "lib/ivis_opengl/textdraw.h"
+#include <string>
 
+struct LabelDisplayCache {
+	std::vector<WzText> wzText;
+};
 
 class W_LABEL : public WIDGET
 {
-	Q_OBJECT
 
 public:
 	W_LABEL(W_LABINIT const *init);
 	W_LABEL(WIDGET *parent);
 
-	void highlight(W_CONTEXT *psContext);
-	void highlightLost();
-	void display(int xOffset, int yOffset);
+	void highlight(W_CONTEXT *psContext) override;
+	void highlightLost() override;
+	void display(int xOffset, int yOffset) override;
 
-	QString getString() const;
-	void setString(QString string);
-	void setTip(QString string);
+	WzString getString() const override;
+	void setString(WzString string) override;
+	void setTip(std::string string) override;
+
+	// Sets a string for the label
+	// - line-wraps at max width
+	// Returns the height of the formatted text
+	int setFormattedString(WzString string, uint32_t MaxWidth, iV_fonts fontID, int lineSpacing = 0, bool ignoreNewlines = false);
 
 	void setFont(iV_fonts font)
 	{
@@ -60,15 +68,16 @@ public:
 	}
 	void setTextAlignment(WzTextAlignment align);
 
-	using WIDGET::setString;
 	using WIDGET::setTip;
 
-	QString  aText;         // Text on the label
-	iV_fonts FontID;
-	QString  pTip;          // The tool tip for the button
-
 private:
+	std::vector<TextLine> aTextLines;   // text lines on the label
+	int maxLineWidth = 0;
+	iV_fonts FontID;
+	std::string		pTip;          		// The tool tip for the button
 	PIELIGHT fontColour;
+	LabelDisplayCache displayCache;
+	int lineSpacing = 0;
 };
 
 #endif // __INCLUDED_LIB_WIDGET_LABEL_H__

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -340,7 +340,7 @@ void intUpdateQuantity(WIDGET *psWidget, W_CONTEXT *psContext)
 	{
 		char tmp[20];
 		ssprintf(tmp, "%d", remaining);
-		Label->aText = QString::fromUtf8(tmp);
+		Label->setString(WzString::fromUtf8(tmp));
 		Label->show();
 	}
 	else
@@ -364,12 +364,12 @@ void intAddFactoryInc(WIDGET *psWidget, W_CONTEXT *psContext)
 			FACTORY		*Factory = &Structure->pFunctionality->factory;
 			char tmp[20];
 			ssprintf(tmp, "%u", Factory->psAssemblyPoint->factoryInc + 1);
-			Label->aText = QString::fromUtf8(tmp);
+			Label->setString(WzString::fromUtf8(tmp));
 			Label->show();
 			return;
 		}
 	}
-	Label->aText.clear();
+	Label->setString("");
 	Label->hide();
 }
 
@@ -408,12 +408,12 @@ void intAddProdQuantity(WIDGET *psWidget, W_CONTEXT *psContext)
 			{
 				ssprintf(tmp, "%u", entry.numRemaining());
 			}
-			Label->aText = QString::fromUtf8(tmp);
+			Label->setString(WzString::fromUtf8(tmp));
 			Label->show();
 		}
 		else
 		{
-			Label->aText.clear();
+			Label->setString("");
 			Label->hide();
 		}
 	}
@@ -432,24 +432,24 @@ void intAddLoopQuantity(WIDGET *psWidget, W_CONTEXT *psContext)
 
 		if (psFactory->productionLoops == INFINITE_PRODUCTION)
 		{
-			Label->aText = QString::fromUtf8("∞");
+			Label->setString(WzString::fromUtf8("∞"));
 		}
 		else if (psFactory->productionLoops != 0)
 		{
 			char tmp[20];
 			ssprintf(tmp, "%u", psFactory->productionLoops + DEFAULT_LOOP);
-			Label->aText = QString::fromUtf8(tmp);
+			Label->setString(WzString::fromUtf8(tmp));
 		}
 		else
 		{
-			Label->aText.clear();  // Don't show "1" loop.
+			Label->setString("");  // Don't show "1" loop.
 		}
 		Label->show();
 	}
 	else
 	{
 		//hide the label if no factory
-		Label->aText.clear();
+		Label->setString("");
 		Label->hide();
 	}
 }
@@ -470,12 +470,12 @@ void intUpdateCommandSize(WIDGET *psWidget, W_CONTEXT *psContext)
 
 		char tmp[40];
 		ssprintf(tmp, "%u/%u", psDroid->psGroup ? psDroid->psGroup->getNumMembers() : 0, cmdDroidMaxGroup(psDroid));
-		Label->aText = QString::fromUtf8(tmp);
+		Label->setString(WzString::fromUtf8(tmp));
 		Label->show();
 	}
 	else
 	{
-		Label->aText.clear();
+		Label->setString("");
 		Label->hide();
 	}
 }
@@ -495,12 +495,12 @@ void intUpdateCommandExp(WIDGET *psWidget, W_CONTEXT *psContext)
 		ASSERT(psDroid->droidType == DROID_COMMAND, "Droid is not a command droid");
 
 		int numStars = std::max((int)getDroidLevel(psDroid) - 1, 0);
-		Label->aText = QString(numStars, '*');
+		Label->setString(WzString(numStars, WzUniCodepoint::fromASCII('*')));
 		Label->show();
 	}
 	else
 	{
-		Label->aText.clear();
+		Label->setString("");
 		Label->hide();
 	}
 }
@@ -534,19 +534,19 @@ void intUpdateCommandFact(WIDGET *psWidget, W_CONTEXT *psContext)
 			start = DSS_ASSPROD_VTOL_SHIFT;
 		}
 
-		Label->aText.clear();
+		Label->setString("");
 		for (i = 0; i < 5; ++i)  // TODO Support up to MAX_FACTORY (which won't fit in the ugly secondaryOrder bitmask hack).
 		{
 			if (psDroid->secondaryOrder & (1 << (i + start)))
 			{
-				Label->aText.append((char)('0' + i + 1));
+				Label->setString(Label->getString().append(WzUniCodepoint::fromASCII((char)('0' + i + 1))));
 			}
 		}
 		Label->show();
 	}
 	else
 	{
-		Label->aText.clear();
+		Label->setString("");
 		Label->hide();
 	}
 }
@@ -574,7 +574,14 @@ void intDisplayPowerBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 
 	BarWidth = BarGraph->width();
 	sprintf(szVal, "%d", realPower);
-	textWidth = iV_GetTextWidth(szVal, font_regular);
+
+	// Any widget using intDisplayPowerBar must have its pUserData initialized to a (DisplayPowerBarCache*)
+	assert(psWidget->pUserData != nullptr);
+	DisplayPowerBarCache& cache = *static_cast<DisplayPowerBarCache*>(psWidget->pUserData);
+
+	cache.wzText.setText(szVal, font_regular);
+
+	textWidth = cache.wzText.width();
 	BarWidth -= textWidth;
 
 	if (ManPow > Avail)
@@ -606,68 +613,78 @@ void intDisplayPowerBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 	pie_SetDepthBufferStatus(DEPTH_CMP_ALWAYS_WRT_ON);
 	pie_SetFogStatus(false);
 
-	iV_DrawImage(IntImages, IMAGE_PBAR_TOP, x0, y0);
+	int top_x0 = x0;
+	int top_y0 = y0;
 
 	iX = x0 + 3;
 	iY = y0 + 10;
 
 	x0 += iV_GetImageWidth(IntImages, IMAGE_PBAR_TOP);
 
+	BatchedImageDrawRequests imageDrawBatch(true); // defer drawing
+
 	//fill in the empty section behind text
 	if (textWidth > 0)
 	{
-		iV_DrawImageRepeatX(IntImages, IMAGE_PBAR_EMPTY, x0, y0, textWidth);
+		iV_DrawImageRepeatX(IntImages, IMAGE_PBAR_EMPTY, x0 - 1, y0, textWidth + 1, defaultProjectionMatrix(), true, &imageDrawBatch); // Overdraw by 1 to reduce seam with left-beginning-piece when scaling
 		x0 += textWidth;
 	}
+
+	//draw the left-most beginning tip
+	//to reduce a visible seam when scaling, this must come *after* the empty / text section above
+	iV_DrawImage(IntImages, IMAGE_PBAR_TOP, top_x0, top_y0, defaultProjectionMatrix(), &imageDrawBatch);
 
 	//draw required section
 	if (ManPow > Avail)
 	{
 		//draw the required in red
-		iV_DrawImageRepeatX(IntImages, IMAGE_PBAR_USED, x0, y0, ManPow);
+		iV_DrawImageRepeatX(IntImages, IMAGE_PBAR_USED, x0, y0, ManPow, defaultProjectionMatrix(), true, &imageDrawBatch);
 	}
 	else
 	{
-		iV_DrawImageRepeatX(IntImages, IMAGE_PBAR_REQUIRED, x0, y0, ManPow);
+		iV_DrawImageRepeatX(IntImages, IMAGE_PBAR_REQUIRED, x0, y0, ManPow, defaultProjectionMatrix(), true, &imageDrawBatch);
 	}
 	x0 += ManPow;
 
 	//draw the available section if any!
 	if (Avail - ManPow > 0)
 	{
-		iV_DrawImageRepeatX(IntImages, IMAGE_PBAR_AVAIL, x0, y0, Avail - ManPow);
+		iV_DrawImageRepeatX(IntImages, IMAGE_PBAR_AVAIL, x0, y0, Avail - ManPow, defaultProjectionMatrix(), true, &imageDrawBatch);
 		x0 += Avail - ManPow;
 	}
 
 	//fill in the rest with empty section
 	if (Empty > 0)
 	{
-		iV_DrawImageRepeatX(IntImages, IMAGE_PBAR_EMPTY, x0, y0, Empty);
+		iV_DrawImageRepeatX(IntImages, IMAGE_PBAR_EMPTY, x0, y0, Empty + 1, defaultProjectionMatrix(), true, &imageDrawBatch); // Overdraw by 1 to reduce seam with right-end-piece when scaling
 		x0 += Empty;
 	}
 
-	iV_DrawImage(IntImages, IMAGE_PBAR_BOTTOM, x0, y0);
+	iV_DrawImage(IntImages, IMAGE_PBAR_BOTTOM, x0, y0, defaultProjectionMatrix(), &imageDrawBatch);
+
+	imageDrawBatch.draw(true);
+
+	PIELIGHT colour;
 	if (Avail < 0)
 	{
 		const char *need = _("Need more resources!");
+		cache.wzNeedText.setText(need, font_small);
 		if ((realTime / 1250) % 5 == 0)
 		{
-			iV_SetTextColour(WZCOL_BLACK);
-			iV_DrawText(need, iX + 102, iY - 1, font_small);
-			iV_SetTextColour(WZCOL_RED);
+			cache.wzNeedText.render(iX + 102, iY - 1, WZCOL_BLACK);
 		}
 		else
 		{
-			iV_SetTextColour(WZCOL_RED);
-			iV_DrawText(need, iX + 102, iY - 1, font_small);
+			cache.wzNeedText.render(iX + 102, iY - 1, WZCOL_RED);
 		}
+		colour = WZCOL_RED;
 	}
 	else
 	{
-		iV_SetTextColour(WZCOL_TEXT_BRIGHT);
+		colour = WZCOL_TEXT_BRIGHT;
 	}
 	// draw text value
-	iV_DrawText(szVal, iX, iY, font_regular);
+	cache.wzText.render(iX, iY, colour);
 }
 
 IntFancyButton::IntFancyButton(WIDGET *parent)
@@ -1000,10 +1017,10 @@ void IntFormAnimated::closeAnimateDelete()
 
 void IntFormAnimated::display(int xOffset, int yOffset)
 {
-	QRect aOpen(xOffset + x(), yOffset + y(), width(), height());
-	QRect aClosed(aOpen.x() + aOpen.width() / 4, aOpen.y() + aOpen.height() / 2 - 4, aOpen.width() / 2, 8);
-	QRect aBegin;
-	QRect aEnd;
+	WzRect aOpen(xOffset + x(), yOffset + y(), width(), height());
+	WzRect aClosed(aOpen.x() + aOpen.width() / 4, aOpen.y() + aOpen.height() / 2 - 4, aOpen.width() / 2, 8);
+	WzRect aBegin;
+	WzRect aEnd;
 	switch (currentAction)
 	{
 	case 1: FormOpenCount = 0;  break;
@@ -1055,7 +1072,7 @@ void IntFormAnimated::display(int xOffset, int yOffset)
 		}
 	}
 
-	QRect aCur = QRect(aBegin.x()      + (aEnd.x()      - aBegin.x())     * num / den,
+	WzRect aCur = WzRect(aBegin.x()      + (aEnd.x()      - aBegin.x())     * num / den,
 	                   aBegin.y()      + (aEnd.y()      - aBegin.y())     * num / den,
 	                   aBegin.width()  + (aEnd.width()  - aBegin.width()) * num / den,
 	                   aBegin.height() + (aEnd.height() - aBegin.height()) * num / den);
@@ -1212,7 +1229,7 @@ void intDisplayEditBox(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 
 	W_EDITBOX	*psEditBox = (W_EDITBOX *) psWidget;
 	UWORD		iImageIDLeft, iImageIDMid, iImageIDRight;
-	UDWORD		iX, iY, iDX, iXRight;
+	UDWORD		iX, iY, iXRight;
 	UDWORD          iXLeft = xOffset + psWidget->x(),
 	                iYLeft = yOffset + psWidget->y();
 
@@ -1236,12 +1253,10 @@ void intDisplayEditBox(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 
 	/* draw middle of bar */
 	iX += iV_GetImageWidth(IntImages, iImageIDLeft);
-	iDX = iV_GetImageWidth(IntImages, iImageIDMid);
 	iXRight = xOffset + psWidget->width() - iV_GetImageWidth(IntImages, iImageIDRight);
-	while (iX < iXRight)
+	if (iX < iXRight)
 	{
-		iV_DrawImage(IntImages, iImageIDMid, iX, iY);
-		iX += iDX;
+		iV_DrawImageRepeatX(IntImages, iImageIDMid, iX, iY, (iXRight - iX) + 3, defaultProjectionMatrix(), true);
 	}
 
 	/* draw right side of bar */
@@ -1973,7 +1988,7 @@ static void StatGetResearchImage(BASE_STATS *psStat, Image *image, iIMDShape **S
 	}
 }
 
-static void intDisplayBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset, bool isPowerBar)
+static void intDisplayBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset, bool isPowerBar, DisplayBarCache& cache)
 {
 	W_BARGRAPH *BarGraph = (W_BARGRAPH *)psWidget;
 	char szVal[30];
@@ -1984,6 +1999,8 @@ static void intDisplayBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset, bool
 	int iX, iY;
 	int barWidth = 100, width;
 	int i, precisionFactor = 1, value;
+
+	cache.wzCheckWidthText.setText(szCheckWidth, font_regular);
 
 	if (isPowerBar)
 	{
@@ -1997,7 +2014,7 @@ static void intDisplayBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset, bool
 	y0 += arbitraryOffset;
 
 	/* indent to allow text value */
-	iX = x0 + iV_GetTextWidth(szCheckWidth, font_regular);
+	iX = x0 + cache.wzCheckWidthText.width();
 	iY = y0 + (iV_GetImageHeight(IntImages, IMAGE_DES_STATSCURR) - iV_GetTextLineSize(font_regular)) / 2 - iV_GetTextAboveBase(font_regular);
 
 	if (isPowerBar)
@@ -2008,7 +2025,7 @@ static void intDisplayBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset, bool
 
 	//draw current value section
 	width = MIN(BarGraph->majorSize * barWidth / 100, barWidth);
-	iV_DrawImageRepeatX(IntImages, IMAGE_DES_STATSCURR, iX, y0, width);
+	iV_DrawImageRepeatX(IntImages, IMAGE_DES_STATSCURR, iX, y0, width, defaultProjectionMatrix(), true);
 
 	/* draw text value */
 	for (i = 0; i < BarGraph->precision; ++i)
@@ -2017,8 +2034,8 @@ static void intDisplayBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset, bool
 	}
 	value = (BarGraph->iOriginal * precisionFactor + BarGraph->denominator / 2) / BarGraph->denominator;
 	sprintf(szVal, "%d%s%.*d", value / precisionFactor, precisionFactor == 1 ? "" : ".", BarGraph->precision, value % precisionFactor);
-	iV_SetTextColour(WZCOL_TEXT_BRIGHT);
-	iV_DrawText(szVal, x0, iY, font_regular);
+	cache.wzText.setText(szVal, font_regular);
+	cache.wzText.render(x0, iY, WZCOL_TEXT_BRIGHT);
 
 	//draw the comparison value - only if not zero
 	if (BarGraph->minorSize != 0)
@@ -2031,13 +2048,21 @@ static void intDisplayBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset, bool
 /* Draws a stats bar for the design screen */
 void intDisplayStatsBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 {
-	intDisplayBar(psWidget, xOffset, yOffset, false);
+	// Any widget using intDisplayStatsBar must have its pUserData initialized to a (DisplayBarCache*)
+	assert(psWidget->pUserData != nullptr);
+	DisplayBarCache& cache = *static_cast<DisplayBarCache*>(psWidget->pUserData);
+
+	intDisplayBar(psWidget, xOffset, yOffset, false, cache);
 }
 
 /* Draws a Template Power Bar for the Design Screen */
 void intDisplayDesignPowerBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 {
-	intDisplayBar(psWidget, xOffset, yOffset, true);
+	// Any widget using intDisplayDesignPowerBar must have its pUserData initialized to a (DisplayBarCache*)
+	assert(psWidget->pUserData != nullptr);
+	DisplayBarCache& cache = *static_cast<DisplayBarCache*>(psWidget->pUserData);
+
+	intDisplayBar(psWidget, xOffset, yOffset, true, cache);
 }
 
 // Widget callback function to play an audio track.
@@ -2076,14 +2101,14 @@ void IntTransportButton::display(int xOffset, int yOffset)
 	displayIMD(Image(), ImdObject::Droid(psDroid), xOffset, yOffset);
 	displayIfHighlight(xOffset, yOffset);
 
-	if (psDroid && missionForReInforcements())
+	if (psDroid)
 	{
 		// Add the experience level for each droid
 		unsigned gfxId = getDroidRankGraphic(psDroid);
 		if (gfxId != UDWORD_MAX)
 		{
 			/* Render the rank graphic at the correct location */
-			iV_DrawImage(IntImages, gfxId, xOffset + x() + 50, yOffset + y() + 30);
+			iV_DrawImage(IntImages, gfxId, xOffset + x() + 50, yOffset + y() + 10);
 		}
 	}
 	doneDisplay();
@@ -2399,7 +2424,7 @@ void intDisplayAllyBar(WIDGET *psWidget, UDWORD xOffset, UDWORD yOffset)
 	else if (bestCompletion > 0)
 	{
 		// Waiting for module...
-		psBar->text = QString::fromUtf8("—*—");
+		psBar->text = std::string("—*—");
 	}
 	else if (bestPowerNeeded != researchNotStarted)
 	{

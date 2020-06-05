@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -24,22 +24,42 @@
 #include "png_util.h"
 #include <png.h>
 #include <physfs.h>
+#include "lib/framework/physfs_ext.h"
+#include <algorithm>
 
 #define PNG_BYTES_TO_CHECK 8
+
+IMGSaveError IMGSaveError::None = IMGSaveError();
 
 // PNG callbacks
 static void wzpng_read_data(png_structp ctx, png_bytep area, png_size_t size)
 {
-	PHYSFS_file *fileHandle = (PHYSFS_file *)png_get_io_ptr(ctx);
-
-	PHYSFS_read(fileHandle, area, 1, size);
+	if (ctx != nullptr)
+	{
+		PHYSFS_file *fileHandle = (PHYSFS_file *)png_get_io_ptr(ctx);
+		if (fileHandle != nullptr)
+		{
+			PHYSFS_sint64 result = WZ_PHYSFS_readBytes(fileHandle, area, size);
+			if (result > -1)
+			{
+				size_t byteCountRead = static_cast<size_t>(result);
+				if (byteCountRead == size)
+				{
+					return;
+				}
+				png_error(ctx, "Attempt to read beyond end of data");
+			}
+			png_error(ctx, "readBytes failure");
+		}
+		png_error(ctx, "Invalid memory read");
+	}
 }
 
 static void wzpng_write_data(png_structp png_ptr, png_bytep data, png_size_t length)
 {
 	PHYSFS_file *fileHandle = (PHYSFS_file *)png_get_io_ptr(png_ptr);
 
-	PHYSFS_write(fileHandle, data, length, 1);
+	WZ_PHYSFS_writeBytes(fileHandle, data, length);
 }
 
 static void wzpng_flush_data(png_structp png_ptr)
@@ -82,6 +102,10 @@ static inline void PNGWriteCleanup(png_infop *info_ptr, png_structp *png_ptr, PH
 	}
 }
 
+// FIXME?: disable MSVC warning C4611: interaction between '_setjmp' and C++ object destruction is non-portable
+MSVC_PRAGMA(warning( push )) // see matching "pop" below
+MSVC_PRAGMA(warning( disable : 4611 ))
+
 bool iV_loadImage_PNG(const char *fileName, iV_Image *image)
 {
 	unsigned char PNGheader[PNG_BYTES_TO_CHECK];
@@ -92,13 +116,13 @@ bool iV_loadImage_PNG(const char *fileName, iV_Image *image)
 
 	// Open file
 	PHYSFS_file *fileHandle = PHYSFS_openRead(fileName);
-	ASSERT_OR_RETURN(false, fileHandle != nullptr, "Could not open %s: %s", fileName, PHYSFS_getLastError());
+	ASSERT_OR_RETURN(false, fileHandle != nullptr, "Could not open %s: %s", fileName, WZ_PHYSFS_getLastError());
 
 	// Read PNG header from file
-	readSize = PHYSFS_read(fileHandle, PNGheader, 1, PNG_BYTES_TO_CHECK);
+	readSize = WZ_PHYSFS_readBytes(fileHandle, PNGheader, PNG_BYTES_TO_CHECK);
 	if (readSize < PNG_BYTES_TO_CHECK)
 	{
-		debug(LOG_FATAL, "pie_PNGLoadFile: PHYSFS_read(%s) failed with error: %s\n", fileName, PHYSFS_getLastError());
+		debug(LOG_FATAL, "pie_PNGLoadFile: WZ_WZ_PHYSFS_readBytes(%s) failed with error: %s\n", fileName, WZ_PHYSFS_getLastError());
 		PNGReadCleanup(&info_ptr, &png_ptr, fileHandle);
 		return false;
 	}
@@ -183,7 +207,152 @@ bool iV_loadImage_PNG(const char *fileName, iV_Image *image)
 	return true;
 }
 
-static void internal_saveImage_PNG(const char *fileName, const iV_Image *image, int color_type)
+struct MemoryBufferInputStream
+{
+public:
+	MemoryBufferInputStream(const std::vector<unsigned char> *pMemoryBuffer, size_t currentPos = 0)
+	: pMemoryBuffer(pMemoryBuffer)
+	, currentPos(currentPos)
+	{ }
+
+	size_t readBytes(png_bytep destBytes, size_t byteCountToRead)
+	{
+		const size_t remainingBytes = pMemoryBuffer->size() - currentPos;
+		size_t bytesToActuallyRead = std::min(byteCountToRead, remainingBytes);
+		if (bytesToActuallyRead > 0)
+		{
+			memcpy(destBytes, pMemoryBuffer->data() + currentPos, bytesToActuallyRead);
+		}
+		currentPos += bytesToActuallyRead;
+		return bytesToActuallyRead;
+	}
+
+private:
+	const std::vector<unsigned char> *pMemoryBuffer;
+	size_t currentPos = 0;
+};
+
+static void wzpng_read_data_from_buffer(png_structp png_ptr, png_bytep outBytes, png_size_t byteCountToRead)
+{
+	if (png_ptr != nullptr)
+	{
+		MemoryBufferInputStream *pMemoryStream = (MemoryBufferInputStream *)png_get_io_ptr(png_ptr);
+		if (pMemoryStream != nullptr)
+		{
+			size_t byteCountRead = pMemoryStream->readBytes(outBytes, byteCountToRead);
+			if (byteCountRead == byteCountToRead)
+			{
+				return;
+			}
+			png_error(png_ptr, "Attempt to read beyond end of data");
+		}
+		png_error(png_ptr, "Invalid memory read");
+	}
+}
+
+// Note: This function must be thread-safe.
+//       It does not call the debug() macro directly, but instead returns an IMGSaveError structure with the text of any error.
+IMGSaveError iV_loadImage_PNG(const std::vector<unsigned char>& memoryBuffer, iV_Image *image)
+{
+	unsigned char PNGheader[PNG_BYTES_TO_CHECK];
+	png_structp png_ptr = nullptr;
+	png_infop info_ptr = nullptr;
+
+	MemoryBufferInputStream inputStream = MemoryBufferInputStream(&memoryBuffer, 0);
+
+	size_t readSize = inputStream.readBytes(PNGheader, PNG_BYTES_TO_CHECK);
+	if (readSize < PNG_BYTES_TO_CHECK)
+	{
+		PNGReadCleanup(&info_ptr, &png_ptr, nullptr);
+		return IMGSaveError("iV_loadImage_PNG: Insufficient length for PNG header");
+	}
+
+	// Verify the PNG header to be correct
+	if (png_sig_cmp(PNGheader, 0, PNG_BYTES_TO_CHECK))
+	{
+		PNGReadCleanup(&info_ptr, &png_ptr, nullptr);
+		return IMGSaveError("iV_loadImage_PNG: Did not recognize PNG header");
+	}
+
+	png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+	if (png_ptr == nullptr)
+	{
+		PNGReadCleanup(&info_ptr, &png_ptr, nullptr);
+		return IMGSaveError("iV_loadImage_PNG: Unable to create png struct");
+	}
+
+	info_ptr = png_create_info_struct(png_ptr);
+	if (info_ptr == nullptr)
+	{
+		PNGReadCleanup(&info_ptr, &png_ptr, nullptr);
+		return IMGSaveError("iV_loadImage_PNG: Unable to create png info struct");
+	}
+
+	// Set libpng's failure jump position to the if branch,
+	// setjmp evaluates to false so the else branch will be executed at first
+	if (setjmp(png_jmpbuf(png_ptr)))
+	{
+		PNGReadCleanup(&info_ptr, &png_ptr, nullptr);
+		return IMGSaveError("iV_loadImage_PNG: Error decoding PNG data");
+	}
+
+	// Tell libpng how many byte we already read
+	png_set_sig_bytes(png_ptr, PNG_BYTES_TO_CHECK);
+
+	/* Set up the input control */
+	png_set_read_fn(png_ptr, &inputStream, wzpng_read_data_from_buffer);
+
+	// Most of the following transformations are seemingly not needed
+	// Filler is, however, for an unknown reason required for tertilesc[23]
+
+	/* tell libpng to strip 16 bit/color files down to 8 bits/color */
+	png_set_strip_16(png_ptr);
+
+	/* Extract multiple pixels with bit depths of 1, 2, and 4 from a single
+	 * byte into separate bytes (useful for paletted and grayscale images).
+	 */
+// 	png_set_packing(png_ptr);
+
+	/* More transformations to ensure we end up with 32bpp, 4 channel RGBA */
+	png_set_gray_to_rgb(png_ptr);
+	png_set_palette_to_rgb(png_ptr);
+	png_set_tRNS_to_alpha(png_ptr);
+	png_set_filler(png_ptr, 0xff, PNG_FILLER_AFTER);
+//	png_set_gray_1_2_4_to_8(png_ptr);
+
+	png_read_png(png_ptr, info_ptr, PNG_TRANSFORM_IDENTITY, nullptr);
+
+	image->width = png_get_image_width(png_ptr, info_ptr);
+	image->height = png_get_image_height(png_ptr, info_ptr);
+	image->depth = png_get_channels(png_ptr, info_ptr);
+	image->bmp = (unsigned char *)malloc(image->height * png_get_rowbytes(png_ptr, info_ptr));
+
+	{
+		unsigned int i = 0;
+		png_bytepp row_pointers = png_get_rows(png_ptr, info_ptr);
+		for (i = 0; i < png_get_image_height(png_ptr, info_ptr); i++)
+		{
+			memcpy(image->bmp + (png_get_rowbytes(png_ptr, info_ptr) * i), row_pointers[i], png_get_rowbytes(png_ptr, info_ptr));
+		}
+	}
+
+	PNGReadCleanup(&info_ptr, &png_ptr, nullptr);
+
+	if (image->depth < 3 || image->depth > 4)
+	{
+		IMGSaveError error;
+		error.text = "Unsupported image depth (";
+		error.text += std::to_string(image->depth);
+		error.text += ") found.  We only support 3 (RGB) or 4 (ARGB)";
+		return error;
+	}
+
+	return IMGSaveError::None;
+}
+
+// Note: This function must be thread-safe.
+//       It does not call the debug() macro directly, but instead returns an IMGSaveError structure with the text of any error.
+static IMGSaveError internal_saveImage_PNG(const char *fileName, const iV_Image *image, int color_type)
 {
 	unsigned char **volatile scanlines = nullptr;  // Must be volatile to reliably preserve value if modified between setjmp/longjmp.
 	png_infop info_ptr = nullptr;
@@ -196,30 +365,34 @@ static void internal_saveImage_PNG(const char *fileName, const iV_Image *image, 
 	fileHandle = PHYSFS_openWrite(fileName);
 	if (fileHandle == nullptr)
 	{
-		debug(LOG_ERROR, "pie_PNGSaveFile: PHYSFS_openWrite failed (while opening file %s) with error: %s\n", fileName, PHYSFS_getLastError());
-		return;
+		IMGSaveError error;
+		error.text = "pie_PNGSaveFile: PHYSFS_openWrite failed (while opening file ";
+		error.text += fileName;
+		error.text += ") with error: ";
+		error.text += WZ_PHYSFS_getLastError();
+		return error;
 	}
 
 	png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
 	if (png_ptr == nullptr)
 	{
-		debug(LOG_ERROR, "pie_PNGSaveFile: Unable to create png struct\n");
 		PNGWriteCleanup(&info_ptr, &png_ptr, fileHandle);
-		return;
+		return IMGSaveError("pie_PNGSaveFile: Unable to create png struct");
 	}
 
 	info_ptr = png_create_info_struct(png_ptr);
 	if (info_ptr == nullptr)
 	{
-		debug(LOG_ERROR, "pie_PNGSaveFile: Unable to create png info struct\n");
 		PNGWriteCleanup(&info_ptr, &png_ptr, fileHandle);
-		return;
+		return IMGSaveError("pie_PNGSaveFile: Unable to create png info struct");
 	}
 
 	// If libpng encounters an error, it will jump into this if-branch
 	if (setjmp(png_jmpbuf(png_ptr)))
 	{
-		debug(LOG_ERROR, "pie_PNGSaveFile: Error encoding PNG data\n");
+		free(scanlines);
+		PNGWriteCleanup(&info_ptr, &png_ptr, fileHandle);
+		return IMGSaveError("pie_PNGSaveFile: Error encoding PNG data");
 	}
 	else
 	{
@@ -235,9 +408,8 @@ static void internal_saveImage_PNG(const char *fileName, const iV_Image *image, 
 		scanlines = (unsigned char **)malloc(sizeof(unsigned char *) * image->height);
 		if (scanlines == nullptr)
 		{
-			debug(LOG_ERROR, "pie_PNGSaveFile: Couldn't allocate memory\n");
 			PNGWriteCleanup(&info_ptr, &png_ptr, fileHandle);
-			return;
+			return IMGSaveError("pie_PNGSaveFile: Couldn't allocate memory");
 		}
 
 		png_set_write_fn(png_ptr, fileHandle, wzpng_write_data, wzpng_flush_data);
@@ -286,18 +458,24 @@ static void internal_saveImage_PNG(const char *fileName, const iV_Image *image, 
 
 	free(scanlines);
 	PNGWriteCleanup(&info_ptr, &png_ptr, fileHandle);
+	return IMGSaveError::None;
 }
 
-void iV_saveImage_PNG(const char *fileName, const iV_Image *image)
+MSVC_PRAGMA(warning( pop )) // FIXME?: re-enable MSVC warning C4611: interaction between '_setjmp' and C++ object destruction is non-portable
+
+// Note: This function must be thread-safe.
+IMGSaveError iV_saveImage_PNG(const char *fileName, const iV_Image *image)
 {
-	internal_saveImage_PNG(fileName, image, PNG_COLOR_TYPE_RGB);
+	return internal_saveImage_PNG(fileName, image, PNG_COLOR_TYPE_RGB);
 }
 
-void iV_saveImage_PNG_Gray(const char *fileName, const iV_Image *image)
+// Note: This function must be thread-safe.
+IMGSaveError iV_saveImage_PNG_Gray(const char *fileName, const iV_Image *image)
 {
-	internal_saveImage_PNG(fileName, image, PNG_COLOR_TYPE_GRAY);
+	return internal_saveImage_PNG(fileName, image, PNG_COLOR_TYPE_GRAY);
 }
 
+// Note: This function is *NOT* thread-safe (jpeg_encode_image is not thread-safe).
 void iV_saveImage_JPEG(const char *fileName, const iV_Image *image)
 {
 	unsigned char *buffer = nullptr;
@@ -313,7 +491,7 @@ void iV_saveImage_JPEG(const char *fileName, const iV_Image *image)
 	fileHandle = PHYSFS_openWrite(newfilename);
 	if (fileHandle == nullptr)
 	{
-		debug(LOG_ERROR, "pie_JPEGSaveFile: PHYSFS_openWrite failed (while opening file %s) with error: %s\n", fileName, PHYSFS_getLastError());
+		debug(LOG_ERROR, "pie_JPEGSaveFile: PHYSFS_openWrite failed (while opening file %s) with error: %s\n", fileName, WZ_PHYSFS_getLastError());
 		return;
 	}
 
@@ -341,7 +519,7 @@ void iV_saveImage_JPEG(const char *fileName, const iV_Image *image)
 	}
 
 	jpeg_end = jpeg_encode_image(buffer, jpeg, 1, JPEG_FORMAT_RGB, image->width, image->height);
-	PHYSFS_write(fileHandle, jpeg, jpeg_end - jpeg, 1);
+	WZ_PHYSFS_writeBytes(fileHandle, jpeg, jpeg_end - jpeg);
 
 	free(buffer);
 	free(jpeg);

@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -31,14 +31,25 @@
 
 #include "message.h"
 
-class StateButton;
+class MultipleChoiceButton;
 class WIDGET;
 struct DROID;
 struct PROXIMITY_DISPLAY;
 struct STRUCTURE;
 struct W_SCREEN;
 struct iIMDShape;
-struct QScriptEngine;
+class QScriptEngine;
+
+enum  				  // Reticule button indecies.
+{
+	RETBUT_CANCEL,
+	RETBUT_FACTORY,
+	RETBUT_RESEARCH,
+	RETBUT_BUILD,
+	RETBUT_DESIGN,
+	RETBUT_INTELMAP,
+	RETBUT_COMMAND,
+};
 
 #define BASE_COORDS_X	(640)
 #define BASE_COORDS_Y	(460)
@@ -100,6 +111,7 @@ struct QScriptEngine;
 #define IDSTAT_LOOP_LABEL		4404
 #define IDSTAT_DP_BUTTON		4405
 #define IDSTAT_OBSOLETE_BUTTON          4406
+#define IDSTAT_FAVORITE_BUTTON          4407
 #define IDSTAT_RESICONSTART		4500
 #define IDSTAT_RESICONEND		4599
 #define IDSTAT_PRODSTART		4600
@@ -208,8 +220,8 @@ struct QScriptEngine;
 #define STAT_POWERBARY			(OBJ_BUTHEIGHT-STAT_PROGBARHEIGHT-6)
 
 /* maximum array sizes */
-#define	MAXSTRUCTURES	200	//bumped up from 80.  NOTE: was used for max # in build menus.
-#define	MAXRESEARCH		200 //was 80 topic displayed   "           "
+#define	MAXSTRUCTURES	65535	//bumped up from 80.  NOTE: was used for max # in build menus.
+#define	MAXRESEARCH		65535	//was 80 topic displayed   "           "
 #define	MAXFEATURES		80
 #define	MAXCOMPONENT	200
 #define	MAXEXTRASYS		80
@@ -285,7 +297,8 @@ void intDisplayWidgets();
 bool intAddReticule();
 bool intAddPower();
 void intRemoveReticule();
-void setReticuleStats(int ButId, QString tip, QString filename, QString filenameDown, QString func, QScriptEngine *engine);
+void setReticuleStats(int ButId, std::string tip = std::string(), std::string filename = std::string(), std::string filenameDown = std::string(), WzString func = WzString(), QScriptEngine *engine = nullptr);
+void setReticuleFlash(int ButId, bool flash);
 
 /* Set the map view point to the world coordinates x,y */
 void intSetMapPos(UDWORD x, UDWORD y);
@@ -318,14 +331,13 @@ bool intBuildSelectMode();
 bool intDemolishSelectMode();
 bool intBuildMode();
 
-/* add the construction interface if a constructor droid is selected */
-void intCommanderSelected(DROID *psDroid);
-
 //sets up the Intelligence Screen as far as the interface is concerned
 void addIntelScreen();
 
 /* Reset the widget screen to just the reticule */
 void intResetScreen(bool NoAnim);
+
+void intScreenSizeDidChange(int oldWidth, int oldHeight, int newWidth, int newHeight);
 
 /* Refresh icons on the interface, without disturbing the layout. i.e. smartreset*/
 void intRefreshScreen();
@@ -352,6 +364,8 @@ void stopReticuleButtonFlash(UDWORD buttonID);
 void togglePowerBar();
 void intShowPowerBar();
 void intHidePowerBar();
+
+void intShowWidget(int buttonID);
 
 //hides the power bar from the display - regardless of what player requested!
 void forceHidePowerBar();
@@ -388,7 +402,7 @@ bool intIsRefreshing();
 
 void intDemolishCancel();
 
-StateButton *makeObsoleteButton(WIDGET *parent);  ///< Makes a button to toggle showing obsolete items.
+MultipleChoiceButton *makeObsoleteButton(WIDGET *parent);  ///< Makes a button to toggle showing obsolete items.
 
 void chatDialog(int mode);
 bool isChatUp();

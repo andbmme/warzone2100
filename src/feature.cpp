@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -23,7 +23,6 @@
  * Load feature stats
  */
 #include "lib/framework/frame.h"
-#include "lib/framework/wzconfig.h"
 
 #include "lib/gamelib/gtime.h"
 #include "lib/sound/audio.h"
@@ -66,10 +65,10 @@ void featureInitVars()
 }
 
 /* Load the feature stats */
-bool loadFeatureStats(const char *pFileName)
+bool loadFeatureStats(WzConfig &ini)
 {
-	WzConfig ini(pFileName, WzConfig::ReadOnlyAndRequired);
-	QStringList list = ini.childGroups();
+	ASSERT(ini.isAtDocumentRoot(), "WzConfig instance is in the middle of traversal");
+	std::vector<WzString> list = ini.childGroups();
 	asFeatureStats = new FEATURE_STATS[list.size()];
 	numFeatureStats = list.size();
 	for (int i = 0; i < list.size(); ++i)
@@ -77,9 +76,9 @@ bool loadFeatureStats(const char *pFileName)
 		ini.beginGroup(list[i]);
 		asFeatureStats[i] = FEATURE_STATS(REF_FEATURE_START + i);
 		FEATURE_STATS *p = &asFeatureStats[i];
-		p->name = ini.value("name").toString();
+		p->name = ini.string(WzString::fromUtf8("name"));
 		p->id = list[i];
-		QString subType = ini.value("type").toString();
+		WzString subType = ini.value("type").toWzString();
 		if (subType == "TANK WRECK")
 		{
 			p->subType = FEAT_TANK;
@@ -118,9 +117,9 @@ bool loadFeatureStats(const char *pFileName)
 		}
 		else
 		{
-			ASSERT(false, "Unknown feature type: %s", subType.toUtf8().constData());
+			ASSERT(false, "Unknown feature type: %s", subType.toUtf8().c_str());
 		}
-		p->psImd = modelGet(ini.value("model").toString());
+		p->psImd = modelGet(ini.value("model").toWzString());
 		p->baseWidth = ini.value("width", 1).toInt();
 		p->baseBreadth = ini.value("breadth", 1).toInt();
 		p->tileDraw = ini.value("tileDraw", 1).toInt();
@@ -191,9 +190,6 @@ FEATURE *buildFeature(FEATURE_STATS *psStats, UDWORD x, UDWORD y, bool FromSave)
 		debug(LOG_WARNING, "Feature couldn't be built.");
 		return nullptr;
 	}
-	// features are not in the cluster system
-	// this will cause an assert when they still end up there
-	psFeature->cluster = ~0;
 	//add the feature to the list - this enables it to be drawn whilst being built
 	addFeature(psFeature);
 
@@ -318,6 +314,10 @@ FEATURE::~FEATURE()
 
 void _syncDebugFeature(const char *function, FEATURE const *psFeature, char ch)
 {
+	if (psFeature->type != OBJ_FEATURE) {
+		ASSERT(false, "%c Broken psFeature->type %u!", ch, psFeature->type);
+		syncDebug("Broken psFeature->type %u!", psFeature->type);
+	}
 	int list[] =
 	{
 		ch,
@@ -405,7 +405,7 @@ bool removeFeature(FEATURE *psDel)
 		}
 	}
 
-	debug(LOG_DEATH, "Killing off feature %s id %d (%p)", objInfo(psDel), psDel->id, psDel);
+	debug(LOG_DEATH, "Killing off feature %s id %d (%p)", objInfo(psDel), psDel->id, static_cast<void *>(psDel));
 	killFeature(psDel);
 
 	return true;
@@ -514,14 +514,14 @@ bool destroyFeature(FEATURE *psDel, unsigned impactTime)
 }
 
 
-SDWORD getFeatureStatFromName(const char *pName)
+SDWORD getFeatureStatFromName(const WzString &name)
 {
 	FEATURE_STATS *psStat;
 
-	for (int inc = 0; inc < numFeatureStats; inc++)
+	for (unsigned inc = 0; inc < numFeatureStats; inc++)
 	{
 		psStat = &asFeatureStats[inc];
-		if (psStat->id.compare(pName) == 0)
+		if (psStat->id.compare(name) == 0)
 		{
 			return inc;
 		}
@@ -529,26 +529,14 @@ SDWORD getFeatureStatFromName(const char *pName)
 	return -1;
 }
 
-Vector2i getFeatureStatsSize(FEATURE_STATS const *pFeatureType)
-{
-	Vector2i size(pFeatureType->baseWidth, pFeatureType->baseBreadth);
-
-	// Feature has normal orientation (or upsidedown).
-	return size;
-}
-
 StructureBounds getStructureBounds(FEATURE const *object)
 {
-	Vector2i size = getFeatureStatsSize(object->psStats);
-	Vector2i map = map_coord(object->pos.xy) - size / 2;
-
-	return StructureBounds(map, size);
+	return getStructureBounds(object->psStats, object->pos.xy());
 }
 
 StructureBounds getStructureBounds(FEATURE_STATS const *stats, Vector2i pos)
 {
-	Vector2i size = getFeatureStatsSize(stats);
-	Vector2i map = map_coord(pos) - size / 2;
-
+	const Vector2i size = stats->size();
+	const Vector2i map = map_coord(pos) - size / 2;
 	return StructureBounds(map, size);
 }

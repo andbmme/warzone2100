@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -73,7 +73,7 @@ void rayCast(Vector2i src, Vector2i dst, RAY_CALLBACK callback, void *data)
 	Vector2i srcM = map_coord(src);
 	Vector2i dstM = map_coord(dst);
 
-	Vector2i step, tile, cur, end;
+	Vector2i step(0, 0), tile(0, 0), cur(0, 0), end(0, 0);
 	initSteps(srcM.x, dstM.x, tile.x, step.x, cur.x, end.x);
 	initSteps(srcM.y, dstM.y, tile.y, step.y, cur.y, end.y);
 
@@ -194,7 +194,7 @@ void getBestPitchToEdgeOfGrid(UDWORD x, UDWORD y, uint16_t direction, uint16_t *
 
 	Vector3i src(x, y, 0);
 	Vector3i delta(iSinCosR(direction, 5430), 0);
-	rayCast(src.xy, (src + delta).xy, getTileHeightCallback, &help); // FIXME Magic value
+	rayCast(src.xy(), (src + delta).xy(), getTileHeightCallback, &help); // FIXME Magic value
 
 	*pitch = help.pitch;
 }

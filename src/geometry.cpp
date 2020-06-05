@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -47,12 +47,11 @@ uint16_t calcDirection(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
 
 DROID	*getNearestDroid(UDWORD x, UDWORD y, bool bSelected)
 {
-	DROID	*psDroid, *psBestUnit;
-	UDWORD	bestSoFar;
+	DROID *psBestUnit = nullptr;
+	unsigned bestSoFar = UDWORD_MAX;
 
 	/* Go thru' all the droids  - how often have we seen this - a MACRO maybe? */
-	for (psDroid = apsDroidLists[selectedPlayer], psBestUnit = nullptr, bestSoFar = UDWORD_MAX;
-	     psDroid; psDroid = psDroid->psNext)
+	for (DROID *psDroid = apsDroidLists[selectedPlayer]; psDroid; psDroid = psDroid->psNext)
 	{
 		if (!isVtolDroid(psDroid))
 		{
@@ -71,7 +70,7 @@ DROID	*getNearestDroid(UDWORD x, UDWORD y, bool bSelected)
 			}
 		}
 	}
-	return (psBestUnit);
+	return psBestUnit;
 }
 // -------------------------------------------------------------------------------------------
 
@@ -103,8 +102,8 @@ bool inQuad(const Vector2i *pt, const QUAD *quad)
 	{
 		Vector2i edge = quad->coords[j] - quad->coords[i];
 		Vector2i pos = *pt - quad->coords[i];
-		if ((0 <= pos.y && pos.y < edge.y && pos.x * edge.y < pos.y * edge.x) ||
-		    (edge.y <= pos.y && pos.y < 0      && pos.x * edge.y > pos.y * edge.x))
+		if ((0 <= pos.y && pos.y < edge.y && (int64_t)pos.x * (int64_t)edge.y < (int64_t)pos.y * (int64_t)edge.x) ||
+		    (edge.y <= pos.y && pos.y < 0 && (int64_t)pos.x * (int64_t)edge.y > (int64_t)pos.y * (int64_t)edge.x))
 		{
 			c = !c;
 		}
@@ -122,8 +121,8 @@ Vector2i positionInQuad(Vector2i const &pt, QUAD const &quad)
 		Vector2i edge = quad.coords[j] - quad.coords[i];
 		Vector2i pos  = quad.coords[j] - pt;
 		Vector2i posRot(pos.y, -pos.x);
-		lenSq[i] = edge * edge;
-		ptDot[i] = posRot * edge;
+		lenSq[i] = dot(edge, edge);
+		ptDot[i] = dot(posRot, edge);
 	}
 	int ret[2];
 	for (int i = 0; i < 2; ++i)
@@ -138,19 +137,17 @@ Vector2i positionInQuad(Vector2i const &pt, QUAD const &quad)
 //-----------------------------------------------------------------------------------
 bool	droidOnScreen(DROID *psDroid, SDWORD tolerance)
 {
-	SDWORD	dX, dY;
-
 	if (DrawnInLastFrame(psDroid->sDisplay.frameNumber) == true)
 	{
-		dX = psDroid->sDisplay.screenX;
-		dY = psDroid->sDisplay.screenY;
+		const int dX = psDroid->sDisplay.screenX;
+		const int dY = psDroid->sDisplay.screenY;
 		/* Is it on screen */
 		if (dX > (0 - tolerance) && dY > (0 - tolerance)
 		    && dX < (SDWORD)(pie_GetVideoBufferWidth() + tolerance)
 		    && dY < (SDWORD)(pie_GetVideoBufferHeight() + tolerance))
 		{
-			return (true);
+			return true;
 		}
 	}
-	return (false);
+	return false;
 }

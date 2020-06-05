@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -33,7 +33,7 @@
 
 #include "lib/framework/frame.h"
 #include "lib/framework/vector.h"
-#include "glm/core/type.hpp"
+#include <glm/fwd.hpp>
 #include "pietypes.h"
 
 struct iIMDShape;
@@ -57,7 +57,7 @@ struct iIMDShape;
  *	Global ProtoTypes
  */
 /***************************************************************************/
-void pie_Draw3DShape(iIMDShape *shape, int frame, int team, PIELIGHT colour, int pieFlag, int pieFlagData, const glm::mat4 &modelView);
+bool pie_Draw3DShape(iIMDShape *shape, int frame, int team, PIELIGHT colour, int pieFlag, int pieFlagData, const glm::mat4 &modelView);
 
 void pie_GetResetCounts(unsigned int *pPieCount, unsigned int *pPolyCount);
 
@@ -69,7 +69,7 @@ void pie_setShadows(bool drawShadows);
 void pie_InitLighting();
 void pie_Lighting0(LIGHTING_TYPE entry, const float value[4]);
 
-void pie_RemainingPasses();
+void pie_RemainingPasses(uint64_t currentGameFrame);
 
 void pie_SetUp();
 void pie_CleanUp();

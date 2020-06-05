@@ -33,17 +33,19 @@ camAreaEvent("vtolRemoveZone", function(droid)
 function truckDefense()
 {
 	if (enumDroid(THE_COLLECTIVE, DROID_CONSTRUCT).length > 0)
-		queue("truckDefense", 160000);
+	{
+		queue("truckDefense", camSecondsToMilliseconds(160));
+	}
 
 	var list = ["AASite-QuadBof", "WallTower04", "GuardTower-RotMg", "WallTower-Projector"];
 	camQueueBuilding(THE_COLLECTIVE, list[camRand(list.length)], camMakePos("uplinkPos"));
 }
 
-//Triggers after 1 minute. Then attacks every 2 minutes until HQ is destroyed.
+//Attacks every 2 minutes until HQ is destroyed.
 function vtolAttack()
 {
-	var list; with (camTemplates) list = [colatv];
-	camSetVtolData(THE_COLLECTIVE, "vtolAppearPos", "vtolRemovePos", list, camChangeOnDiff(120000), "COCommandCenter");
+	var list = [cTempl.colatv];
+	camSetVtolData(THE_COLLECTIVE, "vtolAppearPos", "vtolRemovePos", list, camChangeOnDiff(camMinutesToMilliseconds(2)), "COCommandCenter");
 }
 
 //The project captured the uplink.
@@ -52,51 +54,32 @@ function captureUplink()
 	const GOODSND = "pcv621.ogg";	//"Objective captured"
 	playSound(GOODSND);
 	hackRemoveMessage("C2D_OBJ1", PROX_MSG, CAM_HUMAN_PLAYER);
-	//setAlliance(UPLINK, THE_COLLECTIVE, false);
 }
 
-//Extra win condition callback. Failure code works, however the uplink is far too
-//fragile for this to work properly. Thus it is unused for now.
+//Extra win condition callback.
 function checkNASDACentral()
 {
-	/*
-	if(getObject("uplink") == null)
+	if (getObject("uplink") === null)
 	{
-		const BADSND = "pcv622.ogg"	//"Objective destroyed"
-		playSound(BADSND);
-		return false;
+		return false; //It was destroyed
 	}
-	*/
 
-	var enemyStuff = enumArea("uplinkClearArea", THE_COLLECTIVE, false);
-	if(!enemyStuff.length)
+	if (camCountStructuresInArea("uplinkClearArea", THE_COLLECTIVE) === 0)
 	{
 		camCallOnce("captureUplink");
+		return true;
 	}
-
-	if(!enumArea(0, 0, mapWidth, mapHeight, ENEMIES, false).length)
-	{
-		return true; //Must destroy everything to win.
-	}
-}
-
-function enableReinforcements()
-{
-	playSound("pcv440.ogg"); // Reinforcements are available.
-	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "SUB_2_6S", {
-		area: "RTLZ",
-		message: "C2D_LZ",
-		reinforcements: 300, //5 min
-		callback: "checkNASDACentral"
-	});
 }
 
 function eventStartLevel()
 {
-	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "SUB_2_6S",{
+	camSetStandardWinLossConditions(CAM_VICTORY_OFFWORLD, "SUB_2_6S", {
 		area: "RTLZ",
 		message: "C2D_LZ",
-		reinforcements: -1
+		reinforcements: camMinutesToSeconds(5),
+		callback: "checkNASDACentral",
+		annihilate: true,
+		retlz: true
 	});
 
 	var startpos = getObject("startPosition");
@@ -108,6 +91,9 @@ function eventStartLevel()
 	startTransporterEntry(tent.x, tent.y, CAM_HUMAN_PLAYER);
 	setTransporterExit(text.x, text.y, CAM_HUMAN_PLAYER);
 
+	var enemyLz = getObject("COLandingZone");
+	setNoGoArea(enemyLz.x, enemyLz.y, enemyLz.x2, enemyLz.y2, THE_COLLECTIVE);
+
 	camSetArtifacts({
 		"COCommandCenter": { tech: "R-Struc-VTOLPad-Upgrade01" },
 		"COResearchLab": { tech: "R-Struc-Research-Upgrade04" },
@@ -118,7 +104,6 @@ function eventStartLevel()
 	setAlliance(CAM_HUMAN_PLAYER, UPLINK, true);
 	setAlliance(THE_COLLECTIVE, UPLINK, true);
 
-	setPower(AI_POWER, THE_COLLECTIVE);
 	camCompleteRequiredResearch(COLLECTIVE_RES, THE_COLLECTIVE);
 
 	camSetEnemyBases({
@@ -130,30 +115,30 @@ function eventStartLevel()
 		},
 	});
 
-	with (camTemplates) camSetFactories({
+	camSetFactories({
 		"COHeavyFactory": {
 			assembly: "COHeavyFactoryAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(80000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(60)),
 			data: {
 				regroup: false,
 				repair: 20,
 				count: -1,
 			},
-			templates: [cohhpv, comhltat, cohct]
+			templates: [cTempl.cohhpv, cTempl.comhltat, cTempl.cohct]
 		},
 		"COSouthCyborgFactory": {
 			assembly: "COSouthCyborgFactoryAssembly",
 			order: CAM_ORDER_ATTACK,
 			groupSize: 5,
-			throttle: camChangeOnDiff(40000),
+			throttle: camChangeOnDiff(camSecondsToMilliseconds(40)),
 			data: {
 				regroup: false,
 				repair: 40,
 				count: -1,
 			},
-			templates: [npcybc, npcybf, npcybr, cocybag]
+			templates: [cTempl.npcybc, cTempl.npcybf, cTempl.npcybr, cTempl.cocybag]
 		},
 	});
 
@@ -164,6 +149,5 @@ function eventStartLevel()
 	camEnableFactory("COHeavyFactory");
 	camEnableFactory("COSouthCyborgFactory");
 
-	queue("enableReinforcements", 22000);
-	queue("vtolAttack", 60000);
+	queue("vtolAttack", camMinutesToMilliseconds(2));
 }

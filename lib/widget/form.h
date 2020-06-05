@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -30,15 +30,14 @@
 /* The standard form */
 class W_FORM : public WIDGET
 {
-	Q_OBJECT
 
 public:
 	W_FORM(W_FORMINIT const *init);
 	W_FORM(WIDGET *parent);
 
-	void clicked(W_CONTEXT *psContext, WIDGET_KEY key);
-	void highlightLost();
-	void display(int xOffset, int yOffset);
+	void clicked(W_CONTEXT *psContext, WIDGET_KEY key) override;
+	void highlightLost() override;
+	void display(int xOffset, int yOffset) override;
 
 	bool            disableChildren;        ///< Disable all child widgets if true
 };
@@ -46,22 +45,21 @@ public:
 /* The clickable form data structure */
 class W_CLICKFORM : public W_FORM
 {
-	Q_OBJECT
 
 public:
 	W_CLICKFORM(W_FORMINIT const *init);
 	W_CLICKFORM(WIDGET *parent);
 
-	void clicked(W_CONTEXT *psContext, WIDGET_KEY key);
-	void released(W_CONTEXT *psContext, WIDGET_KEY key);
-	void highlight(W_CONTEXT *psContext);
-	void highlightLost();
-	void display(int xOffset, int yOffset);
+	void clicked(W_CONTEXT *psContext, WIDGET_KEY key) override;
+	void released(W_CONTEXT *psContext, WIDGET_KEY key) override;
+	void highlight(W_CONTEXT *psContext) override;
+	void highlightLost() override;
+	void display(int xOffset, int yOffset) override;
 
-	unsigned getState();
-	void setState(unsigned state);
-	void setFlash(bool enable);
-	void setTip(QString string);
+	unsigned getState() override;
+	void setState(unsigned state) override;
+	void setFlash(bool enable) override;
+	void setTip(std::string string) override;
 
 	using WIDGET::setString;
 	using WIDGET::setTip;
@@ -69,8 +67,8 @@ public:
 	bool isDown() const;
 	bool isHighlighted() const;
 
-	UDWORD		state;					// Button state of the form
-	QString         pTip;                   // Tip for the form
+	unsigned state;                     // Button state of the form
+	std::string pTip;                   // Tip for the form
 	SWORD HilightAudioID;				// Audio ID for form clicked sound
 	SWORD ClickedAudioID;				// Audio ID for form hilighted sound
 	WIDGET_AUDIOCALLBACK AudioCallback;	// Pointer to audio callback function

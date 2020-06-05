@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 2007  Giel van Schijndel
-	Copyright (C) 2007-2017  Warzone 2100 Project
+	Copyright (C) 2007-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -25,10 +25,53 @@
 #include "version.h"
 #include "stringdef.h"
 
+#include <algorithm>
+
 #include "src/autorevision.h"  // Apparently must add the "src/" so make doesn't needlessly recompile version.cpp every time.
 
 static const char vcs_branch_cstr[] = VCS_BRANCH;
 static const char vcs_tag[] = VCS_TAG;
+
+/** Obtain the versioned application-data / config writedir folder name
+ *  If on a tag, this is "Warzone 2100 <tag>" / "warzone2100-<tag>"
+ *  If not on a tag, this is "Warzone 2100 <branch>" / "warzone2100-<branch>"
+ *  If no branch is defined, this is "Warzone 2100 <VCS_EXTRA>" / "warzone2100-<VCS_EXTRA>"
+ */
+std::string version_getVersionedAppDirFolderName()
+{
+	std::string versionedWriteDirFolderName;
+
+#if defined(WZ_OS_WIN) || defined(WZ_OS_MAC)
+	versionedWriteDirFolderName = "Warzone 2100 ";
+#else
+	versionedWriteDirFolderName = "warzone2100-";
+#endif
+
+	if (strlen(vcs_tag))
+	{
+		versionedWriteDirFolderName += vcs_tag;
+	}
+	else if (strlen(vcs_branch_cstr))
+	{
+#if defined(WZ_USE_MASTER_BRANCH_APP_DIR)
+		// To ease testing new branches with existing files
+		// default to using "master" as the branch name
+		// if WZ_USE_MASTER_BRANCH_APP_DIR is defined
+		versionedWriteDirFolderName += "master";
+#else
+		versionedWriteDirFolderName += vcs_branch_cstr;
+#endif
+	}
+	else
+	{
+		// not a branch or a tag, so we are detached most likely.
+		std::string vcs_extra_str = VCS_EXTRA;
+		// remove any spaces from VCS_EXTRA
+		vcs_extra_str.erase(std::remove(vcs_extra_str.begin(), vcs_extra_str.end(), ' '), vcs_extra_str.end());
+		versionedWriteDirFolderName += vcs_extra_str;
+	}
+	return versionedWriteDirFolderName;
+}
 
 /** Composes a nicely formatted version string.
 * Determine if we are on a tag (which will NOT show the hash)
@@ -66,26 +109,26 @@ const char *version_getFormattedVersionString()
 {
 	static char versionString[MAX_STR_LENGTH] = {'\0'};
 
-	if (versionString[0] == '\0')
-	{
-		// Compose the working copy state string
+	// Compose the working copy state string
 #if (VCS_WC_MODIFIED)
-		const char *wc_state = _(" (modified locally)");
+	// TRANSLATORS: Printed when compiling with uncommitted changes
+	const char *wc_state = _(" (modified locally)");
 #else
-		const char *wc_state = "";
+	const char *wc_state = "";
 #endif
-		// Compose the build type string
+	// Compose the build type string
 #ifdef DEBUG
-		const char *build_type = _(" - DEBUG");
+	// TRANSLATORS: Printed in Debug builds
+	const char *build_type = _(" - DEBUG");
 #else
-		const char *build_type = "";
+	const char *build_type = "";
 #endif
 
-		// Construct the version string
-		// TRANSLATORS: This string looks as follows when expanded.
-		// "Version <version name/number> <working copy state><BUILD DATE><BUILD TYPE>"
-		snprintf(versionString, MAX_STR_LENGTH, _("Version: %s,%s Built:%s%s"), version_getVersionString(), wc_state, __DATE__, build_type);
-	}
+	// Construct the version string
+	// TRANSLATORS: This string looks as follows when expanded.
+	// "Version: <version name/number>, <working copy state>,
+	// Built: <BUILD DATE><BUILD TYPE>"
+	snprintf(versionString, MAX_STR_LENGTH, _("Version: %s,%s Built: %s%s"), version_getVersionString(), wc_state, getCompileDate(), build_type);
 
 	return versionString;
 }

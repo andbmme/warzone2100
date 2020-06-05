@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@
 #include "lib/framework/frame.h"
 #include "lib/exceptionhandler/dumpinfo.h"
 #include "lib/netplay/netplay.h"
+#include "lib/framework/string_ext.h"
 
 #include "cheat.h"
 #include "keybind.h"
@@ -33,6 +34,7 @@
 #include "multiplay.h"
 #include "qtscript.h"
 #include "template.h"
+#include "activity.h"
 
 struct CHEAT_ENTRY
 {
@@ -60,16 +62,15 @@ static CHEAT_ENTRY cheatCodes[] =
 	{"deity", kf_ToggleGodMode},	//from above
 	{"droidinfo", kf_DebugDroidInfo},	//show unit stats
 	{"sensors", kf_ToggleSensorDisplay},	//show sensor ranges
-	{"let me win", kf_AddMissionOffWorld},	//let me win
 	{"timedemo", kf_FrameRate},	 //timedemo
 	{"kill", kf_KillSelected},	//kill selected
 	{"john kettley", kf_ToggleWeather},	//john kettley
 	{"mouseflip", kf_ToggleMouseInvert},	//mouseflip
-	{"biffer baker", kf_SetKillerLevel},	//indestructive units
+	{"biffer baker", kf_BifferBaker},	// almost invincible units
 	{"easy", kf_SetEasyLevel},	//easy
 	{"normal", kf_SetNormalLevel},	//normal
 	{"hard", kf_SetHardLevel},	//hard
-	{"double up", kf_SetToughUnitsLevel},	// your units take half the damage
+	{"double up", kf_DoubleUp},	// your units take half the damage
 	{"whale fin", kf_TogglePower},	// turns on/off infinte power
 	{"get off my land", kf_KillEnemy},	// kills all enemy units and structures
 	{"build info", kf_BuildInfo},	// tells you when the game was built
@@ -89,7 +90,7 @@ static CHEAT_ENTRY cheatCodes[] =
 
 };
 
-bool attemptCheatCode(const char *cheat_name)
+bool _attemptCheatCode(const char *cheat_name)
 {
 	const CHEAT_ENTRY *curCheat;
 	static const CHEAT_ENTRY *const EndCheat = &cheatCodes[ARRAY_SIZE(cheatCodes)];
@@ -141,6 +142,16 @@ bool attemptCheatCode(const char *cheat_name)
 	return false;
 }
 
+bool attemptCheatCode(const char *cheat_name)
+{
+	bool result = _attemptCheatCode(cheat_name);
+	if (result)
+	{
+		ActivityManager::instance().cheatUsed(cheat_name);
+	}
+	return result;
+}
+
 void sendProcessDebugMappings(bool val)
 {
 	NETbeginEncode(NETgameQueue(selectedPlayer), GAME_DEBUG_MODE);
@@ -159,16 +170,16 @@ void recvProcessDebugMappings(NETQUEUE queue)
 	processDebugMappings(queue.index, val);
 	bool newDebugMode = getDebugMappingStatus();
 
-	char const *cmsg;
+	std::string cmsg;
 	if (val)
 	{
-		sasprintf((char **)&cmsg, _("%s wants to enable debug mode. Enabled: %s, Disabled: %s."), getPlayerName(queue.index), getWantedDebugMappingStatuses(true).c_str(), getWantedDebugMappingStatuses(false).c_str());
+		cmsg = astringf(_("%s wants to enable debug mode. Enabled: %s, Disabled: %s."), getPlayerName(queue.index), getWantedDebugMappingStatuses(true).c_str(), getWantedDebugMappingStatuses(false).c_str());
 	}
 	else
 	{
-		sasprintf((char **)&cmsg, _("%s wants to disable debug mode. Enabled: %s, Disabled: %s."), getPlayerName(queue.index), getWantedDebugMappingStatuses(true).c_str(), getWantedDebugMappingStatuses(false).c_str());
+		cmsg = astringf(_("%s wants to disable debug mode. Enabled: %s, Disabled: %s."), getPlayerName(queue.index), getWantedDebugMappingStatuses(true).c_str(), getWantedDebugMappingStatuses(false).c_str());
 	}
-	addConsoleMessage(cmsg, DEFAULT_JUSTIFY,  SYSTEM_MESSAGE);
+	addConsoleMessage(cmsg.c_str(), DEFAULT_JUSTIFY,  SYSTEM_MESSAGE);
 
 	if (!oldDebugMode && newDebugMode)
 	{

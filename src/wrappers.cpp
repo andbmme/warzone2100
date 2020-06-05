@@ -1,7 +1,7 @@
 /*
 	This file is part of Warzone 2100.
 	Copyright (C) 1999-2004  Eidos Interactive
-	Copyright (C) 2005-2017  Warzone 2100 Project
+	Copyright (C) 2005-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -43,6 +43,7 @@
 #include "multistat.h"
 #include "warzoneconfig.h"
 #include "wrappers.h"
+#include "titleui/titleui.h"
 
 struct STAR
 {
@@ -56,9 +57,6 @@ static bool		bPlayerHasLost = false;
 static bool		bPlayerHasWon = false;
 static UBYTE    scriptWinLoseVideo = PLAY_NONE;
 
-void	runCreditsScreen();
-
-static	UDWORD	lastChange = 0;
 int hostlaunch = 0;				// used to detect if we are hosting a game via command line option.
 
 static uint32_t lastTick = 0;
@@ -151,12 +149,16 @@ TITLECODE titleLoop()
 			bMultiPlayer = true;
 			ingame.bHostSetup = true;
 			game.type = SKIRMISH;
-			changeTitleMode(MULTIOPTION);
+			// Ensure the game has a place to return to
+			changeTitleMode(TITLE);
+			changeTitleUI(std::make_shared<WzMultiOptionTitleUI>(wzTitleUICurrent));
 		}
 		else if (strlen(iptoconnect))
 		{
 			NetPlay.bComms = true; // use network = true
 			NETinit(true);
+			// Ensure the joinGame has a place to return to
+			changeTitleMode(TITLE);
 			joinGame(iptoconnect, 0);
 		}
 		else
@@ -167,103 +169,16 @@ TITLECODE titleLoop()
 		wzSetCursor(CURSOR_DEFAULT);
 	}
 
-	if (titleMode != MULTIOPTION && titleMode != MULTILIMIT && titleMode != STARTGAME)
+	if (wzTitleUICurrent)
 	{
-		screen_disableMapPreview();
+		// Creates a pointer, so if... when, the UI changes during a run, this does not disappear
+		std::shared_ptr<WzTitleUI> current = wzTitleUICurrent;
+		RetCode = current->run();
 	}
 
-	switch (titleMode) // run relevant title screen code.
+	if ((RetCode == TITLECODE_SAVEGAMELOAD) || (RetCode == TITLECODE_STARTGAME))
 	{
-	// MULTIPLAYER screens
-	case PROTOCOL:
-		runConnectionScreen(); // multiplayer connection screen.
-		break;
-	case MULTIOPTION:
-		runMultiOptions();
-		break;
-	case GAMEFIND:
-		runGameFind();
-		break;
-	case MULTI:
-		runMultiPlayerMenu();
-		break;
-	case MULTILIMIT:
-		runLimitScreen();
-		break;
-	case KEYMAP:
-		runKeyMapEditor();
-		break;
-
-	case TITLE:
-		runTitleMenu();
-		break;
-
-	case CAMPAIGNS:
-		runCampaignSelector();
-		break;
-
-	case SINGLE:
-		runSinglePlayerMenu();
-		break;
-
-	case TUTORIAL:
-		runTutorialMenu();
-		break;
-
-	case CREDITS:
-		runCreditsScreen();
-		break;
-
-	case OPTIONS:
-		runOptionsMenu();
-		break;
-
-	case GAME:
-		runGameOptionsMenu();
-		break;
-
-	case GRAPHICS_OPTIONS:
-		runGraphicsOptionsMenu();
-		break;
-
-	case AUDIO_OPTIONS:
-		runAudioOptionsMenu();
-		break;
-
-	case VIDEO_OPTIONS:
-		runVideoOptionsMenu();
-		break;
-
-	case MOUSE_OPTIONS:
-		runMouseOptionsMenu();
-		break;
-
-	case QUIT:
-		RetCode = TITLECODE_QUITGAME;
-		break;
-
-	case STARTGAME:
-	case LOADSAVEGAME:
-		if (titleMode == LOADSAVEGAME)
-		{
-			RetCode = TITLECODE_SAVEGAMELOAD;
-		}
-		else
-		{
-			RetCode = TITLECODE_STARTGAME;
-		}
-		return RetCode;			// don't flip!
-
-	case SHOWINTRO:
-		pie_SetFogStatus(false);
-		pie_ScreenFlip(CLEAR_BLACK);
-		changeTitleMode(TITLE);
-		RetCode = TITLECODE_SHOWINTRO;
-		break;
-
-	default:
-		debug(LOG_FATAL, "unknown title screen mode");
-		abort();
+		return RetCode; // don't flip
 	}
 	NETflush();  // Send any pending network data.
 
@@ -350,33 +265,6 @@ void initLoadingScreen(bool drawbdrop)
 	pie_ScreenFlip(CLEAR_BLACK);
 }
 
-
-// fill buffers with the static screen
-void startCreditsScreen()
-{
-	lastChange = gameTime;
-
-	pie_LoadBackDrop(SCREEN_CREDITS);
-
-	pie_SetFogStatus(false);
-	pie_ScreenFlip(CLEAR_BLACK);//init loading
-}
-
-/* This function does nothing - since it's already been drawn */
-void runCreditsScreen()
-{
-	// Check for key presses now.
-	if (keyReleased(KEY_ESC)
-	    || keyReleased(KEY_SPACE)
-	    || mouseReleased(MOUSE_LMB)
-	    || gameTime - lastChange > 4000)
-	{
-		lastChange = gameTime;
-		changeTitleMode(QUIT);
-	}
-	return;
-}
-
 // shut down the loading screen
 void closeLoadingScreen()
 {
@@ -394,7 +282,7 @@ void closeLoadingScreen()
 ////////////////////////////////////////////////////////////////////////////////
 // Gameover screen.
 
-bool displayGameOver(bool bDidit)
+bool displayGameOver(bool bDidit, bool showBackDrop)
 {
 	if (bDidit)
 	{
@@ -421,7 +309,7 @@ bool displayGameOver(bool bDidit)
 
 	//clear out any mission widgets - timers etc that may be on the screen
 	clearMissionWidgets();
-	intAddMissionResult(bDidit, true);
+	intAddMissionResult(bDidit, true, showBackDrop);
 
 	return true;
 }

@@ -1,6 +1,6 @@
 /*
 	This file is part of Warzone 2100.
-	Copyright (C) 2007-2017  Warzone 2100 Project
+	Copyright (C) 2007-2020  Warzone 2100 Project
 
 	Warzone 2100 is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -27,6 +27,7 @@
 #include "lib/framework/frame.h"
 #include "lib/framework/vector.h"
 #include "lib/netplay/netqueue.h"
+#include "lib/framework/wzstring.h"
 
 class QString;
 
@@ -88,7 +89,7 @@ void NETint64_t(int64_t *ip);
 void NETuint64_t(uint64_t *ip);
 void NETbool(bool *bp);
 void NETbool(bool *bp);
-void NETqstring(QString &str);
+void NETwzstring(WzString &str);
 void NETstring(char *str, uint16_t maxlen);
 void NETstring(char const *str, uint16_t maxlen);  ///< Encode-only version of NETstring.
 void NETbin(uint8_t *str, uint32_t len);
